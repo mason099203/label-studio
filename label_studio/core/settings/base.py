@@ -802,6 +802,11 @@ if get_env('STORAGE_TYPE') == 'gcs':
 CSRF_TRUSTED_ORIGINS = get_env('CSRF_TRUSTED_ORIGINS', [])
 if CSRF_TRUSTED_ORIGINS:
     CSRF_TRUSTED_ORIGINS = CSRF_TRUSTED_ORIGINS.split(',')
+else:
+    CSRF_TRUSTED_ORIGINS = []
+# When using frontend HMR, the browser sends requests from the dev server origin (e.g. http://localhost:8010)
+if FRONTEND_HMR and FRONTEND_HOSTNAME and FRONTEND_HOSTNAME not in CSRF_TRUSTED_ORIGINS:
+    CSRF_TRUSTED_ORIGINS = list(CSRF_TRUSTED_ORIGINS) + [FRONTEND_HOSTNAME]
 
 # Custom S3 endpoints on these domains will get detailed error reporting
 S3_TRUSTED_STORAGE_DOMAINS = get_env_list(

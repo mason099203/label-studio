@@ -1,1 +1,3 @@
-../common/10-configure-nginx.sh
+#!/bin/bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../common/10-configure-nginx.sh"
