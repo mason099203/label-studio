@@ -228,14 +228,14 @@ export const Menubar = ({ enabled, defaultOpened, defaultPinned, children, onSid
 
                 <VersionNotifier showNewVersion />
 
-                <Menu.Item
+                {/* <Menu.Item
                   label="API"
                   href="https://api.labelstud.io/api-reference/introduction/getting-started"
                   icon={<IconTerminal />}
                   target="_blank"
-                />
+                /> */}
                 <Menu.Item label="Docs" href="https://labelstud.io/guide" icon={<IconBook />} target="_blank" />
-                <Menu.Item
+                {/* <Menu.Item
                   label="GitHub"
                   href="https://github.com/HumanSignal/label-studio"
                   icon={<IconGithub />}
@@ -248,7 +248,7 @@ export const Menubar = ({ enabled, defaultOpened, defaultPinned, children, onSid
                   icon={<IconSlack />}
                   target="_blank"
                   rel="noreferrer"
-                />
+                /> */}
 
                 <VersionNotifier showCurrentVersion />
 
