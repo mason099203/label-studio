@@ -277,6 +277,8 @@ module.exports = composePlugins(
       devServer: process.env.MODE?.startsWith("standalone")
         ? {}
         : {
+            // 監聽所有介面，可從區網他機用 http://<本機IP>:8010 存取
+            host: process.env.WEBPACK_DEV_HOST || "0.0.0.0",
             // Port for the Webpack dev server
             port: HMR_PORT,
             // Enable HMR

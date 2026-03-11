@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import re
+import socket
 from datetime import timedelta
 
 from django.core.exceptions import ImproperlyConfigured
@@ -807,6 +808,30 @@ else:
 # When using frontend HMR, the browser sends requests from the dev server origin (e.g. http://localhost:8010)
 if FRONTEND_HMR and FRONTEND_HOSTNAME and FRONTEND_HOSTNAME not in CSRF_TRUSTED_ORIGINS:
     CSRF_TRUSTED_ORIGINS = list(CSRF_TRUSTED_ORIGINS) + [FRONTEND_HOSTNAME]
+# 從區網 IP 存取時（例如 http://10.214.57.66:8010）需額外加入信任來源
+if FRONTEND_HMR:
+    _extra_origins = get_env('ADDITIONAL_CSRF_TRUSTED_ORIGINS', '')
+    if _extra_origins:
+        for origin in _extra_origins.split(','):
+            origin = origin.strip()
+            if origin and origin not in CSRF_TRUSTED_ORIGINS:
+                CSRF_TRUSTED_ORIGINS = list(CSRF_TRUSTED_ORIGINS) + [origin]
+    # 開發時自動信任本機所有 IP 的 dev server port，免設環境變數即可用 IP 存取
+    try:
+        _hmr_port = '8010'
+        if FRONTEND_HOSTNAME:
+            from urllib.parse import urlparse
+            _parsed = urlparse(FRONTEND_HOSTNAME)
+            if _parsed.port:
+                _hmr_port = str(_parsed.port)
+        _hostname = socket.gethostname()
+        for _addr in socket.getaddrinfo(_hostname, None, socket.AF_INET):
+            _ip = _addr[4][0]
+            for _origin in (f"http://{_ip}:{_hmr_port}", f"https://{_ip}:{_hmr_port}"):
+                if _origin not in CSRF_TRUSTED_ORIGINS:
+                    CSRF_TRUSTED_ORIGINS = list(CSRF_TRUSTED_ORIGINS) + [_origin]
+    except Exception:
+        pass
 
 # Custom S3 endpoints on these domains will get detailed error reporting
 S3_TRUSTED_STORAGE_DOMAINS = get_env_list(
