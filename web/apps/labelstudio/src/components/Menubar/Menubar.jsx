@@ -234,7 +234,8 @@ export const Menubar = ({ enabled, defaultOpened, defaultPinned, children, onSid
                   icon={<IconTerminal />}
                   target="_blank"
                 /> */}
-                <Menu.Item label="Docs" href="https://labelstud.io/guide" icon={<IconBook />} target="_blank" />
+                {/* 側邊目錄 doc 及其他連結  版本 */}
+                {/* <Menu.Item label="Docs" href="https://labelstud.io/guide" icon={<IconBook />} target="_blank" /> */}
                 {/* <Menu.Item
                   label="GitHub"
                   href="https://github.com/HumanSignal/label-studio"
