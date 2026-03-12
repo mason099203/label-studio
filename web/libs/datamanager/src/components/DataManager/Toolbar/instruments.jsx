@@ -6,7 +6,7 @@ import { FieldsButton } from "../../Common/FieldsButton";
 import { FiltersPane } from "../../Common/FiltersPane";
 import { Icon } from "../../Common/Icon/Icon";
 import { Interface } from "../../Common/Interface";
-import { ExportButton, ImportButton } from "../../Common/SDKButtons";
+import { ExportButton, ImportButton, TrainingButton } from "../../Common/SDKButtons";
 import { Tooltip } from "@humansignal/ui";
 import { ActionsButton } from "./ActionsButton";
 import { DensityToggle } from "./DensityToggle";
@@ -126,6 +126,13 @@ export const instruments = {
     return (
       <Interface name="export">
         <ExportButton size={size}>Export</ExportButton>
+      </Interface>
+    );
+  },
+  "training-button": ({ size }) => {
+    return (
+      <Interface name="training">
+        <TrainingButton size={size}>Training</TrainingButton>
       </Interface>
     );
   },

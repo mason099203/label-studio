@@ -30,3 +30,11 @@ export const ImportButton = ({ ...props }) => {
 export const ExportButton = ({ ...props }) => {
   return <SDKButton {...props} eventName="exportClicked" testId="dm-export-button" />;
 };
+
+/**
+ * Training 按鈕：觸發 trainingClicked 事件，導向訓練模組頁面。
+ * @param {Object} props - 傳給 SDKButton 的屬性
+ */
+export const TrainingButton = ({ ...props }) => {
+  return <SDKButton {...props} eventName="trainingClicked" testId="dm-training-button" />;
+};

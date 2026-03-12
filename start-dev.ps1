@@ -1,6 +1,11 @@
 # Label Studio 本機開發一鍵啟動
 # 會開啟兩個 PowerShell 視窗：後端 (Django) + 前端 (HMR)
 # 關閉時請在各自視窗按 Ctrl+C
+#
+# 若要使用「Training（YOLO 訓練）」功能（本機 server 訓練）：
+# - 先執行：.\start-redis.ps1（啟動 Redis）
+# - 再執行：.\start-rqworker.ps1（啟動 RQ worker，Windows 必須用 SimpleWorker）
+#   否則會遇到：AttributeError: module 'os' has no attribute 'fork'
 
 $root = $PSScriptRoot
 

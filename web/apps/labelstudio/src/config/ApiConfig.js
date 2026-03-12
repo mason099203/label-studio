@@ -70,6 +70,15 @@ export const API_CONFIG = {
     previousExports: "/projects/:pk/export/files",
     exportFormats: "/projects/:pk/export/formats",
 
+    // Training (on-server)
+    trainingLocalModels: "/projects/:pk/training/models/",
+    trainingCreateJob: "POST:/projects/:pk/training/jobs/",
+    trainingJob: "/projects/:pk/training/jobs/:job_id/",
+    trainingJobArtifacts: "/projects/:pk/training/jobs/:job_id/artifacts/",
+    trainingJobDownload: "/projects/:pk/training/jobs/:job_id/download",
+    trainingPrepareDataset: "POST:/projects/:pk/training/datasets/prepare/",
+    trainingHistory: "/projects/:pk/training/history/",
+
     // Version
     version: "/version",
 

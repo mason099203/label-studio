@@ -3,6 +3,7 @@
 from django.urls import include, path
 
 from . import api, views
+from training import api as training_api
 
 app_name = 'projects'
 
@@ -47,6 +48,39 @@ _api_urlpatterns = [
     path('<int:pk>/model-versions/', api.ProjectModelVersions.as_view(), name='project-model-versions'),
     # List all annotators for project
     path('<int:pk>/annotators/', api.ProjectAnnotatorsAPI.as_view(), name='project-annotators'),
+    # On-server training (YOLO detect)
+    path('<int:pk>/training/models/', training_api.ProjectTrainingModelsAPI.as_view(), name='project-training-models'),
+    path('<int:pk>/training/jobs/', training_api.ProjectTrainingJobsAPI.as_view(), name='project-training-jobs'),
+    path(
+        '<int:pk>/training/jobs/<str:job_id>/',
+        training_api.ProjectTrainingJobDetailAPI.as_view(),
+        name='project-training-job-detail',
+    ),
+    path(
+        '<int:pk>/training/jobs/<str:job_id>/artifacts/',
+        training_api.ProjectTrainingJobArtifactsAPI.as_view(),
+        name='project-training-job-artifacts',
+    ),
+    path(
+        '<int:pk>/training/jobs/<str:job_id>/download',
+        training_api.ProjectTrainingJobDownloadAPI.as_view(),
+        name='project-training-job-download',
+    ),
+    path(
+        '<int:pk>/training/datasets/prepare/',
+        training_api.ProjectTrainingDatasetPrepareAPI.as_view(),
+        name='project-training-dataset-prepare',
+    ),
+    path(
+        '<int:pk>/training/history/',
+        training_api.ProjectTrainingHistoryAPI.as_view(),
+        name='project-training-history',
+    ),
+    path(
+        '<int:pk>/training/runs/<str:run_id>/download',
+        training_api.ProjectTrainingRunDownloadAPI.as_view(),
+        name='project-training-run-download',
+    ),
 ]
 
 _api_urlpatterns_templates = [

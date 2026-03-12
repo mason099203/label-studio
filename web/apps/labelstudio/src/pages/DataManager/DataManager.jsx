@@ -13,6 +13,7 @@ import { cn } from "../../utils/bem";
 import { isDefined } from "../../utils/helpers";
 import { ImportModal } from "../CreateProject/Import/ImportModal";
 import { ExportPage } from "../ExportPage/ExportPage";
+import { TrainingPage } from "../TrainingPage/TrainingPage";
 import { APIConfig } from "./api-config";
 
 import "./DataManager.scss";
@@ -39,6 +40,7 @@ const initializeDataManager = async (root, props, params) => {
     interfaces: {
       import: true,
       export: true,
+      training: true,
       backButton: false,
       labelingHeader: false,
       autoAnnotation: params.autoAnnotation,
@@ -133,6 +135,10 @@ export const DataManagerPage = ({ ...props }) => {
 
     dataManager.on("exportClicked", () => {
       history.push(buildLink("/data/export", { id: params?.id ?? project?.id }));
+    });
+
+    dataManager.on("trainingClicked", () => {
+      history.push(buildLink("/data/training", { id: params?.id ?? project?.id }));
     });
 
     dataManager.on("error", (response) => {
@@ -237,6 +243,7 @@ DataManagerPage.path = "/data";
 DataManagerPage.pages = {
   ExportPage,
   ImportModal,
+  TrainingPage,
 };
 DataManagerPage.context = ({ dmRef }) => {
   const { project } = useProject();

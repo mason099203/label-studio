@@ -54,7 +54,7 @@ import { LSFWrapper } from "./lsf-sdk";
 import { taskToLSFormat } from "./lsf-utils";
 
 const DEFAULT_TOOLBAR =
-  "actions columns filters ordering label-button loading-possum error-box | refresh import-button export-button density-toggle grid-size view-toggle";
+  "actions columns filters ordering label-button loading-possum error-box | refresh import-button export-button training-button density-toggle grid-size view-toggle";
 
 const prepareInstruments = (instruments) => {
   const result = Object.entries(instruments).map(([name, builder]) => [name, builder({ inject, observer })]);
@@ -94,6 +94,7 @@ export class DataManager {
   links = {
     import: "/import",
     export: "/export",
+    training: "/training",
     settings: "./settings",
   };
 
@@ -170,6 +171,7 @@ export class DataManager {
       toolbar: true,
       import: true,
       export: true,
+      training: true,
       labelButton: true,
       backButton: true,
       labelingHeader: true,

@@ -12,15 +12,16 @@ import "./settings.scss";
 export const MenuLayout = ({ children, ...routeProps }) => {
   return (
     <SidebarMenu
+    // 專案設定內容
       menuItems={[
         GeneralSettings,
         LabelingSettings,
-        AnnotationSettings,
+        // AnnotationSettings,
         MachineLearningSettings,
-        PredictionsSettings,
-        StorageSettings,
-        WebhookPage,
-        DangerZone,
+        // PredictionsSettings,
+        // StorageSettings,
+        // WebhookPage,
+        // DangerZone,
       ].filter(Boolean)}
       path={routeProps.match.url}
       children={children}
@@ -29,13 +30,13 @@ export const MenuLayout = ({ children, ...routeProps }) => {
 };
 
 const pages = {
-  AnnotationSettings,
+  // AnnotationSettings,
   LabelingSettings,
   MachineLearningSettings,
-  PredictionsSettings,
-  StorageSettings,
-  WebhookPage,
-  DangerZone,
+  // PredictionsSettings,
+  // StorageSettings,
+  // WebhookPage,
+  // DangerZone,
 };
 
 export const SettingsPage = {
