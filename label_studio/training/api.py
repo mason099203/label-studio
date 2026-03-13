@@ -259,6 +259,13 @@ class ProjectTrainingHistoryAPI(APIView):
             for d in sorted(runs_root.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
                 if not d.is_dir():
                     continue
+                run_meta_path = d / "run_meta.json"
+                run_meta = {}
+                if run_meta_path.exists():
+                    try:
+                        run_meta = json.loads(run_meta_path.read_text(encoding="utf-8"))
+                    except Exception:
+                        run_meta = {}
                 metrics_path = d / "metrics.json"
                 metrics = None
                 if metrics_path.exists():
@@ -282,6 +289,10 @@ class ProjectTrainingHistoryAPI(APIView):
                     {
                         "run_id": d.name,
                         "run_dir": str(d),
+                        "status": run_meta.get("status", "finished" if metrics else "unknown"),
+                        "message": run_meta.get("message"),
+                        "params": run_meta.get("params"),
+                        "error": run_meta.get("error"),
                         "metrics": metrics,
                         "artifacts": files,
                         "best_download_url": f"/api/projects/{project.id}/training/runs/{d.name}/download?file=best.pt",

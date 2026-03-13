@@ -9,24 +9,46 @@
 
 $root = $PSScriptRoot
 
-# 視窗 1：後端 Django
-Start-Process powershell -ArgumentList @(
-    "-NoExit",
-    "-Command",
-    "cd '$root'; " +
-    "`$env:DJANGO_DB='sqlite'; `$env:LOG_DIR='tmp'; `$env:DEBUG='true'; `$env:LOG_LEVEL='DEBUG'; " +
-    "`$env:DJANGO_SETTINGS_MODULE='core.settings.label_studio'; `$env:FRONTEND_HMR='true'; " +
-    "python label_studio/manage.py runserver"
-)
+function Test-PortListening {
+    param(
+        [int]$Port
+    )
 
-# 視窗 2：前端 HMR（稍延遲讓後端先啟動）
-Start-Sleep -Seconds 2
-Start-Process powershell -ArgumentList @(
-    "-NoExit",
-    "-Command",
-    "cd '$root\web'; yarn dev:win"
-)
+    try {
+        $listener = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop | Select-Object -First 1
+        return [bool]$listener
+    } catch {
+        return $false
+    }
+}
 
-Write-Host "已開啟兩個視窗：後端 (Django) 與前端 (HMR)。"
-Write-Host "瀏覽器請開啟: http://localhost:8010"
-Write-Host "關閉時在各自視窗按 Ctrl+C。"
+if (-not (Test-PortListening -Port 8080)) {
+    # 視窗 1：後端 Django
+    Start-Process powershell -ArgumentList @(
+        "-NoExit",
+        "-Command",
+        "cd '$root'; " +
+        "`$env:DJANGO_DB='sqlite'; `$env:LOG_DIR='tmp'; `$env:DEBUG='true'; `$env:LOG_LEVEL='DEBUG'; " +
+        "`$env:DJANGO_SETTINGS_MODULE='core.settings.label_studio'; `$env:FRONTEND_HMR='true'; " +
+        "python label_studio/manage.py runserver"
+    )
+} else {
+    Write-Host "Backend is already running on http://localhost:8080"
+}
+
+if (-not (Test-PortListening -Port 8010)) {
+    # 視窗 2：前端 HMR（稍延遲讓後端先啟動）
+    Start-Sleep -Seconds 2
+    Start-Process powershell -ArgumentList @(
+        "-NoExit",
+        "-Command",
+        "cd '$root\web'; " +
+        "try { yarn nx reset } catch { Write-Host 'nx reset skipped'; } ; " +
+        "yarn dev:win"
+    )
+} else {
+    Write-Host "Frontend HMR is already running on http://localhost:8010"
+}
+
+Write-Host "Open Label Studio in browser: http://localhost:8010"
+Write-Host "Press Ctrl+C in each window to stop services."

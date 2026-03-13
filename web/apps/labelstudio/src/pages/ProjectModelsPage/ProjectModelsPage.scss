@@ -1,0 +1,230 @@
+.project-models-page {
+  padding: 24px;
+
+  &__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+
+  &__title {
+    margin: 0 0 6px;
+    font-size: 24px;
+    font-weight: 600;
+  }
+
+  &__subtitle {
+    color: var(--color-neutral-content-subtle);
+    font-size: 14px;
+  }
+
+  &__section {
+    margin-bottom: 24px;
+  }
+
+  &__section-title {
+    font-weight: 600;
+    font-size: 16px;
+    margin-bottom: 12px;
+  }
+
+  &__dataset-list,
+  &__run-list {
+    display: grid;
+    gap: 12px;
+  }
+
+  &__dataset-card,
+  &__run-card {
+    padding: 16px;
+    border-radius: 8px;
+    border: 1px solid var(--color-neutral-border-subtler);
+    background: var(--color-neutral-surface);
+  }
+
+  &__run-card {
+    padding: 0;
+    overflow: hidden;
+  }
+
+  &__dataset-id,
+  &__run-id {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Courier New", monospace;
+    font-size: 13px;
+    margin-bottom: 4px;
+  }
+
+  &__dataset-meta,
+  &__dataset-path,
+  &__run-description {
+    color: var(--color-neutral-content-subtle);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  &__run-top {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 12px;
+  }
+
+  &__run-summary {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    padding: 16px;
+    border: 0;
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  &__run-summary-main {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  &__run-summary-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--color-neutral-content);
+  }
+
+  &__run-summary-time {
+    font-size: 13px;
+    color: var(--color-neutral-content-subtle);
+  }
+
+  &__run-summary-side {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+
+  &__run-toggle {
+    font-size: 13px;
+    color: var(--color-primary-content);
+  }
+
+  &__run-content {
+    padding: 0 16px 16px;
+    border-top: 1px solid var(--color-neutral-border-subtler);
+  }
+
+  &__run-status {
+    display: inline-flex;
+    margin-top: 4px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 12px;
+    text-transform: capitalize;
+    background: var(--color-neutral-surface-active);
+
+    &_finished {
+      color: var(--color-positive-content);
+    }
+
+    &_failed {
+      color: var(--color-negative-content);
+    }
+
+    &_running,
+    &_starting {
+      color: var(--color-primary-content);
+    }
+  }
+
+  &__run-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: flex-start;
+  }
+
+  &__run-error {
+    color: var(--color-negative-content);
+    margin-top: 6px;
+    word-break: break-word;
+  }
+
+  &__metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px;
+    margin: 14px 0;
+  }
+
+  &__metric {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    border-radius: 6px;
+    background: var(--color-neutral-surface-active);
+    font-size: 13px;
+
+    span {
+      color: var(--color-neutral-content-subtle);
+    }
+
+    strong {
+      font-size: 14px;
+      color: var(--color-neutral-content);
+    }
+  }
+
+  &__charts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+  }
+
+  &__chart-link {
+    display: block;
+    text-decoration: none;
+    border: 1px solid var(--color-neutral-border-subtler);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--color-neutral-surface-active);
+
+    img {
+      width: 100%;
+      aspect-ratio: 16 / 10;
+      object-fit: cover;
+      display: block;
+      background: #fff;
+    }
+  }
+
+  &__chart-name {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    padding: 10px 12px;
+    color: var(--color-neutral-content);
+    font-size: 13px;
+  }
+
+  &__empty,
+  &__error {
+    color: var(--color-neutral-content-subtle);
+  }
+
+  &__error {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+    color: var(--color-negative-content);
+  }
+}
+

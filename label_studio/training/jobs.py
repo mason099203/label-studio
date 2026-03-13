@@ -34,6 +34,22 @@ def _write_json(path: Path, data: Dict[str, Any]) -> None:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
+def _run_meta_path(run_dir: Path) -> Path:
+    return run_dir / "run_meta.json"
+
+
+def _write_run_meta(run_dir: Path, payload: Dict[str, Any]) -> None:
+    path = _run_meta_path(run_dir)
+    current = {}
+    if path.exists():
+        try:
+            current = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            current = {}
+    current.update(payload)
+    _write_json(path, current)
+
+
 def yolo_detect_train_job(
     *,
     project_id: int,
@@ -69,18 +85,47 @@ def yolo_detect_train_job(
         )
         job.save_meta()
 
+    output_root_path = Path(output_root)
+    run_dir = output_root_path / f"project_{project_id}" / (job.id if job is not None else f"job_{now}")
+    _safe_mkdir(run_dir)
+    _write_run_meta(
+        run_dir,
+        {
+            "job_id": job.id if job is not None else None,
+            "project_id": project_id,
+            "status": "starting",
+            "message": "Starting training job",
+            "created_at": now,
+            "params": {
+                "base_weights": base_weights,
+                "data_yaml": str(data_yaml),
+                "epochs": int(epochs),
+                "imgsz": int(imgsz),
+                "batch": int(batch),
+            },
+        },
+    )
+
     def _fail(message: str, error: Exception | None = None) -> None:
-        if job is None:
-            return
-        job.meta.update(
+        if job is not None:
+            job.meta.update(
+                {
+                    "status": "failed",
+                    "message": message,
+                    "error": str(error) if error else None,
+                    "failed_at": datetime.now().isoformat(),
+                }
+            )
+            job.save_meta()
+        _write_run_meta(
+            run_dir,
             {
                 "status": "failed",
                 "message": message,
                 "error": str(error) if error else None,
                 "failed_at": datetime.now().isoformat(),
-            }
+            },
         )
-        job.save_meta()
 
     def _friendly_hint_for_error(exc: Exception) -> str | None:
         # Ultralytics model/weights incompatibility often shows up as a TypeError
@@ -108,10 +153,6 @@ def yolo_detect_train_job(
         _fail(msg)
         raise FileNotFoundError(msg)
 
-    output_root_path = Path(output_root)
-    run_dir = output_root_path / f"project_{project_id}" / (job.id if job is not None else f"job_{now}")
-    _safe_mkdir(run_dir)
-
     if job is not None:
         job.meta.update(
             {
@@ -128,6 +169,14 @@ def yolo_detect_train_job(
             }
         )
         job.save_meta()
+    _write_run_meta(
+        run_dir,
+        {
+            "status": "running",
+            "message": "Training in progress",
+            "run_dir": str(run_dir),
+        },
+    )
 
     try:
         model = YOLO(base_weights)
@@ -235,6 +284,20 @@ def yolo_detect_train_job(
             }
         )
         job.save_meta()
+    _write_run_meta(
+        run_dir,
+        {
+            "status": "finished",
+            "message": "Training finished",
+            "run_dir": str(run_dir),
+            "artifacts_dir": str(artifacts_dir),
+            "best_path": result["best_path"],
+            "last_path": result["last_path"],
+            "metrics_path": str(metrics_path),
+            "metrics": metrics,
+            "finished_at": datetime.now().isoformat(),
+        },
+    )
 
     return result
 
