@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { IconAnalytics, IconFileDownload, IconWarningCircleFilled } from "@humansignal/icons";
 import { Button } from "@humansignal/ui";
+import { Modal } from "../../components/Modal/Modal";
 import { useAPI } from "../../providers/ApiProvider";
 import { useParams } from "../../providers/RoutesProvider";
 import { useProject } from "../../providers/ProjectProvider";
@@ -21,6 +22,7 @@ export const ProjectModelsPage = () => {
   const [history, setHistory] = useState(null);
   const [error, setError] = useState(null);
   const [expandedRunId, setExpandedRunId] = useState(null);
+  const [selectedChart, setSelectedChart] = useState(null);
 
   useEffect(() => {
     if (!params?.id) return;
@@ -174,18 +176,17 @@ export const ProjectModelsPage = () => {
                     {charts.length > 0 && (
                       <div className={cn("project-models-page").elem("charts").toClassName()}>
                         {charts.map((chart) => (
-                          <a
+                          <button
                             key={chart.download_url}
-                            href={absoluteURL(chart.download_url)}
-                            target="_blank"
-                            rel="noreferrer"
+                            type="button"
+                            onClick={() => setSelectedChart(chart)}
                             className={cn("project-models-page").elem("chart-link").toClassName()}
                           >
                             <img src={absoluteURL(chart.download_url)} alt={chart.name} />
                             <div className={cn("project-models-page").elem("chart-name").toClassName()}>
                               <IconAnalytics /> {chart.name}
                             </div>
-                          </a>
+                          </button>
                         ))}
                       </div>
                     )}
@@ -196,6 +197,36 @@ export const ProjectModelsPage = () => {
           })}
         </div>
       </section>
+
+      {selectedChart && (
+        <Modal
+          visible
+          title={selectedChart.name}
+          style={{ width: "min(96vw, 1200px)" }}
+          onHide={() => setSelectedChart(null)}
+        >
+          <div className={cn("project-models-page").elem("preview").toClassName()}>
+            <div className={cn("project-models-page").elem("preview-actions").toClassName()}>
+              <a
+                className={cn("project-models-page").elem("download-button").toClassName()}
+                href={absoluteURL(selectedChart.download_url)}
+                download={selectedChart.name}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <IconFileDownload /> 下載圖片
+              </a>
+            </div>
+            <div className={cn("project-models-page").elem("preview-image-wrap").toClassName()}>
+              <img
+                className={cn("project-models-page").elem("preview-image").toClassName()}
+                src={absoluteURL(selectedChart.download_url)}
+                alt={selectedChart.name}
+              />
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 };

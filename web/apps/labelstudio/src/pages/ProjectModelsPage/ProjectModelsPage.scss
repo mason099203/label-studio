@@ -190,6 +190,10 @@
 
   &__chart-link {
     display: block;
+    width: 100%;
+    padding: 0;
+    text-align: left;
+    cursor: zoom-in;
     text-decoration: none;
     border: 1px solid var(--color-neutral-border-subtler);
     border-radius: 8px;
@@ -212,6 +216,43 @@
     padding: 10px 12px;
     color: var(--color-neutral-content);
     font-size: 13px;
+  }
+
+  &__preview {
+    display: grid;
+    gap: 16px;
+  }
+
+  &__preview-actions {
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  &__download-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    color: var(--color-neutral-content);
+    background: var(--color-neutral-surface-active);
+    text-decoration: none;
+  }
+
+  &__preview-image-wrap {
+    display: flex;
+    justify-content: center;
+    max-height: min(75vh, 900px);
+    overflow: auto;
+    background: var(--color-neutral-surface-active);
+    border-radius: 8px;
+    padding: 12px;
+  }
+
+  &__preview-image {
+    max-width: 100%;
+    height: auto;
+    object-fit: contain;
   }
 
   &__empty,
