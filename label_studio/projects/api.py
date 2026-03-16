@@ -180,9 +180,7 @@ class ProjectListAPI(generics.ListCreateAPIView):
         serializer.is_valid(raise_exception=True)
         fields = serializer.validated_data.get('include')
         filter = serializer.validated_data.get('filter')
-        projects = Project.objects.filter(organization=self.request.user.active_organization).order_by(
-            F('pinned_at').desc(nulls_last=True), '-created_at'
-        )
+        projects = Project.objects.for_user(self.request.user).order_by(F('pinned_at').desc(nulls_last=True), '-created_at')
         if filter in ['pinned_only', 'exclude_pinned']:
             projects = projects.filter(pinned_at__isnull=filter == 'exclude_pinned')
         projects = ProjectManager.with_counts_annotate(projects, fields=fields)
@@ -202,7 +200,8 @@ class ProjectListAPI(generics.ListCreateAPIView):
 
     def perform_create(self, ser):
         try:
-            ser.save(organization=self.request.user.active_organization)
+            project = ser.save(organization=self.request.user.active_organization)
+            project.add_collaborator(self.request.user)
         except IntegrityError as e:
             if str(e) == 'UNIQUE constraint failed: project.title, project.created_by_id':
                 raise ProjectExistException(
@@ -247,9 +246,7 @@ class ProjectCountsListAPI(generics.ListAPIView):
         serializer = GetFieldsSerializer(data=self.request.query_params)
         serializer.is_valid(raise_exception=True)
         fields = serializer.validated_data.get('include')
-        projects = Project.objects.with_counts(fields=fields).filter(
-            organization=self.request.user.active_organization
-        )
+        projects = ProjectManager.with_counts_annotate(Project.objects.for_user(self.request.user), fields=fields)
 
         # Only annotate FSM state for UI/API consumption when both feature flags are enabled
         if flag_set('fflag_feat_fit_568_finite_state_management', user=self.request.user) and flag_set(
@@ -381,9 +378,7 @@ class ProjectAPI(generics.RetrieveUpdateDestroyAPIView):
         serializer = GetFieldsSerializer(data=self.request.query_params)
         serializer.is_valid(raise_exception=True)
         fields = serializer.validated_data.get('include')
-        projects = Project.objects.with_counts(fields=fields).filter(
-            organization=self.request.user.active_organization
-        )
+        projects = ProjectManager.with_counts_annotate(Project.objects.for_user(self.request.user), fields=fields)
 
         # Only annotate FSM state for UI/API consumption when both feature flags are enabled
         if flag_set('fflag_feat_fit_568_finite_state_management', user=self.request.user) and flag_set(

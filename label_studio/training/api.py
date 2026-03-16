@@ -10,14 +10,15 @@ from typing import Any, Dict, List
 import django_rq
 from core.permissions import ViewClassPermission, all_permissions
 from django.conf import settings
+from django.shortcuts import get_object_or_404
 from projects.models import Project
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rq.job import Job
 
-from .jobs import yolo_detect_train_job
-from .datasets import prepare_yolo_dataset_from_project_export
+from .jobs import yolo_classification_train_job, yolo_detect_train_job
+from .datasets import detect_training_interface, prepare_training_dataset_for_project
 
 
 def _get_original_models_dir() -> Path:
@@ -47,12 +48,26 @@ def _get_training_output_root() -> Path:
     return repo_root / "data" / "training" / "models" / "trained"
 
 
+def _read_dataset_config(path_str: str) -> Dict[str, Any]:
+    path = Path(path_str)
+    if not path.exists():
+        raise FileNotFoundError(f"dataset_config not found on server: {path_str}")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _get_project_for_user(request, pk: int) -> Project:
+    """
+    Resolve a project visible to the current user via enabled membership.
+    """
+
+    return get_object_or_404(Project.objects.for_user(request.user), pk=pk)
+
+
 class ProjectTrainingModelsAPI(APIView):
     permission_required = ViewClassPermission(GET=all_permissions.projects_view)
 
     def get(self, request, pk: int, *args, **kwargs):
-        project = Project.objects.get(pk=pk)
-        self.check_object_permissions(request, project)
+        project = _get_project_for_user(request, pk)
 
         root = _get_original_models_dir()
         root.mkdir(parents=True, exist_ok=True)
@@ -70,27 +85,32 @@ class ProjectTrainingModelsAPI(APIView):
                 }
             )
 
-        return Response({"models": models, "root": str(root)})
+        training_spec = None
+        try:
+            training_spec = detect_training_interface(project)
+        except Exception:
+            training_spec = None
+
+        return Response({"models": models, "root": str(root), "training_spec": training_spec})
 
 
 class ProjectTrainingJobsAPI(APIView):
     permission_required = ViewClassPermission(POST=all_permissions.projects_change)
 
     def post(self, request, pk: int, *args, **kwargs):
-        project = Project.objects.get(pk=pk)
-        self.check_object_permissions(request, project)
+        project = _get_project_for_user(request, pk)
 
         payload = request.data or {}
         base_weights = payload.get("base_weights")
-        data_yaml = payload.get("data_yaml")
+        dataset_config = payload.get("dataset_config") or payload.get("data_yaml")
         epochs = int(payload.get("epochs", 50))
         imgsz = int(payload.get("imgsz", 640))
         batch = int(payload.get("batch", 16))
 
         if not base_weights:
             return Response({"detail": "base_weights is required"}, status=status.HTTP_400_BAD_REQUEST)
-        if not data_yaml:
-            return Response({"detail": "data_yaml is required"}, status=status.HTTP_400_BAD_REQUEST)
+        if not dataset_config:
+            return Response({"detail": "dataset_config is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         # Fail fast with clear messages (so UI can show actionable errors)
         if os.path.isabs(str(base_weights)) and not Path(str(base_weights)).exists():
@@ -98,9 +118,15 @@ class ProjectTrainingJobsAPI(APIView):
                 {"detail": f"base_weights not found on server: {base_weights}"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if not Path(str(data_yaml)).exists():
+        try:
+            dataset_meta = _read_dataset_config(str(dataset_config))
+        except FileNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        training_model = dataset_meta.get("training_model")
+        if training_model not in {"yolo_detect", "yolo_classify"}:
             return Response(
-                {"detail": f"data.yaml not found on server: {data_yaml}"},
+                {"detail": f"Unsupported training_model in dataset_config: {training_model}"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -109,12 +135,13 @@ class ProjectTrainingJobsAPI(APIView):
 
         try:
             queue = django_rq.get_queue("low")
+            job_func = yolo_detect_train_job if training_model == "yolo_detect" else yolo_classification_train_job
             job = queue.enqueue(
-                yolo_detect_train_job,
+                job_func,
                 kwargs={
                     "project_id": project.id,
                     "base_weights": base_weights,
-                    "data_yaml": data_yaml,
+                    "dataset_config": str(dataset_config),
                     "epochs": epochs,
                     "imgsz": imgsz,
                     "batch": batch,
@@ -128,27 +155,23 @@ class ProjectTrainingJobsAPI(APIView):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
-        return Response({"job_id": job.id, "status": job.get_status()})
+        return Response({"job_id": job.id, "status": job.get_status(), "training_model": training_model})
 
 
 class ProjectTrainingDatasetPrepareAPI(APIView):
     permission_required = ViewClassPermission(POST=all_permissions.projects_change)
 
     def post(self, request, pk: int, *args, **kwargs):
-        project = Project.objects.get(pk=pk)
-        self.check_object_permissions(request, project)
+        project = _get_project_for_user(request, pk)
 
         payload = request.data or {}
         train_ratio = float(payload.get("train_ratio", 0.8))
         seed = int(payload.get("seed", 42))
 
-        # We start from LS native JSON internally, but we leverage the built-in export converter
-        # to produce YOLO_WITH_IMAGES assets reliably.
-        meta = prepare_yolo_dataset_from_project_export(
+        meta = prepare_training_dataset_for_project(
             project_id=project.id,
             train_ratio=train_ratio,
             seed=seed,
-            export_format="YOLO_WITH_IMAGES",
         )
 
         return Response(meta, status=status.HTTP_200_OK)
@@ -158,8 +181,7 @@ class ProjectTrainingJobDetailAPI(APIView):
     permission_required = ViewClassPermission(GET=all_permissions.projects_view)
 
     def get(self, request, pk: int, job_id: str, *args, **kwargs):
-        project = Project.objects.get(pk=pk)
-        self.check_object_permissions(request, project)
+        project = _get_project_for_user(request, pk)
 
         queue = django_rq.get_queue("low")
         try:
@@ -185,8 +207,7 @@ class ProjectTrainingJobArtifactsAPI(APIView):
     permission_required = ViewClassPermission(GET=all_permissions.projects_view)
 
     def get(self, request, pk: int, job_id: str, *args, **kwargs):
-        project = Project.objects.get(pk=pk)
-        self.check_object_permissions(request, project)
+        project = _get_project_for_user(request, pk)
 
         queue = django_rq.get_queue("low")
         job = Job.fetch(job_id, connection=queue.connection)
@@ -218,8 +239,7 @@ class ProjectTrainingJobDownloadAPI(APIView):
     def get(self, request, pk: int, job_id: str, *args, **kwargs):
         from django.http import FileResponse, Http404
 
-        project = Project.objects.get(pk=pk)
-        self.check_object_permissions(request, project)
+        project = _get_project_for_user(request, pk)
 
         file_name = request.query_params.get("file")
         if not file_name:
@@ -248,8 +268,7 @@ class ProjectTrainingHistoryAPI(APIView):
     permission_required = ViewClassPermission(GET=all_permissions.projects_view)
 
     def get(self, request, pk: int, *args, **kwargs):
-        project = Project.objects.get(pk=pk)
-        self.check_object_permissions(request, project)
+        project = _get_project_for_user(request, pk)
 
         # Runs are stored by our training job under:
         #   data/training/models/trained/project_<id>/<job_id>/
@@ -292,6 +311,8 @@ class ProjectTrainingHistoryAPI(APIView):
                         "status": run_meta.get("status", "finished" if metrics else "unknown"),
                         "message": run_meta.get("message"),
                         "params": run_meta.get("params"),
+                        "task_type": (run_meta.get("params") or {}).get("task_type"),
+                        "training_model": (run_meta.get("params") or {}).get("training_model"),
                         "error": run_meta.get("error"),
                         "metrics": metrics,
                         "artifacts": files,
@@ -323,6 +344,9 @@ class ProjectTrainingHistoryAPI(APIView):
                         "dataset_id": d.name,
                         "dataset_root": str(d),
                         "meta": meta,
+                        "task_type": (meta or {}).get("task_type"),
+                        "training_model": (meta or {}).get("training_model"),
+                        "dataset_config": (meta or {}).get("dataset_config"),
                         "data_yaml": str(d / "data.yaml") if (d / "data.yaml").exists() else None,
                         "modified_at": d.stat().st_mtime,
                     }
@@ -344,8 +368,7 @@ class ProjectTrainingRunDownloadAPI(APIView):
     def get(self, request, pk: int, run_id: str, *args, **kwargs):
         from django.http import FileResponse, Http404
 
-        project = Project.objects.get(pk=pk)
-        self.check_object_permissions(request, project)
+        project = _get_project_for_user(request, pk)
 
         file_name = request.query_params.get("file")
         if not file_name:

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import gc
 import json
 import logging
+import math
 import os
 import shutil
-import math
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
@@ -50,11 +51,54 @@ def _write_run_meta(run_dir: Path, payload: Dict[str, Any]) -> None:
     _write_json(path, current)
 
 
+def _release_training_resources() -> None:
+    """
+    Release Python / torch resources after training.
+
+    Notes:
+    - On Windows, DataLoader worker processes are often the biggest source of
+      leftover `python.exe` processes, so we also train with `workers=0`.
+    """
+
+    try:
+        import torch  # type: ignore
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+    gc.collect()
+
+
+def _copy_common_artifacts(save_dir: Path, artifacts_dir: Path) -> None:
+    for name in [
+        "args.yaml",
+        "results.csv",
+        "results.png",
+        "confusion_matrix.png",
+        "confusion_matrix_normalized.png",
+        "PR_curve.png",
+        "P_curve.png",
+        "R_curve.png",
+        "F1_curve.png",
+    ]:
+        _copy_if_exists(save_dir / name, artifacts_dir / name)
+
+
+def _read_dataset_config(dataset_config: str) -> Dict[str, Any]:
+    path = Path(dataset_config)
+    if not path.exists():
+        raise FileNotFoundError(f"dataset_config not found: {dataset_config}")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def yolo_detect_train_job(
     *,
     project_id: int,
     base_weights: str,
-    data_yaml: str,
+    data_yaml: str | None = None,
+    dataset_config: str | None = None,
     epochs: int = 50,
     imgsz: int = 640,
     batch: int = 16,
@@ -147,8 +191,12 @@ def yolo_detect_train_job(
         _fail(msg, exc)
         raise
 
-    data_path = Path(data_yaml)
-    if not data_path.exists():
+    if dataset_config:
+        dataset_meta = _read_dataset_config(dataset_config)
+        data_yaml = dataset_meta.get("data_yaml")
+
+    data_path = Path(str(data_yaml)) if data_yaml else None
+    if data_path is None or not data_path.exists():
         msg = f"data.yaml not found: {data_yaml}"
         _fail(msg)
         raise FileNotFoundError(msg)
@@ -162,6 +210,7 @@ def yolo_detect_train_job(
                 "params": {
                     "base_weights": base_weights,
                     "data_yaml": str(data_path),
+                    "dataset_config": dataset_config,
                     "epochs": int(epochs),
                     "imgsz": int(imgsz),
                     "batch": int(batch),
@@ -185,6 +234,7 @@ def yolo_detect_train_job(
             epochs=int(epochs),
             imgsz=int(imgsz),
             batch=int(batch),
+            workers=0,
             project=str(run_dir),
             name="train",
         )
@@ -195,6 +245,7 @@ def yolo_detect_train_job(
             msg = f"{msg} {hint}"
         logger.exception("Training job failed")
         _fail(msg, exc)
+        _release_training_resources()
         raise
 
     # trainer.save_dir usually points to .../<run_dir>/train
@@ -213,18 +264,7 @@ def yolo_detect_train_job(
     _copy_if_exists(best_src, best_dst)
     _copy_if_exists(last_src, last_dst)
 
-    for name in [
-        "args.yaml",
-        "results.csv",
-        "results.png",
-        "confusion_matrix.png",
-        "confusion_matrix_normalized.png",
-        "PR_curve.png",
-        "P_curve.png",
-        "R_curve.png",
-        "F1_curve.png",
-    ]:
-        _copy_if_exists(save_dir / name, artifacts_dir / name)
+    _copy_common_artifacts(save_dir, artifacts_dir)
 
     # Evaluate (val) using best weights if available
     metrics: Dict[str, Any] = {
@@ -235,7 +275,7 @@ def yolo_detect_train_job(
     }
     try:
         eval_weights = str(best_dst) if best_dst.exists() else (str(last_dst) if last_dst.exists() else base_weights)
-        val_res = YOLO(eval_weights).val(data=str(data_path), imgsz=int(imgsz))
+        val_res = YOLO(eval_weights).val(data=str(data_path), imgsz=int(imgsz), workers=0)
         box = getattr(val_res, "box", None) or getattr(val_res, "metrics", None)
         for key in ("map50", "map", "map75", "mp", "mr"):
             val = getattr(box, key, None) if box is not None else getattr(val_res, key, None)
@@ -298,6 +338,228 @@ def yolo_detect_train_job(
             "finished_at": datetime.now().isoformat(),
         },
     )
+    _release_training_resources()
+    return result
 
+
+def yolo_classification_train_job(
+    *,
+    project_id: int,
+    base_weights: str,
+    dataset_config: str,
+    epochs: int = 50,
+    imgsz: int = 640,
+    batch: int = 16,
+    output_root: str,
+) -> Dict[str, Any]:
+    """
+    Train a YOLO classification model using a JSON dataset manifest.
+    """
+
+    job = get_current_job()
+    now = datetime.now().isoformat()
+
+    if job is not None:
+        job.meta.update(
+            {
+                "kind": "yolo_classification_train",
+                "project_id": project_id,
+                "status": "starting",
+                "message": "Starting classification training job",
+                "created_at": now,
+            }
+        )
+        job.save_meta()
+
+    output_root_path = Path(output_root)
+    run_dir = output_root_path / f"project_{project_id}" / (job.id if job is not None else f"job_{now}")
+    _safe_mkdir(run_dir)
+
+    dataset_meta = _read_dataset_config(dataset_config)
+    dataset_root = Path(str(dataset_meta.get("dataset_root") or ""))
+
+    _write_run_meta(
+        run_dir,
+        {
+            "job_id": job.id if job is not None else None,
+            "project_id": project_id,
+            "status": "starting",
+            "message": "Starting classification training job",
+            "created_at": now,
+            "params": {
+                "base_weights": base_weights,
+                "dataset_config": dataset_config,
+                "dataset_root": str(dataset_root),
+                "epochs": int(epochs),
+                "imgsz": int(imgsz),
+                "batch": int(batch),
+                "task_type": "classification",
+                "training_model": "yolo_classify",
+            },
+        },
+    )
+
+    def _fail(message: str, error: Exception | None = None) -> None:
+        if job is not None:
+            job.meta.update(
+                {
+                    "status": "failed",
+                    "message": message,
+                    "error": str(error) if error else None,
+                    "failed_at": datetime.now().isoformat(),
+                }
+            )
+            job.save_meta()
+        _write_run_meta(
+            run_dir,
+            {
+                "status": "failed",
+                "message": message,
+                "error": str(error) if error else None,
+                "failed_at": datetime.now().isoformat(),
+            },
+        )
+
+    try:
+        from ultralytics import YOLO  # type: ignore
+    except Exception as exc:
+        msg = "Ultralytics is not installed on the server. Install `ultralytics` to enable training."
+        logger.exception(msg)
+        _fail(msg, exc)
+        raise
+
+    if not dataset_root.exists():
+        msg = f"classification dataset root not found: {dataset_root}"
+        _fail(msg)
+        raise FileNotFoundError(msg)
+
+    if job is not None:
+        job.meta.update(
+            {
+                "status": "running",
+                "message": "Classification training in progress",
+                "run_dir": str(run_dir),
+                "params": {
+                    "base_weights": base_weights,
+                    "dataset_config": dataset_config,
+                    "dataset_root": str(dataset_root),
+                    "epochs": int(epochs),
+                    "imgsz": int(imgsz),
+                    "batch": int(batch),
+                    "task_type": "classification",
+                    "training_model": "yolo_classify",
+                },
+            }
+        )
+        job.save_meta()
+    _write_run_meta(
+        run_dir,
+        {
+            "status": "running",
+            "message": "Classification training in progress",
+            "run_dir": str(run_dir),
+        },
+    )
+
+    try:
+        model = YOLO(base_weights)
+        model.train(
+            data=str(dataset_root),
+            epochs=int(epochs),
+            imgsz=int(imgsz),
+            batch=int(batch),
+            workers=0,
+            project=str(run_dir),
+            name="train",
+        )
+    except Exception as exc:
+        logger.exception("Classification training job failed")
+        _fail("Classification training failed.", exc)
+        _release_training_resources()
+        raise
+
+    save_dir = getattr(getattr(model, "trainer", None), "save_dir", None)
+    save_dir = Path(save_dir) if save_dir else (run_dir / "train")
+
+    artifacts_dir = run_dir / "artifacts"
+    _safe_mkdir(artifacts_dir)
+
+    weights_dir = save_dir / "weights"
+    best_src = weights_dir / "best.pt"
+    last_src = weights_dir / "last.pt"
+    best_dst = artifacts_dir / "best.pt"
+    last_dst = artifacts_dir / "last.pt"
+
+    _copy_if_exists(best_src, best_dst)
+    _copy_if_exists(last_src, last_dst)
+    _copy_common_artifacts(save_dir, artifacts_dir)
+
+    metrics: Dict[str, Any] = {
+        "timestamp": datetime.now().isoformat(),
+        "project_id": project_id,
+        "base_weights": base_weights,
+        "dataset_config": dataset_config,
+        "dataset_root": str(dataset_root),
+    }
+    try:
+        eval_weights = str(best_dst) if best_dst.exists() else (str(last_dst) if last_dst.exists() else base_weights)
+        val_res = YOLO(eval_weights).val(data=str(dataset_root), imgsz=int(imgsz), workers=0)
+        for key in ("top1", "top5", "fitness"):
+            val = getattr(val_res, key, None)
+            if val is None:
+                continue
+            try:
+                f = float(val)
+                metrics[key] = f if math.isfinite(f) else None
+            except Exception:
+                metrics[key] = val
+    except Exception as exc:
+        metrics["val_error"] = str(exc)
+
+    metrics_path = run_dir / "metrics.json"
+    _write_json(metrics_path, metrics)
+
+    result = {
+        "project_id": project_id,
+        "job_id": job.id if job is not None else None,
+        "status": "finished",
+        "run_dir": str(run_dir),
+        "artifacts_dir": str(artifacts_dir),
+        "best_path": str(best_dst) if best_dst.exists() else None,
+        "last_path": str(last_dst) if last_dst.exists() else None,
+        "metrics_path": str(metrics_path),
+        "metrics": metrics,
+    }
+
+    if job is not None:
+        job.meta.update(
+            {
+                "status": "finished",
+                "message": "Classification training finished",
+                "artifacts_dir": str(artifacts_dir),
+                "best_path": result["best_path"],
+                "last_path": result["last_path"],
+                "metrics_path": str(metrics_path),
+                "metrics": metrics,
+            }
+        )
+        job.save_meta()
+
+    _write_run_meta(
+        run_dir,
+        {
+            "status": "finished",
+            "message": "Classification training finished",
+            "run_dir": str(run_dir),
+            "artifacts_dir": str(artifacts_dir),
+            "best_path": result["best_path"],
+            "last_path": result["last_path"],
+            "metrics_path": str(metrics_path),
+            "metrics": metrics,
+            "finished_at": datetime.now().isoformat(),
+        },
+    )
+
+    _release_training_resources()
     return result
 

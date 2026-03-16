@@ -3,7 +3,7 @@ import types
 import projects.models as project_models
 import pytest
 from django.db import connection
-from projects.models import Project
+from projects.models import Project, ProjectMember
 
 from label_studio.core.utils import db as db_utils
 from label_studio.core.utils.db import has_column_cached
@@ -33,13 +33,13 @@ def test_project_manager_filters_deleted():
     assert set(all_rows) >= {'active', 'deleted'}
 
 
-def test_project_manager_for_user_respects_filter():
-    """for_user applies org scope and soft-delete filter.
+def test_project_manager_for_user_respects_membership_filter():
+    """for_user applies membership scope and soft-delete filter.
 
-    Purpose: Ensure for_user(user) scopes to user's active org and hides deleted rows.
-    Setup: Two orgs; three projects (active+deleted in org1, active in org2).
+    Purpose: Ensure for_user(user) returns only enabled project memberships in active org.
+    Setup: Two orgs; multiple projects with enabled/disabled memberships.
     Actions: Call Project.objects.for_user(user) for org1 user.
-    Validations: Only org1 active project is returned.
+    Validations: Only enabled member project in org1 is returned.
     Edge cases: N/A.
     """
     org1 = OrganizationFactory()
@@ -48,14 +48,21 @@ def test_project_manager_for_user_respects_filter():
     user.active_organization = org1
     user.save(update_fields=['active_organization'])
 
-    p1 = ProjectFactory(organization=org1, title='org1-active')
-    _ = ProjectFactory(organization=org1, title='org1-deleted', deleted_at=p1.created_at)
-    _ = ProjectFactory(organization=org2, title='org2-active')
+    visible_project = ProjectFactory(organization=org1, title='org1-member-visible')
+    hidden_deleted = ProjectFactory(organization=org1, title='org1-deleted', deleted_at=visible_project.created_at)
+    hidden_disabled = ProjectFactory(organization=org1, title='org1-member-disabled')
+    hidden_other_org = ProjectFactory(organization=org2, title='org2-member-visible')
+
+    ProjectMember.objects.create(user=user, project=visible_project, enabled=True)
+    ProjectMember.objects.create(user=user, project=hidden_deleted, enabled=True)
+    ProjectMember.objects.create(user=user, project=hidden_disabled, enabled=False)
+    ProjectMember.objects.create(user=user, project=hidden_other_org, enabled=True)
 
     titles = set(Project.objects.for_user(user).values_list('title', flat=True))
-    assert 'org1-active' in titles
+    assert 'org1-member-visible' in titles
     assert 'org1-deleted' not in titles
-    assert 'org2-active' not in titles
+    assert 'org1-member-disabled' not in titles
+    assert 'org2-member-visible' not in titles
 
 
 def test_visible_manager_skips_filter_without_column(monkeypatch):

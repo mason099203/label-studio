@@ -110,7 +110,23 @@ class ProjectManager(models.Manager):
         return ProjectQuerySetWithFSM(self.model, using=self._db)
 
     def for_user(self, user):
-        return self.get_queryset().filter(organization=user.active_organization)
+        """
+        Return only projects explicitly assigned to the current user.
+
+        Visibility rule:
+        - user must belong to the active organization
+        - user must have an enabled project membership
+        """
+
+        return (
+            self.get_queryset()
+            .filter(
+                organization=user.active_organization,
+                members__user=user,
+                members__enabled=True,
+            )
+            .distinct()
+        )
 
     def with_state(self):
         """

@@ -114,9 +114,9 @@ export const WithMultipleActions: Story = {
     description: "Connect your cloud storage or upload files from your computer",
     actions: (
       <>
-        <Button variant="primary" look="filled" className="flex-1">
+        {/* <Button variant="primary" look="filled" className="flex-1">
           Connect Cloud Storage
-        </Button>
+        </Button> */}
         <Button variant="primary" look="outlined" className="flex-1">
           Upload Files
         </Button>
@@ -140,9 +140,9 @@ export const SizeComparison: Story = {
             description="Connect your cloud storage or upload files from your computer"
             actions={
               <>
-                <Button variant="primary" look="filled" className="flex-1">
+                {/* <Button variant="primary" look="filled" className="flex-1">
                   Connect Cloud Storage
-                </Button>
+                </Button> */}
                 <Button variant="primary" look="outlined" className="flex-1">
                   Import
                 </Button>
@@ -271,7 +271,7 @@ export const DataManagerImport: Story = {
     description: "Connect your cloud storage or upload files from your computer",
     additionalContent: (
       <div className="flex items-center justify-center gap-base">
-        <Tooltip title="Amazon S3">
+        {/* <Tooltip title="Amazon S3">
           <div className="flex items-center justify-center p-2">
             <IconCloudProviderS3 width={32} height={32} className="text-neutral-content-subtler" />
           </div>
@@ -290,14 +290,14 @@ export const DataManagerImport: Story = {
           <div className="flex items-center justify-center p-2">
             <IconCloudProviderRedis width={32} height={32} className="text-neutral-content-subtler" />
           </div>
-        </Tooltip>
+        </Tooltip> */}
       </div>
     ),
     actions: (
       <>
-        <Button variant="primary" look="filled" className="flex-1">
+        {/* <Button variant="primary" look="filled" className="flex-1">
           Connect Cloud Storage
-        </Button>
+        </Button> */}
         <Button variant="primary" look="outlined" className="flex-1">
           Import
         </Button>

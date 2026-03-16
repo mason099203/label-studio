@@ -38,12 +38,13 @@ export const TrainingPage = () => {
   const [errorMessage, setErrorMessage] = useState(null);
   const [localModels, setLocalModels] = useState([]);
   const [selectedBaseWeights, setSelectedBaseWeights] = useState(null);
-  const [dataYamlPath, setDataYamlPath] = useState("");
+  const [datasetConfigPath, setDatasetConfigPath] = useState("");
   const [preparingDataset, setPreparingDataset] = useState(false);
   const [datasetMeta, setDatasetMeta] = useState(null);
   const [jobId, setJobId] = useState(null);
   const [jobInfo, setJobInfo] = useState(null);
   const [trainingHistory, setTrainingHistory] = useState(null);
+  const [trainingSpec, setTrainingSpec] = useState(null);
 
   const closeAndBack = useCallback(() => {
     const path = location.pathname.replace(TrainingPage.path, "");
@@ -83,6 +84,7 @@ export const TrainingPage = () => {
         const models = res?.models ?? [];
 
         setLocalModels(Array.isArray(models) ? models : []);
+        setTrainingSpec(res?.training_spec ?? null);
         if (models?.length) setSelectedBaseWeights(models[0].path);
       });
 
@@ -116,13 +118,13 @@ export const TrainingPage = () => {
     try {
       if (!pageParams?.id) return;
       if (!selectedBaseWeights) throw new Error("請先選擇 base 模型（權重檔）");
-      if (!dataYamlPath) throw new Error("請輸入 data.yaml 路徑");
+      if (!datasetConfigPath) throw new Error("請輸入 dataset_config.json 路徑");
 
       const res = await api.callApi("trainingCreateJob", {
         params: { pk: pageParams.id },
         body: {
           base_weights: selectedBaseWeights,
-          data_yaml: dataYamlPath,
+          dataset_config: datasetConfigPath,
           epochs: 50,
           imgsz: 640,
           batch: 16,
@@ -134,7 +136,7 @@ export const TrainingPage = () => {
       setErrorMessage(err?.message ?? "Training failed");
       setTrainingState("error");
     }
-  }, [pageParams?.id, selectedBaseWeights, dataYamlPath]);
+  }, [pageParams?.id, selectedBaseWeights, datasetConfigPath]);
 
   const prepareDatasetFromExport = useCallback(async () => {
     setErrorMessage(null);
@@ -150,7 +152,7 @@ export const TrainingPage = () => {
         },
       });
       setDatasetMeta(meta);
-      if (meta?.data_yaml) setDataYamlPath(meta.data_yaml);
+      if (meta?.dataset_config) setDatasetConfigPath(meta.dataset_config);
     } catch (err) {
       setErrorMessage(err?.message ?? "Dataset preparation failed");
     } finally {
@@ -162,15 +164,15 @@ export const TrainingPage = () => {
     localModels.length > 0 &&
     trainingState === "idle" &&
     Boolean(selectedBaseWeights) &&
-    Boolean(dataYamlPath);
+    Boolean(datasetConfigPath);
 
-  const hasDatasetReady = Boolean(dataYamlPath);
+  const hasDatasetReady = Boolean(datasetConfigPath);
 
   const disabledReason = (() => {
     if (trainingState !== "idle") return "目前已有任務進行中";
     if (localModels.length === 0) return "找不到本機權重檔（請確認 data/training/models/original/）";
     if (!selectedBaseWeights) return "請先選擇 base 模型";
-    if (!dataYamlPath) return "請先輸入或從 Export 產生 data.yaml";
+    if (!datasetConfigPath) return "請先輸入或從 Export 產生 dataset_config.json";
     return null;
   })();
 
@@ -260,7 +262,14 @@ export const TrainingPage = () => {
           {!hasDatasetReady && (
             <div className={cn("training-page").elem("warning").toClassName()}>
               <IconWarningCircleFilled />
-              尚未準備訓練資料集，請先「從 Export 產生 data.yaml」或手動填入 data.yaml 路徑。
+              尚未準備訓練資料集，請先「從 Export 產生 dataset_config.json」或手動填入 JSON 設定路徑。
+            </div>
+          )}
+          {(datasetMeta?.task_type || trainingSpec?.task_type) && (
+            <div className={cn("training-page").elem("hint").toClassName()} style={{ marginTop: 8 }}>
+              任務類型：{datasetMeta?.task_type ?? trainingSpec?.task_type} / 訓練模型：
+              {" "}
+              {datasetMeta?.training_model ?? trainingSpec?.training_model}
             </div>
           )}
         </div>
@@ -296,11 +305,12 @@ export const TrainingPage = () => {
           )}
         </div>
 
-        {/* data.yaml 路徑 */}
+        {/* dataset_config.json 路徑 */}
         <div className={cn("training-page").elem("section").toClassName()}>
           <div className={cn("training-page").elem("section-title").toClassName()}>資料集設定</div>
           <div className={cn("training-page").elem("hint").toClassName()}>
-            你可以直接填入既有 `data.yaml` 路徑，或點下方按鈕從本專案 Export 產生（Label Studio JSON → YOLO_WITH_IMAGES → data.yaml）。
+            會依專案的 Labeling Interface 自動輸出對應的 JSON 設定檔：
+            detect 會建立 YOLO detect dataset，classification 會建立分類資料夾與 JSON manifest。
           </div>
           <div style={{ marginTop: 10 }}>
             <Button
@@ -311,20 +321,20 @@ export const TrainingPage = () => {
               disabled={!isDefined(pageParams?.id)}
               aria-label="Prepare dataset from export"
             >
-              從 Export 產生 data.yaml
+              從 Export 產生 dataset_config.json
             </Button>
           </div>
           <div className={cn("training-page").elem("stats").toClassName()} style={{ marginTop: 8 }}>
             <input
               className="w-full"
-              value={dataYamlPath}
-              placeholder="例如：D:\\ai_test\\project\\label-studio\\data\\training\\datasets\\project_1\\data.yaml"
-              onChange={(e) => setDataYamlPath(e.target.value)}
+              value={datasetConfigPath}
+              placeholder="例如：D:\\ai_test\\project\\label-studio\\data\\training\\datasets\\project_1\\20260313_120000\\dataset_config.json"
+              onChange={(e) => setDatasetConfigPath(e.target.value)}
             />
           </div>
-          {datasetMeta?.data_yaml && (
+          {datasetMeta?.dataset_config && (
             <div className={cn("training-page").elem("hint").toClassName()} style={{ marginTop: 8 }}>
-              已產生資料集：{datasetMeta.dataset_root}（train {datasetMeta.train_count} / val {datasetMeta.val_count}）
+              已產生資料集：{datasetMeta.dataset_root}（{datasetMeta.task_type} / {datasetMeta.training_model} / train {datasetMeta.train_count} / val {datasetMeta.val_count}）
             </div>
           )}
         </div>
@@ -367,13 +377,21 @@ export const TrainingPage = () => {
               <IconAnalytics /> 訓練效能
             </div>
             <div className={cn("training-page").elem("metrics").toClassName()}>
-              {[
-                ["mAP@0.5", metrics.map50],
-                ["mAP@0.5:0.95", metrics.map],
-                ["mAP@0.75", metrics.map75],
-                ["Precision (mp)", metrics.mp],
-                ["Recall (mr)", metrics.mr],
-              ].map(([label, value]) => (
+              {(
+                metrics?.top1 != null || metrics?.top5 != null
+                  ? [
+                      ["Top-1", metrics.top1],
+                      ["Top-5", metrics.top5],
+                      ["Fitness", metrics.fitness],
+                    ]
+                  : [
+                      ["mAP@0.5", metrics.map50],
+                      ["mAP@0.5:0.95", metrics.map],
+                      ["mAP@0.75", metrics.map75],
+                      ["Precision (mp)", metrics.mp],
+                      ["Recall (mr)", metrics.mr],
+                    ]
+              ).map(([label, value]) => (
                 <div key={label} className={cn("training-page").elem("metric").toClassName()}>
                   <span className={cn("training-page").elem("metric-label").toClassName()}>{label}</span>
                   <span className={cn("training-page").elem("metric-value").toClassName()}>
@@ -439,9 +457,17 @@ export const TrainingPage = () => {
                   <div key={r.run_id} style={{ marginBottom: 10 }}>
                     <div>
                       <span style={{ fontFamily: "monospace" }}>{r.run_id}</span>
+                      {r.task_type && (
+                        <span style={{ marginLeft: 8, color: "var(--color-neutral-content-subtle)" }}>{r.task_type}</span>
+                      )}
                       {r.metrics?.map50 != null && (
                         <span style={{ marginLeft: 8, color: "var(--color-neutral-content-subtle)" }}>
                           mAP50: {(r.metrics.map50 * 100).toFixed(2)}%
+                        </span>
+                      )}
+                      {r.metrics?.top1 != null && (
+                        <span style={{ marginLeft: 8, color: "var(--color-neutral-content-subtle)" }}>
+                          Top-1: {(r.metrics.top1 * 100).toFixed(2)}%
                         </span>
                       )}
                     </div>
@@ -477,7 +503,9 @@ export const TrainingPage = () => {
                       )}
                     </div>
                     <div style={{ marginTop: 6, color: "var(--color-neutral-content-subtle)" }}>
-                      data.yaml: {d.data_yaml ?? "—"}
+                      {d.task_type ?? "unknown"} / {d.training_model ?? "unknown"} / dataset_config:
+                      {" "}
+                      {d.dataset_config ?? d.data_yaml ?? "—"}
                     </div>
                   </div>
                 ))}
