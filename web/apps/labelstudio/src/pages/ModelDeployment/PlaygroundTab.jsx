@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Typography } from "@humansignal/ui";
 import { useAPI } from "../../providers/ApiProvider";
 import { cn } from "../../utils/bem";
-import "./ModelDeployment.module.scss";
+import "./ModelDeployment.scss";
 
 const rootClass = cn("playground-tab");
 const PLAYGROUND_STATE_KEY = "labelstudio.triton.playground";

@@ -6,7 +6,7 @@ import { cn } from "../../utils/bem";
 import { Modal, confirm } from "../../components/Modal/Modal";
 import { useProject } from "../../providers/ProjectProvider";
 import { Toggle } from "../../components/Form";
-import "./ModelDeployment.module.scss";
+import "./ModelDeployment.scss";
 
 const rootClass = cn("model-deploy-tab");
 

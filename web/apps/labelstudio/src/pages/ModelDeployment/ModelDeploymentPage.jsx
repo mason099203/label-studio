@@ -4,7 +4,7 @@ import { DeployTab } from "./DeployTab";
 import { PlaygroundTab } from "./PlaygroundTab";
 import { LogsAndMetricsTab } from "./LogsAndMetricsTab";
 import { cn } from "../../utils/bem";
-import "./ModelDeployment.module.scss";
+import "./ModelDeployment.scss";
 
 const rootClass = cn("model-deployment-page");
 

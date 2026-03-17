@@ -7,7 +7,7 @@ import { cn } from "../../utils/bem";
 import { MONITORING_ENDPOINTS } from "./config";
 import { useAPI } from "../../providers/ApiProvider";
 import { useProject } from "../../providers/ProjectProvider";
-import "./ModelDeployment.module.scss";
+import "./ModelDeployment.scss";
 
 const rootClass = cn("logs-metrics-tab");
 const VIEW_MODES = {
