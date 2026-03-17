@@ -89,6 +89,7 @@ export const API_CONFIG = {
     trainingTritonModels: "/projects/:pk/training/triton/models/",
     trainingTritonInfer: "POST:/projects/:pk/training/triton/infer/",
     trainingModelUpload: "POST:/projects/:pk/training/upload",
+    trainingMetrics: "GET:/projects/:pk/training/metrics",
 
     // Version
     version: "/version",

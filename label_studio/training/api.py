@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import json
+import re
+import time
 from typing import Any, Dict, List
 import requests
 
@@ -28,6 +30,9 @@ from .triton_export import (
     list_triton_model_deployments,
     sanitize_triton_model_name,
 )
+
+
+_TRITON_COUNTER_CACHE: Dict[str, Dict[str, float]] = {}
 
 
 def _get_original_models_dir() -> Path:
@@ -70,6 +75,252 @@ def _get_project_for_user(request, pk: int) -> Project:
     """
 
     return get_object_or_404(Project.objects.for_user(request.user), pk=pk)
+
+
+def _safe_float(value: Any) -> float:
+    """
+    Convert a metric value to float, returning 0 for invalid values.
+    """
+
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _parse_prometheus_labels(label_text: str) -> Dict[str, str]:
+    """
+    Parse Prometheus label text into a dict.
+    """
+
+    labels: Dict[str, str] = {}
+    if not label_text:
+        return labels
+
+    for key, value in re.findall(r'(\w+)="([^"]*)"', label_text):
+        labels[key] = value
+
+    return labels
+
+
+def _parse_prometheus_metrics(payload: str) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Parse Prometheus text exposition into grouped metric samples.
+    """
+
+    metrics: Dict[str, List[Dict[str, Any]]] = {}
+
+    for raw_line in payload.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        try:
+            metric_part, value_part = line.rsplit(" ", 1)
+        except ValueError:
+            continue
+
+        label_start = metric_part.find("{")
+        if label_start >= 0 and metric_part.endswith("}"):
+            metric_name = metric_part[:label_start]
+            labels = _parse_prometheus_labels(metric_part[label_start + 1 : -1])
+        else:
+            metric_name = metric_part
+            labels = {}
+
+        metrics.setdefault(metric_name, []).append(
+            {
+                "labels": labels,
+                "value": _safe_float(value_part),
+            }
+        )
+
+    return metrics
+
+
+def _sum_metric_samples(
+    metrics: Dict[str, List[Dict[str, Any]]],
+    metric_name: str,
+    *,
+    label_key: str | None = None,
+    label_value: str | None = None,
+) -> float:
+    """
+    Sum a Prometheus metric, optionally filtered by a label.
+    """
+
+    total = 0.0
+    for sample in metrics.get(metric_name, []):
+        labels = sample.get("labels", {})
+        if label_key and labels.get(label_key) != label_value:
+            continue
+        total += _safe_float(sample.get("value"))
+    return total
+
+
+def _compute_counter_rate(cache_key: str, counter_value: float) -> float:
+    """
+    Compute a best-effort per-second rate from a cumulative counter.
+    """
+
+    now = time.monotonic()
+    cached = _TRITON_COUNTER_CACHE.get(cache_key)
+    _TRITON_COUNTER_CACHE[cache_key] = {"ts": now, "value": counter_value}
+
+    if not cached:
+        return 0.0
+
+    delta_time = now - cached["ts"]
+    delta_value = counter_value - cached["value"]
+
+    if delta_time <= 0 or delta_value < 0:
+        return 0.0
+
+    return round(delta_value / delta_time, 2)
+
+
+def _fetch_triton_service_health(timeout: float = 1.5) -> Dict[str, Any]:
+    """
+    Fetch Triton liveness and readiness endpoints.
+    """
+
+    base_url = get_triton_server_url()
+    live = False
+    ready = False
+    detail = None
+
+    try:
+        live = requests.get(f"{base_url}/v2/health/live", timeout=timeout).ok
+        ready = requests.get(f"{base_url}/v2/health/ready", timeout=timeout).ok
+    except requests.RequestException as exc:
+        detail = str(exc)
+
+    return {
+        "base_url": base_url,
+        "live": live,
+        "ready": ready,
+        "status": "online" if live and ready else "degraded" if live or ready else "offline",
+        "detail": detail,
+    }
+
+
+def _fetch_triton_model_ready_state(model_name: str, timeout: float = 1.5) -> bool:
+    """
+    Fetch Triton readiness for a single deployed model.
+    """
+
+    try:
+        response = requests.get(f"{get_triton_server_url()}/v2/models/{model_name}/ready", timeout=timeout)
+        return response.ok
+    except requests.RequestException:
+        return False
+
+
+def _matches_scope(project: Project, user_id: int, deployment: Dict[str, Any], scope: str) -> bool:
+    """
+    Check whether a deployment belongs to the requested scope.
+    """
+
+    if scope != "mine":
+        return True
+
+    owner_id = deployment.get("deployed_by_user_id")
+    if owner_id == user_id:
+        return True
+
+    if owner_id is None and project.created_by_id == user_id:
+        return True
+
+    return False
+
+
+def _build_model_usage_stats(
+    project: Project,
+    user_id: int,
+    scope: str,
+    metrics_payload: str | None,
+) -> Dict[str, Any]:
+    """
+    Build per-model usage stats from Triton deployments and Prometheus metrics.
+    """
+
+    raw_deployments = list_triton_model_deployments(project_ids=[project.id])
+    deployments = [item for item in raw_deployments if _matches_scope(project, user_id, item, scope)]
+    parsed_metrics = _parse_prometheus_metrics(metrics_payload or "")
+
+    models = []
+    total_success = 0.0
+    total_failure = 0.0
+    total_latency_us = 0.0
+    total_rps = 0.0
+
+    for deployment in deployments:
+        model_name = deployment.get("model_name")
+        success_count = _sum_metric_samples(
+            parsed_metrics,
+            "nv_inference_request_success",
+            label_key="model",
+            label_value=model_name,
+        )
+        failure_count = _sum_metric_samples(
+            parsed_metrics,
+            "nv_inference_request_failure",
+            label_key="model",
+            label_value=model_name,
+        )
+        request_duration_us = _sum_metric_samples(
+            parsed_metrics,
+            "nv_inference_request_duration_us",
+            label_key="model",
+            label_value=model_name,
+        )
+        request_count = success_count + failure_count
+        avg_latency_ms = round((request_duration_us / request_count) / 1000, 2) if request_count > 0 else 0.0
+        model_rps = _compute_counter_rate(
+            f"project:{project.id}:scope:{scope}:model:{model_name}:success",
+            success_count,
+        )
+        is_ready = _fetch_triton_model_ready_state(model_name) if model_name else False
+        is_owned = deployment.get("deployed_by_user_id") == user_id or (
+            deployment.get("deployed_by_user_id") is None and project.created_by_id == user_id
+        )
+
+        total_success += success_count
+        total_failure += failure_count
+        total_latency_us += request_duration_us
+        total_rps += model_rps
+
+        models.append(
+            {
+                **deployment,
+                "name": model_name,
+                "request_count": int(request_count),
+                "success_count": int(success_count),
+                "error_count": int(failure_count),
+                "latency_ms": avg_latency_ms,
+                "rps": model_rps,
+                "ready": is_ready,
+                "owned_by_current_user": is_owned,
+                "status": "Online" if deployment.get("exists") and is_ready else "Offline",
+            }
+        )
+
+    total_requests = total_success + total_failure
+    average_latency_ms = round((total_latency_us / total_requests) / 1000, 2) if total_requests > 0 else 0.0
+    success_rate = round((total_success / total_requests) * 100, 2) if total_requests > 0 else 100.0
+
+    return {
+        "deployments": deployments,
+        "models": models,
+        "summary": {
+            "active_models": len([model for model in models if model.get("ready")]),
+            "total_models": len(models),
+            "request_count": int(total_requests),
+            "rps": round(total_rps, 2),
+            "latency": average_latency_ms,
+            "success_rate": success_rate,
+        },
+    }
 
 
 class ProjectTrainingModelsAPI(APIView):
@@ -448,6 +699,8 @@ class ProjectTrainingRunDeployToTritonAPI(APIView):
                 project_id=project.id,
                 run_id=run_id,
                 imgsz=imgsz,
+                deployed_by_user_id=request.user.id,
+                deployed_by_username=request.user.username,
             )
         else:
             imgsz = int(payload.get("imgsz", 640))
@@ -458,6 +711,8 @@ class ProjectTrainingRunDeployToTritonAPI(APIView):
                 run_id=run_id,
                 triton_repo_root=None,
                 imgsz=imgsz,
+                deployed_by_user_id=request.user.id,
+                deployed_by_username=request.user.username,
             )
 
         if result.get("error"):
@@ -486,10 +741,19 @@ class ProjectTrainingTritonModelsAPI(APIView):
 
     def get(self, request, pk: int, *args, **kwargs):
         project = _get_project_for_user(request, pk)
+        scope = (request.query_params.get("scope") or "project").strip().lower()
         deployments = list_triton_model_deployments(project_ids=[project.id])
+        deployments = [item for item in deployments if _matches_scope(project, request.user.id, item, scope)]
+
+        for item in deployments:
+            item["owned_by_current_user"] = item.get("deployed_by_user_id") == request.user.id or (
+                item.get("deployed_by_user_id") is None and project.created_by_id == request.user.id
+            )
+
         return Response(
             {
                 "project_id": project.id,
+                "scope": scope,
                 "triton_repo_root": str(get_triton_model_repository_root()),
                 "triton_server_url": get_triton_server_url(),
                 "models": deployments,
@@ -608,6 +872,8 @@ class ProjectTrainingModelUploadAPI(APIView):
             project_id=project.id,
             run_id="manual_upload",
             imgsz=imgsz,
+            deployed_by_user_id=request.user.id,
+            deployed_by_username=request.user.username,
         )
         
         # Clean up temp file
@@ -626,4 +892,65 @@ class ProjectTrainingModelUploadAPI(APIView):
                 **result,
             },
             status=status.HTTP_201_CREATED,
+        )
+
+
+class ProjectTrainingMetricsAPI(APIView):
+    """
+    Fetch real-time hardware and Triton inference metrics.
+    """
+
+    permission_required = ViewClassPermission(GET=all_permissions.projects_view)
+
+    def get(self, request, pk: int, *args, **kwargs):
+        import psutil
+
+        project = _get_project_for_user(request, pk)
+        scope = (request.query_params.get("scope") or "project").strip().lower()
+        cpu_usage = psutil.cpu_percent()
+        ram = psutil.virtual_memory()
+        ram_usage = ram.percent
+        ram_used_gb = round(ram.used / (1024**3), 2)
+        triton_health = _fetch_triton_service_health()
+        metrics_payload = None
+        metrics_available = False
+        parsed_metrics: Dict[str, List[Dict[str, Any]]] = {}
+        try:
+            metrics_res = requests.get("http://localhost:8002/metrics", timeout=2)
+            if metrics_res.ok:
+                metrics_payload = metrics_res.text
+                parsed_metrics = _parse_prometheus_metrics(metrics_payload)
+                metrics_available = True
+        except requests.RequestException:
+            pass
+
+        gpu_util_samples = [_safe_float(sample.get("value")) for sample in parsed_metrics.get("nv_gpu_utilization", [])]
+        gpu_usage = round(sum(gpu_util_samples) / len(gpu_util_samples), 2) if gpu_util_samples else 0.0
+        vram_used = _sum_metric_samples(parsed_metrics, "nv_gpu_memory_used_bytes") / (1024**3)
+        vram_total = _sum_metric_samples(parsed_metrics, "nv_gpu_memory_total_bytes") / (1024**3)
+        usage_stats = _build_model_usage_stats(project, request.user.id, scope, metrics_payload)
+        inference_summary = usage_stats["summary"]
+
+        return Response(
+            {
+                "scope": scope,
+                "viewer": {
+                    "id": request.user.id,
+                    "username": request.user.username,
+                },
+                "health": {
+                    **triton_health,
+                    "metrics_available": metrics_available,
+                },
+                "hardware": {
+                    "cpu": round(cpu_usage, 2),
+                    "ram": round(ram_usage, 2),
+                    "ram_used_gb": ram_used_gb,
+                    "gpu": gpu_usage,
+                    "vram_used_gb": round(vram_used, 2),
+                    "vram_total_gb": round(vram_total, 2),
+                },
+                "inference": inference_summary,
+                "models": usage_stats["models"],
+            }
         )

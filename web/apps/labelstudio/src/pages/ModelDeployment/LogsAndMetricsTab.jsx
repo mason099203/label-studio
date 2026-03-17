@@ -1,19 +1,26 @@
-import { useState } from "react";
-import { Typography, Button, buttonVariant } from "@humansignal/ui";
-import { IconExternal, IconTerminal, IconCode, IconInfoOutline } from "@humansignal/icons";
+import { useState, useEffect, useCallback } from "react";
+import { Typography, Button, buttonVariant, Spinner } from "@humansignal/ui";
+import { IconExternal, IconTerminal, IconCode, IconInfoOutline, IconAnalytics } from "@humansignal/icons";
+import { ToggleItems } from "../../components";
 import { cn } from "../../utils/bem";
 import { MONITORING_ENDPOINTS } from "./config";
+import { useAPI } from "../../providers/ApiProvider";
+import { useProject } from "../../providers/ProjectProvider";
 import "./ModelDeployment.module.scss";
 
 const rootClass = cn("logs-metrics-tab");
+const VIEW_MODES = {
+  mine: "我的部署",
+  project: "專案全部",
+};
 
 /**
  * 數據統計磁貼元件
  */
-function StatCard({ label, value, unit, icon: Icon }) {
+function StatCard({ label, value, unit, icon: Icon, color = "#6366f1" }) {
   return (
     <div className={rootClass.elem("stat-card").toClassName()}>
-      <div className="icon" style={{ color: "#6366f1", marginBottom: 8 }}>
+      <div className="icon" style={{ color: color, marginBottom: 8 }}>
         {typeof Icon === "function" ? <Icon size={24} /> : <IconInfoOutline size={24} />}
       </div>
       <div className="label">{label}</div>
@@ -24,15 +31,98 @@ function StatCard({ label, value, unit, icon: Icon }) {
   );
 }
 
-export function LogsAndMetricsTab() {
-  const [iframeUrl, setIframeUrl] = useState(null);
+/**
+ * 格式化數值，避免畫面顯示過長小數。
+ * @param {number | string | null | undefined} value
+ * @param {number} decimals
+ * @returns {string | number}
+ */
+function formatValue(value, decimals = 2) {
+  if (typeof value !== "number") return value ?? 0;
+  return Number.isInteger(value) ? value : value.toFixed(decimals);
+}
 
-  // 模擬數據：實際應從 Triton Metrics 或 Prometheus 獲取
-  const stats = [
-    { label: "平均延遲 (Lat)", value: "42.5", unit: "ms", icon: IconTerminal },
-    { label: "每秒請求 (RPS)", value: "128", unit: "req/s", icon: IconExternal },
-    { label: "GPU 使用率", value: "65", unit: "%", icon: IconCode },
-    { label: "VRAM 佔用", value: "4.2", unit: "GB", icon: IconTerminal },
+/**
+ * 轉換 Triton 健康狀態顯示樣式。
+ * @param {string | null | undefined} status
+ * @returns {{ label: string, background: string, color: string }}
+ */
+function getHealthBadge(status) {
+  if (status === "online" || status === "Online") {
+    return { label: "Online", background: "#dcfce7", color: "#166534" };
+  }
+
+  if (status === "degraded" || status === "Degraded") {
+    return { label: "Degraded", background: "#fef9c3", color: "#854d0e" };
+  }
+
+  return { label: "Offline", background: "#fee2e2", color: "#991b1b" };
+}
+
+export function LogsAndMetricsTab() {
+  const api = useAPI();
+  const project = useProject()?.project;
+  const [iframeUrl, setIframeUrl] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState(null);
+  const [scope, setScope] = useState("mine");
+
+  const fetchMetrics = useCallback(async () => {
+    if (!project?.id) return;
+    try {
+      const res = await api.callApi("trainingMetrics", { params: { pk: project.id, scope } });
+      setData(res);
+    } catch (e) {
+      console.error("Failed to fetch metrics", e);
+    } finally {
+      setLoading(false);
+    }
+  }, [api, project?.id, scope]);
+
+  useEffect(() => {
+    fetchMetrics();
+    const timer = setInterval(fetchMetrics, 5000); // 5 sec poll
+    return () => clearInterval(timer);
+  }, [fetchMetrics]);
+
+  if (loading && !data) return <Spinner size={32} centered />;
+
+  const health = data?.health ?? {};
+  const hardware = data?.hardware ?? {};
+  const inference = data?.inference ?? {};
+  const modelUsage = data?.models ?? [];
+  const serviceBadge = getHealthBadge(health.status);
+
+  const hardwareStats = [
+    { label: "GPU 使用率", value: formatValue(hardware.gpu), unit: "%", icon: IconAnalytics, color: "#10b981" },
+    {
+      label: "VRAM 佔用",
+      value: formatValue(hardware.vram_used_gb),
+      unit: `GB / ${formatValue(hardware.vram_total_gb)}`,
+      icon: IconTerminal,
+      color: "#6366f1",
+    },
+    { label: "CPU 使用率", value: formatValue(hardware.cpu), unit: "%", icon: IconCode, color: "#f59e0b" },
+    {
+      label: "系統記憶體",
+      value: formatValue(hardware.ram),
+      unit: `% (${formatValue(hardware.ram_used_gb)}GB)`,
+      icon: IconInfoOutline,
+      color: "#3b82f6",
+    },
+  ];
+
+  const perfStats = [
+    { label: "平均延遲", value: formatValue(inference.latency), unit: "ms", icon: IconAnalytics },
+    { label: "每秒請求", value: formatValue(inference.rps), unit: "req/s", icon: IconExternal },
+    { label: "成功率", value: formatValue(inference.success_rate), unit: "%", icon: IconAnalytics },
+    {
+      label: "啟用模型數",
+      value: formatValue(inference.active_models ?? 0, 0),
+      unit: `/ ${formatValue(inference.total_models ?? 0, 0)}`,
+      icon: IconCode,
+      color: "#10b981",
+    },
   ];
 
   return (
@@ -41,9 +131,100 @@ export function LogsAndMetricsTab() {
         性能指標與監控日誌
       </Typography>
 
-      {/* 數據概覽磁貼 */}
-      <div className={rootClass.elem("stats-grid").toClassName()}>
-        {stats.map(s => <StatCard key={s.label} {...s} />)}
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "center", marginBottom: 24, flexWrap: "wrap" }}>
+        <div>
+          <Typography variant="body" size="small" className="text-neutral-content-subtle">
+            目前檢視：{VIEW_MODES[scope]}{data?.viewer?.username ? ` (${data.viewer.username})` : ""}
+          </Typography>
+          <Typography variant="body" size="small" className="text-neutral-content-subtle">
+            Triton 服務：{" "}
+            <span
+              style={{
+                padding: "2px 8px",
+                borderRadius: 999,
+                background: serviceBadge.background,
+                color: serviceBadge.color,
+                fontWeight: 600,
+              }}
+            >
+              {serviceBadge.label}
+            </span>
+            {health.metrics_available ? " / Metrics 已連線" : " / Metrics 未連線"}
+          </Typography>
+        </div>
+        <ToggleItems items={VIEW_MODES} active={scope} onSelect={setScope} />
+      </div>
+
+      <Typography variant="title" size="medium" className="mb-tight">硬體資源監控</Typography>
+      <div className={rootClass.elem("stats-grid").toClassName()} style={{ marginBottom: 32 }}>
+        {hardwareStats.map(s => <StatCard key={s.label} {...s} />)}
+      </div>
+
+      <Typography variant="title" size="medium" className="mb-tight">推論效能指標</Typography>
+      <div className={rootClass.elem("stats-grid").toClassName()} style={{ marginBottom: 32 }}>
+        {perfStats.map(s => <StatCard key={s.label} {...s} />)}
+      </div>
+
+      <Typography variant="title" size="medium" className="mb-tight">個別模型使用情況</Typography>
+      <div className={rootClass.elem("usage-table-wrap").toClassName()} style={{
+        background: "rgba(255, 255, 255, 0.6)",
+        backdropFilter: "blur(10px)",
+        padding: 24, borderRadius: 16, border: '1px solid #e2e8f0',
+        marginBottom: 32,
+        overflowX: "auto",
+      }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}>
+          <thead>
+            <tr style={{ textAlign: "left", borderBottom: "1px solid #cbd5e1" }}>
+              <th style={{ padding: "12px 0", color: "#64748b" }}>模型名稱</th>
+              <th style={{ padding: "12px 0", color: "#64748b" }}>部署者</th>
+              <th style={{ padding: "12px 0", color: "#64748b" }}>請求總數</th>
+              <th style={{ padding: "12px 0", color: "#64748b" }}>RPS</th>
+              <th style={{ padding: "12px 0", color: "#64748b" }}>平均延遲</th>
+              <th style={{ padding: "12px 0", color: "#64748b" }}>成功 / 失敗</th>
+              <th style={{ padding: "12px 0", color: "#64748b" }}>狀態</th>
+            </tr>
+          </thead>
+          <tbody>
+            {modelUsage.length > 0 ? modelUsage.map((m) => {
+              const badge = getHealthBadge(m.status);
+
+              return (
+                <tr key={m.name} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                  <td style={{ padding: "16px 0", fontWeight: 500 }}>
+                    <div>{m.name}</div>
+                    <small style={{ color: "#64748b" }}>{m.owned_by_current_user ? "目前使用者部署" : "其他成員部署"}</small>
+                  </td>
+                  <td style={{ padding: "16px 0" }}>{m.deployed_by_username ?? "未記錄"}</td>
+                  <td style={{ padding: "16px 0" }}>{formatValue(m.request_count, 0)}</td>
+                  <td style={{ padding: "16px 0" }}>{formatValue(m.rps)} <small>req/s</small></td>
+                  <td style={{ padding: "16px 0" }}>{formatValue(m.latency_ms)} <small>ms</small></td>
+                  <td style={{ padding: "16px 0" }}>
+                    {formatValue(m.success_count, 0)} / {formatValue(m.error_count, 0)}
+                  </td>
+                  <td style={{ padding: "16px 0" }}>
+                    <span style={{
+                      padding: "4px 8px",
+                      borderRadius: 4,
+                      fontSize: 12,
+                      background: badge.background,
+                      color: badge.color,
+                    }}
+                    >
+                      {badge.label}
+                    </span>
+                  </td>
+                </tr>
+              );
+            }) : (
+              <tr>
+                <td colSpan={7} style={{ padding: "24px 0", color: "#64748b", textAlign: "center" }}>
+                  目前沒有符合此檢視條件的部署模型。
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
 
       <Typography variant="title" size="medium" className="mb-tight">

@@ -96,6 +96,16 @@ _api_urlpatterns = [
         training_api.ProjectTrainingTritonInferAPI.as_view(),
         name='project-training-triton-infer',
     ),
+    path(
+        '<int:pk>/training/upload',
+        training_api.ProjectTrainingModelUploadAPI.as_view(),
+        name='project-training-upload',
+    ),
+    path(
+        '<int:pk>/training/metrics',
+        training_api.ProjectTrainingMetricsAPI.as_view(),
+        name='project-training-metrics',
+    ),
 ]
 
 _api_urlpatterns_templates = [

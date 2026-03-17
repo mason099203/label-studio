@@ -82,6 +82,8 @@ def export_torchscript_pt_to_triton(
     run_id: Optional[str] = None,
     triton_repo_root: Optional[str | Path] = None,
     imgsz: int = 224,
+    deployed_by_user_id: Optional[int] = None,
+    deployed_by_username: Optional[str] = None,
 ) -> dict:
     """
     Export a general TorchScript model (.pt) into Triton's libtorch layout.
@@ -117,7 +119,9 @@ def export_torchscript_pt_to_triton(
         "imgsz": imgsz,
         "model_pt_path": str(model_pt_path.resolve()),
         "deployed_at": datetime.now(timezone.utc).isoformat(),
-        "model_type": "torchscript_cnn"
+        "model_type": "torchscript_cnn",
+        "deployed_by_user_id": deployed_by_user_id,
+        "deployed_by_username": deployed_by_username,
     }
     metadata_path.write_text(json.dumps(metadata, ensure_ascii=True, indent=2), encoding="utf-8")
 
@@ -137,6 +141,8 @@ def export_yolo_pt_to_triton(
     run_id: Optional[str] = None,
     triton_repo_root: Optional[str | Path] = None,
     imgsz: int = 640,
+    deployed_by_user_id: Optional[int] = None,
+    deployed_by_username: Optional[str] = None,
 ) -> dict:
     """
     Export a trained YOLO checkpoint into Triton's libtorch model layout.
@@ -199,6 +205,8 @@ def export_yolo_pt_to_triton(
         "config_path": str(config_path.resolve()),
         "legacy_bptxt_path": str(legacy_bptxt_path.resolve()),
         "deployed_at": datetime.now(timezone.utc).isoformat(),
+        "deployed_by_user_id": deployed_by_user_id,
+        "deployed_by_username": deployed_by_username,
     }
     metadata_path.write_text(json.dumps(metadata, ensure_ascii=True, indent=2), encoding="utf-8")
 
@@ -215,7 +223,10 @@ def export_yolo_pt_to_triton(
     }
 
 
-def list_triton_model_deployments(project_ids: Optional[Iterable[int]] = None) -> list[dict]:
+def list_triton_model_deployments(
+    project_ids: Optional[Iterable[int]] = None,
+    deployed_by_user_ids: Optional[Iterable[int]] = None,
+) -> list[dict]:
     """
     List Triton deployments discovered from repository metadata files.
     """
@@ -224,6 +235,7 @@ def list_triton_model_deployments(project_ids: Optional[Iterable[int]] = None) -
         return []
 
     allowed_projects = {int(project_id) for project_id in project_ids or []}
+    allowed_users = {int(user_id) for user_id in deployed_by_user_ids or []}
     items = []
 
     for metadata_path in repo_root.glob("*/deployment_meta.json"):
@@ -235,6 +247,9 @@ def list_triton_model_deployments(project_ids: Optional[Iterable[int]] = None) -
 
         project_id = metadata.get("project_id")
         if allowed_projects and project_id not in allowed_projects:
+            continue
+        deployed_by_user_id = metadata.get("deployed_by_user_id")
+        if allowed_users and deployed_by_user_id not in allowed_users:
             continue
 
         model_name = metadata.get("model_name")
