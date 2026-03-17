@@ -81,6 +81,21 @@ _api_urlpatterns = [
         training_api.ProjectTrainingRunDownloadAPI.as_view(),
         name='project-training-run-download',
     ),
+    path(
+        '<int:pk>/training/runs/<str:run_id>/deploy-to-triton',
+        training_api.ProjectTrainingRunDeployToTritonAPI.as_view(),
+        name='project-training-run-deploy-to-triton',
+    ),
+    path(
+        '<int:pk>/training/triton/models/',
+        training_api.ProjectTrainingTritonModelsAPI.as_view(),
+        name='project-training-triton-models',
+    ),
+    path(
+        '<int:pk>/training/triton/infer/',
+        training_api.ProjectTrainingTritonInferAPI.as_view(),
+        name='project-training-triton-infer',
+    ),
 ]
 
 _api_urlpatterns_templates = [

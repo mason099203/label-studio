@@ -1,0 +1,233 @@
+/* 模型部署頁面與子分頁樣式 - Premium Design */
+
+.model-deployment-page {
+  background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+  min-height: calc(100vh - 100px);
+  padding: var(--spacing-wide);
+
+  &__tabs {
+    width: 100%;
+  }
+
+  &__tab-content {
+    padding-top: var(--spacing-wide);
+    animation: fadeIn 0.4s ease-out;
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* 模型部署分頁 - 服務卡片網格 */
+.model-deploy-tab {
+  &__header-row {
+     display: flex;
+     justify-content: space-between;
+     align-items: center;
+     margin-bottom: var(--spacing-wide);
+  }
+
+  &__grid {
+    display: grid;
+    gap: 24px;
+    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  }
+
+  &__card {
+    background: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 16px;
+    box-shadow: 0 8px 32px rgba(31, 38, 135, 0.07);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+
+    &::before {
+      content: "";
+      position: absolute;
+      top: 0; left: 0; width: 100%; height: 4px;
+      background: linear-gradient(90deg, #6366f1, #a855f7);
+    }
+
+    &:hover {
+      transform: translateY(-5px);
+      box-shadow: 0 12px 40px rgba(31, 38, 135, 0.12);
+      background: rgba(255, 255, 255, 0.85);
+    }
+  }
+
+  &__card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+  }
+
+  &__status {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 2px 8px;
+    border-radius: 20px;
+
+    &--running {
+      background: rgba(34, 197, 94, 0.15);
+      color: #15803d;
+    }
+
+    &--stopped {
+      background: rgba(100, 116, 139, 0.1);
+      color: #475569;
+    }
+  }
+
+  &__field {
+    background: rgba(248, 250, 252, 0.5);
+    padding: 12px;
+    border-radius: 12px;
+    margin-bottom: 12px;
+    border: 1px solid rgba(0, 0, 0, 0.03);
+  }
+
+  &__label {
+     font-weight: 500;
+     color: #64748b;
+     margin-bottom: 4px;
+     display: block;
+  }
+
+  &__mono {
+    font-family: "Fira Code", "Roboto Mono", monospace;
+    font-size: 12px;
+    color: #1e293b;
+    word-break: break-all;
+    user-select: all;
+  }
+
+  &__key-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+  }
+
+  &__actions {
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid rgba(0,0,0,0.05);
+    display: flex;
+    gap: 12px;
+    align-items: center;
+  }
+}
+
+/* Upload Modal 樣式 */
+.upload-modal {
+  &__form {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  &__dropzone {
+    border: 2px dashed #cbd5e1;
+    border-radius: 12px;
+    padding: 32px;
+    text-align: center;
+    background: #f8fafc;
+    transition: all 0.2s;
+    cursor: pointer;
+
+    &:hover {
+      border-color: #6366f1;
+      background: #eff6ff;
+    }
+
+    input { display: none; }
+  }
+}
+
+/* Playground 分頁優化 */
+.playground-tab {
+  max-width: 1000px;
+  margin: 0 auto;
+
+  &__container {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    align-items: start;
+  }
+
+  &__form {
+    background: white;
+    padding: 24px;
+    border-radius: 16px;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  }
+
+  &__preview-side {
+    position: sticky;
+    top: 24px;
+  }
+
+  &__canvas-wrap {
+    background: #1e293b;
+    border-radius: 12px;
+    overflow: hidden;
+    aspect-ratio: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    
+    canvas {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+    }
+  }
+
+  &__response-card {
+    margin-top: 24px;
+    background: #0f172a;
+    color: #38bdf8;
+    padding: 16px;
+    border-radius: 12px;
+    font-family: "Fira Code", monospace;
+    font-size: 13px;
+    overflow: auto;
+    max-height: 300px;
+  }
+}
+
+/* 日誌與效能分頁 */
+.logs-metrics-tab {
+  &__stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin-bottom: 32px;
+  }
+
+  &__stat-card {
+    background: white;
+    padding: 20px;
+    border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    text-align: center;
+
+    .label { color: #64748b; font-size: 13px; margin-bottom: 4px; }
+    .value { color: #1e293b; font-size: 24px; font-weight: 700; }
+  }
+
+  &__iframe-container {
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+    background: white;
+  }
+}

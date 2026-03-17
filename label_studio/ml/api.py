@@ -9,8 +9,13 @@ from django.utils.decorators import method_decorator
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
-from ml.models import MLBackend
-from ml.serializers import MLBackendSerializer, MLInteractiveAnnotatingRequest
+from ml.models import MLBackend, ModelDeployment
+from ml.serializers import (
+    MLBackendSerializer,
+    MLInteractiveAnnotatingRequest,
+    ModelDeploymentPredictRequest,
+    ModelDeploymentSerializer,
+)
 from projects.models import Project, Task
 from rest_framework import generics, status
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
@@ -484,3 +489,155 @@ class MLBackendVersionsAPI(generics.RetrieveAPIView):
             result = {'error': str(versions_response.error_message)}
             status_code = versions_response.status_code if versions_response.status_code > 0 else 500
             return Response(data=result, status=status_code)
+
+
+def _get_ml_backends_for_user(request):
+    """Return MLBackend queryset for projects the user has access to."""
+    projects = Project.objects.for_user(request.user)
+    return MLBackend.objects.filter(project__in=projects).select_related('project').prefetch_related(
+        'model_deployment'
+    )
+
+
+class ModelDeploymentListAPI(generics.ListCreateAPIView):
+    """
+    GET: List deployment options: ML backends the user can access, each with optional deployment (api_key, is_enabled).
+    POST: Create a new deployment for an ML backend (generates API key).
+    """
+
+    permission_required = ViewClassPermission(
+        GET=all_permissions.projects_view,
+        POST=all_permissions.projects_change,
+    )
+
+    def list(self, request, *args, **kwargs):
+        backends = _get_ml_backends_for_user(request)
+        result = []
+        for mb in backends:
+            item = {
+                'ml_backend': {
+                    'id': mb.id,
+                    'title': mb.title,
+                    'project_id': mb.project_id,
+                    'project_title': mb.project.title,
+                    'state': mb.state,
+                },
+                'deployment': None,
+            }
+            if hasattr(mb, 'model_deployment') and mb.model_deployment:
+                d = mb.model_deployment
+                item['deployment'] = {
+                    'id': d.id,
+                    'api_key': d.api_key,
+                    'is_enabled': d.is_enabled,
+                    'created_at': d.created_at,
+                    'updated_at': d.updated_at,
+                }
+            result.append(item)
+        return Response(result)
+
+    def create(self, request, *args, **kwargs):
+        ml_backend_id = request.data.get('ml_backend_id')
+        if not ml_backend_id:
+            return Response(
+                {'detail': 'ml_backend_id is required'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        ml_backend = generics.get_object_or_404(MLBackend, pk=ml_backend_id)
+        self.check_object_permissions(request, ml_backend)
+        if getattr(ml_backend, 'model_deployment', None):
+            return Response(
+                {'detail': 'This ML backend is already deployed.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        deployment = ModelDeployment.objects.create(ml_backend=ml_backend)
+        serializer = ModelDeploymentSerializer(deployment)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class ModelDeploymentDetailAPI(generics.RetrieveUpdateDestroyAPIView):
+    """GET/PATCH/DELETE a single deployment. PATCH can set is_enabled or regenerate api_key."""
+
+    permission_required = ViewClassPermission(
+        GET=all_permissions.projects_view,
+        PATCH=all_permissions.projects_change,
+        DELETE=all_permissions.projects_change,
+    )
+
+    def get_queryset(self):
+        projects = Project.objects.for_user(self.request.user)
+        return ModelDeployment.objects.filter(ml_backend__project__in=projects).select_related('ml_backend__project')
+
+    serializer_class = ModelDeploymentSerializer
+
+    def perform_update(self, serializer):
+        regenerate_key = self.request.data.get('regenerate_key', False)
+        if regenerate_key:
+            import secrets
+            serializer.instance.api_key = secrets.token_urlsafe(32)
+            serializer.instance.save(update_fields=['api_key', 'updated_at'])
+        else:
+            serializer.save()
+
+
+class ModelDeploymentPredictByKeyAPI(APIView):
+    """
+    Run prediction using deployment API key (X-API-Key header).
+    Body: task_id (int) or random (bool).
+    No auth required; key is the only auth.
+    """
+
+    permission_required = None
+    permission_classes = ()
+    authentication_classes = []
+    serializer_class = ModelDeploymentPredictRequest
+
+    def post(self, request, *args, **kwargs):
+        api_key = request.headers.get('X-API-Key') or request.headers.get('Authorization', '').replace('Bearer ', '')
+        if not api_key:
+            return Response(
+                {'detail': 'X-API-Key or Authorization: Bearer <key> is required'},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        deployment = generics.get_object_or_404(ModelDeployment, api_key=api_key)
+        if not deployment.is_enabled:
+            return Response(
+                {'detail': 'This deployment is disabled.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        ml_backend = deployment.ml_backend
+        if ml_backend.not_ready:
+            return Response(
+                {'detail': 'ML backend is not ready.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        task = None
+        random = request.data.get('random', False)
+        task_id = request.data.get('task_id')
+        task_payload = request.data.get('task')
+        if random:
+            task = Task.get_random(project=ml_backend.project)
+            if not task:
+                return Response(
+                    {'detail': 'Project has no tasks. Import at least one task.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        elif task_id is not None:
+            task = generics.get_object_or_404(Task, pk=task_id, project=ml_backend.project)
+        else:
+            return Response(
+                {'detail': 'Provide one of: random=true or task_id'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not task:
+            return Response(
+                {'detail': 'Provide one of: random=true, task_id, or task'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        result = ml_backend._predict(task)
+        if not result:
+            return Response(
+                {'detail': 'ML backend did not return predictions.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        return Response(result.get('data', result), status=result.get('status', 200))

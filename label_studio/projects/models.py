@@ -365,6 +365,10 @@ class Project(ProjectMixin, FsmHistoryStateModel):
         help_text='Custom task lock TTL in seconds. If not set, the default value is used',
     )
 
+    triton_api_key = models.CharField(
+        _('triton_api_key'), max_length=128, blank=True, null=True, help_text='API key for Triton model deployment'
+    )
+
     # Soft-delete lifecycle (OSS fields, used by LSE logic)
     deleted_at = models.DateTimeField(_('deleted at'), null=True, blank=True)
     deleted_by = models.ForeignKey(

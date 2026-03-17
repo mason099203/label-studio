@@ -3,7 +3,7 @@
 from core.utils.io import validate_upload_url
 from django.conf import settings
 from drf_spectacular.utils import extend_schema_field
-from ml.models import MLBackend, MLBackendAuth
+from ml.models import MLBackend, MLBackendAuth, ModelDeployment
 from rest_framework import serializers
 
 
@@ -120,3 +120,35 @@ class MLInteractiveAnnotatingRequest(serializers.Serializer):
 
     task = serializers.IntegerField(help_text='ID of task to annotate', required=True)
     context = serializers.JSONField(help_text='Context for ML model', allow_null=True, default=None)
+
+
+class ModelDeploymentSerializer(serializers.ModelSerializer):
+    """Serializer for ModelDeployment; exposes api_key only on create/retrieve."""
+
+    ml_backend_id = serializers.PrimaryKeyRelatedField(queryset=MLBackend.objects.all(), source='ml_backend')
+    project_title = serializers.CharField(source='ml_backend.project.title', read_only=True)
+    ml_backend_title = serializers.CharField(source='ml_backend.title', read_only=True)
+    ml_backend_state = serializers.CharField(source='ml_backend.state', read_only=True)
+
+    class Meta:
+        model = ModelDeployment
+        fields = [
+            'id',
+            'ml_backend_id',
+            'ml_backend_title',
+            'project_title',
+            'ml_backend_state',
+            'api_key',
+            'is_enabled',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['api_key', 'created_at', 'updated_at']
+
+
+class ModelDeploymentPredictRequest(serializers.Serializer):
+    """Request body for deployment predict API (by API key)."""
+
+    task_id = serializers.IntegerField(help_text='Task ID to run prediction on', required=False, allow_null=True)
+    task = serializers.JSONField(help_text='Full task payload to run prediction on', required=False, allow_null=True)
+    random = serializers.BooleanField(default=False, help_text='Use a random task from the project')

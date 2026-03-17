@@ -65,3 +65,16 @@ services:
     volumes:
       - ${POSTGRES_DATA_DIR:-./postgres-data}:/var/lib/postgresql/data
       - ./deploy/pgsql/certs:/var/lib/postgresql/certs:ro
+
+  triton:
+    image: nvcr.io/nvidia/tritonserver:24.01-py3
+    container_name: triton
+    # runtime: nvidia   # 有 GPU 再開
+    ports:
+      - "8000:8000"
+      - "8001:8001"
+      - "8002:8002"
+    volumes:
+      - ./data/triton_models:/models
+    command: tritonserver --model-repository=/models --model-control-mode=poll --repository-poll-secs=5 --exit-on-error=false
+    restart: unless-stopped

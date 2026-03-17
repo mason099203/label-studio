@@ -4,7 +4,7 @@ from core.models import AsyncMigrationStatus
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from django.contrib.auth.models import Group
-from ml.models import MLBackend, MLBackendTrainJob
+from ml.models import MLBackend, MLBackendTrainJob, ModelDeployment
 from organizations.models import Organization, OrganizationMember
 from projects.models import Project
 from tasks.models import Annotation, Prediction, Task
@@ -161,6 +161,7 @@ admin.site.register(User, UserAdminShort)
 admin.site.register(Project)
 admin.site.register(MLBackend)
 admin.site.register(MLBackendTrainJob)
+admin.site.register(ModelDeployment)
 admin.site.register(Task)
 admin.site.register(Annotation)
 admin.site.register(Prediction)

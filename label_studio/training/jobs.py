@@ -462,7 +462,17 @@ def yolo_classification_train_job(
     )
 
     try:
-        model = YOLO(base_weights)
+        target_weights = base_weights
+        try:
+            p = Path(base_weights)
+            if p.suffix.lower() == ".pt" and not p.name.endswith("-cls.pt"):
+                cls_name = p.stem + "-cls.pt"
+                alt = p.parent / cls_name
+                target_weights = str(alt) if alt.exists() else cls_name
+        except Exception:
+            pass
+            
+        model = YOLO(target_weights)
         model.train(
             data=str(dataset_root),
             epochs=int(epochs),
@@ -562,4 +572,112 @@ def yolo_classification_train_job(
 
     _release_training_resources()
     return result
+
+
+def cnn_classification_train_job(
+    *,
+    project_id: int,
+    base_weights: str,
+    dataset_config: str,
+    epochs: int = 50,
+    imgsz: int = 224,
+    batch: int = 32,
+    output_root: str,
+) -> Dict[str, Any]:
+    """
+    Train a custom PyTorch CNN classification model.
+    """
+    from .cnn_trainer import CNNTrainer
+
+    job = get_current_job()
+    now = datetime.now().isoformat()
+
+    if job is not None:
+        job.meta.update({
+            "kind": "cnn_classification_train",
+            "project_id": project_id,
+            "status": "starting",
+            "message": "Starting CNN classification training job",
+            "created_at": now,
+        })
+        job.save_meta()
+
+    output_root_path = Path(output_root)
+    run_dir = output_root_path / f"project_{project_id}" / (job.id if job is not None else f"job_{now}")
+    _safe_mkdir(run_dir)
+
+    dataset_meta = _read_dataset_config(dataset_config)
+    items_path = Path(dataset_meta.get("items_json") or "")
+    if not items_path.exists():
+        raise FileNotFoundError(f"Items JSON not found: {items_path}")
+    
+    items = json.loads(items_path.read_text(encoding="utf-8"))
+    classes = dataset_meta.get("classes", [])
+
+    def _reporter(epoch, total, t_loss, t_acc, v_loss, v_acc):
+        if job is not None:
+            job.meta.update({
+                "status": "running",
+                "message": f"Epoch {epoch}/{total}: Val Acc {v_acc:.2f}%",
+                "progress": epoch / total,
+                "metrics": {"top1": v_acc / 100.0, "loss": v_loss}
+            })
+            job.save_meta()
+
+    trainer = CNNTrainer(
+        project_id=project_id,
+        run_dir=run_dir,
+        class_names=classes,
+        batch_size=batch,
+        learning_rate=0.001,
+        num_epochs=epochs,
+        job_reporter=_reporter
+    )
+
+    # Simple train/val split is usually handled in datasets.py for yolo_classify,
+    # but here we rely on the manifest.
+    # We will split here for cnn if not already split.
+    import random
+    random.seed(42)
+    random.shuffle(items)
+    split = int(len(items) * 0.8)
+    train_items = items[:split]
+    val_items = items[split:]
+
+    try:
+        model, best_acc = trainer.run(train_items, val_items)
+    except Exception as exc:
+        logger.exception("CNN training failed")
+        if job:
+            job.meta.update({"status": "failed", "message": str(exc)})
+            job.save_meta()
+        raise
+
+    artifacts_dir = run_dir / "artifacts"
+    _safe_mkdir(artifacts_dir)
+    
+    # Copy best.pt (TorchScript) and best.pth to artifacts
+    for f in ["best.pt", "best.pth"]:
+        src = run_dir / f
+        if src.exists():
+            shutil.copy2(src, artifacts_dir / f)
+
+    metrics = {
+        "timestamp": datetime.now().isoformat(),
+        "top1": best_acc / 100.0,
+        "classes": classes
+    }
+    _write_json(run_dir / "metrics.json", metrics)
+
+    if job is not None:
+        job.meta.update({
+            "status": "finished",
+            "message": "CNN training finished",
+            "artifacts_dir": str(artifacts_dir),
+            "best_path": str(artifacts_dir / "best.pt"),
+            "metrics": metrics,
+        })
+        job.save_meta()
+
+    return {"status": "finished", "run_dir": str(run_dir)}
 

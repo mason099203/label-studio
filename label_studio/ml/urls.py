@@ -21,6 +21,13 @@ _api_urlpatterns = [
     path('<int:pk>/versions', api.MLBackendVersionsAPI.as_view(), name='ml-versions'),
 ]
 
+_deployment_urlpatterns = [
+    path('', api.ModelDeploymentListAPI.as_view(), name='deployment-list'),
+    path('predict/', api.ModelDeploymentPredictByKeyAPI.as_view(), name='deployment-predict'),
+    path('<int:pk>', api.ModelDeploymentDetailAPI.as_view(), name='deployment-detail'),
+]
+
 urlpatterns = [
     path('api/ml/', include((_api_urlpatterns, app_name), namespace='api')),
+    path('api/deployments/', include((_deployment_urlpatterns, app_name), namespace='deployments')),
 ]

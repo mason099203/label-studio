@@ -22,6 +22,9 @@ __pycache__
 *.gif
 *.bmp
 *.tiff
+*.pt
+*.pth
+*.bptxt
 
 # docs
 __generated__

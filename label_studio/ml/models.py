@@ -1,6 +1,7 @@
 """This file and its contents are licensed under the Apache License 2.0. Please see the included NOTICE for copyright information and LICENSE for a copy of the license.
 """
 import logging
+import secrets
 from typing import Dict, List
 
 from core.utils.common import conditional_atomic, db_is_not_sqlite, load_func
@@ -477,6 +478,48 @@ class MLBackendTrainJob(models.Model):
     def is_running(self):
         status = self.get_status()
         return status['job_status'] in ('queued', 'started')
+
+
+class ModelDeployment(models.Model):
+    """
+    使用者訓練好的模型部署：將 ML Backend 對外提供 API，需以對應的 API Key 呼叫。
+    啟用後可透過 /api/deployments/predict/ 搭配 X-API-Key 使用。
+    """
+
+    ml_backend = models.OneToOneField(
+        MLBackend,
+        on_delete=models.CASCADE,
+        related_name='model_deployment',
+        help_text='對應的 ML Backend（使用者訓練的模型）',
+    )
+    api_key = models.CharField(
+        max_length=64,
+        unique=True,
+        db_index=True,
+        help_text='API Key，呼叫部署 API 時須在 Header X-API-Key 帶入',
+    )
+    is_enabled = models.BooleanField(
+        _('is_enabled'),
+        default=True,
+        help_text='是否啟用此部署；停用後無法以 API Key 呼叫',
+    )
+    created_at = models.DateTimeField(_('created at'), auto_now_add=True)
+    updated_at = models.DateTimeField(_('updated at'), auto_now=True)
+
+    class Meta:
+        verbose_name = _('Model Deployment')
+        verbose_name_plural = _('Model Deployments')
+
+    def __str__(self):
+        return f'Deployment({self.ml_backend.title}, key=***)'
+
+    def save(self, *args, **kwargs):
+        if not self.api_key:
+            self.api_key = secrets.token_urlsafe(32)
+        super().save(*args, **kwargs)
+
+    def has_permission(self, user):
+        return self.ml_backend.has_permission(user)
 
 
 def _validate_ml_api_result(ml_api_result, tasks, curr_logger):

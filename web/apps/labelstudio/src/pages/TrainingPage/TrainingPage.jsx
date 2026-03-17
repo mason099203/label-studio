@@ -15,6 +15,10 @@ import { cn } from "../../utils/bem";
 import { absoluteURL, isDefined } from "../../utils/helpers";
 import "./TrainingPage.scss";
 
+
+
+
+
 /**
  * 訓練模組頁面：使用當前專案與已標註資料進行模型訓練，
  * 展示訓練效能指標並提供輸出模型下載以供部署。
@@ -38,8 +42,10 @@ export const TrainingPage = () => {
   const [errorMessage, setErrorMessage] = useState(null);
   const [localModels, setLocalModels] = useState([]);
   const [selectedBaseWeights, setSelectedBaseWeights] = useState(null);
+  const [trainingEngine, setTrainingEngine] = useState("auto"); // auto | yolo_classify | cnn_classify
   const [datasetConfigPath, setDatasetConfigPath] = useState("");
   const [preparingDataset, setPreparingDataset] = useState(false);
+  const [exportFormat, setExportFormat] = useState("");
   const [datasetMeta, setDatasetMeta] = useState(null);
   const [jobId, setJobId] = useState(null);
   const [jobInfo, setJobInfo] = useState(null);
@@ -126,8 +132,9 @@ export const TrainingPage = () => {
           base_weights: selectedBaseWeights,
           dataset_config: datasetConfigPath,
           epochs: 50,
-          imgsz: 640,
-          batch: 16,
+          imgsz: trainingEngine === "cnn_classify" ? 224 : 640,
+          batch: trainingEngine === "cnn_classify" ? 32 : 16,
+          training_model: trainingEngine !== "auto" ? trainingEngine : undefined,
         },
       });
 
@@ -149,6 +156,7 @@ export const TrainingPage = () => {
         body: {
           train_ratio: 0.8,
           seed: 42,
+          export_format: exportFormat || null,
         },
       });
       setDatasetMeta(meta);
@@ -158,7 +166,7 @@ export const TrainingPage = () => {
     } finally {
       setPreparingDataset(false);
     }
-  }, [pageParams?.id]);
+  }, [pageParams?.id, exportFormat]);
 
   const canStart =
     localModels.length > 0 &&
@@ -311,8 +319,21 @@ export const TrainingPage = () => {
           <div className={cn("training-page").elem("hint").toClassName()}>
             會依專案的 Labeling Interface 自動輸出對應的 JSON 設定檔：
             detect 會建立 YOLO detect dataset，classification 會建立分類資料夾與 JSON manifest。
+            您也可以在下方選擇要使用的匯出格式（若不確定請選擇「自動決定」）。
           </div>
-          <div style={{ marginTop: 10 }}>
+          <div style={{ marginTop: 10, display: "flex", gap: 8, alignItems: "center" }}>
+            <select
+              className={cn("training-page").elem("input").toClassName()}
+              style={{ width: "auto", padding: "4px 8px" }}
+              value={exportFormat}
+              onChange={(e) => setExportFormat(e.target.value)}
+            >
+              <option value="">自動決定 (依專案預設)</option>
+              <option value="YOLO_WITH_IMAGES">YOLO_WITH_IMAGES (YOLO v8/v11 偵測)</option>
+              <option value="JSON_MIN">JSON_MIN (輕量 / 分類資料結構)</option>
+              <option value="YOLO">YOLO (僅座標，無圖片)</option>
+              <option value="COCO">COCO</option>
+            </select>
             <Button
               look="outlined"
               size="small"
@@ -321,7 +342,7 @@ export const TrainingPage = () => {
               disabled={!isDefined(pageParams?.id)}
               aria-label="Prepare dataset from export"
             >
-              從 Export 產生 dataset_config.json
+              產生 dataset_config.json
             </Button>
           </div>
           <div className={cn("training-page").elem("stats").toClassName()} style={{ marginTop: 8 }}>
@@ -335,6 +356,27 @@ export const TrainingPage = () => {
           {datasetMeta?.dataset_config && (
             <div className={cn("training-page").elem("hint").toClassName()} style={{ marginTop: 8 }}>
               已產生資料集：{datasetMeta.dataset_root}（{datasetMeta.task_type} / {datasetMeta.training_model} / train {datasetMeta.train_count} / val {datasetMeta.val_count}）
+            </div>
+          )}
+
+          {/* 訓練引擎選擇 (僅限分類任務) */}
+          {(datasetMeta?.task_type === "classification" || trainingSpec?.task_type === "classification") && (
+            <div style={{ marginTop: 12 }}>
+              <div className={cn("training-page").elem("section-title").toClassName()} style={{ fontSize: 13 }}>訓練引擎</div>
+              <div style={{ display: "flex", gap: 12, marginTop: 4 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
+                  <input type="radio" name="engine" value="auto" checked={trainingEngine === "auto"} onChange={() => setTrainingEngine("auto")} />
+                  自動 (依資料集)
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
+                  <input type="radio" name="engine" value="yolo_classify" checked={trainingEngine === "yolo_classify"} onChange={() => setTrainingEngine("yolo_classify")} />
+                  YOLO v8/v11
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
+                  <input type="radio" name="engine" value="cnn_classify" checked={trainingEngine === "cnn_classify"} onChange={() => setTrainingEngine("cnn_classify")} />
+                  ResNet18 (PyTorch)
+                </label>
+              </div>
             </div>
           )}
         </div>
@@ -483,6 +525,7 @@ export const TrainingPage = () => {
                           {a.name}
                         </a>
                       ))}
+                      {/* 舊有的 DeployToTritonButton 已移除，統一至「模型部署」頁面管理 */}
                     </div>
                   </div>
                 ))}

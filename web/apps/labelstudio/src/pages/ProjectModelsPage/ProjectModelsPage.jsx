@@ -9,6 +9,24 @@ import { cn } from "../../utils/bem";
 import { absoluteURL } from "../../utils/helpers";
 import "./ProjectModelsPage.scss";
 
+const PLAYGROUND_STATE_KEY = "labelstudio.triton.playground";
+
+/**
+ * 將最新部署的 Triton 模型寫入 Playground 預設值。
+ * @param {string | number} projectId
+ * @param {string} modelName
+ */
+function saveTritonPlaygroundState(projectId, modelName) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(
+    PLAYGROUND_STATE_KEY,
+    JSON.stringify({
+      projectId: String(projectId),
+      modelName,
+    }),
+  );
+}
+
 /**
  * Project models page:
  * - View previously trained models without entering labeling
@@ -23,6 +41,8 @@ export const ProjectModelsPage = () => {
   const [error, setError] = useState(null);
   const [expandedRunId, setExpandedRunId] = useState(null);
   const [selectedChart, setSelectedChart] = useState(null);
+  const [deployingRunId, setDeployingRunId] = useState(null);
+  const [deployError, setDeployError] = useState(null);
 
   useEffect(() => {
     if (!params?.id) return;
@@ -37,6 +57,38 @@ export const ProjectModelsPage = () => {
 
   const runs = history?.runs ?? [];
   const datasets = history?.datasets ?? [];
+
+  const handleDeployToTriton = (runId) => {
+    if (!params?.id || !runId) return;
+    setDeployError(null);
+    setDeployingRunId(runId);
+    api
+      .callApi("trainingRunDeployToTriton", {
+        params: { pk: params.id, run_id: runId },
+        body: {},
+        errorFilter: () => true,
+      })
+      .then((res) => {
+        setDeployingRunId(null);
+        if (!res || res.error || res.detail) {
+          setDeployError(res?.detail || res?.error || "部署至 Triton 失敗");
+          return;
+        }
+        saveTritonPlaygroundState(params.id, res.model_name);
+        // 簡單提示成功與模型名稱
+        if (res.model_name) {
+          // eslint-disable-next-line no-alert
+          window.alert(`已部署至 Triton：${res.model_name}\n可前往 Playground 直接測試。`);
+        } else {
+          // eslint-disable-next-line no-alert
+          window.alert("已部署至 Triton。");
+        }
+      })
+      .catch((err) => {
+        setDeployingRunId(null);
+        setDeployError(err?.message || "部署至 Triton 失敗");
+      });
+  };
 
   /**
    * Format training time for the collapsed run summary.
@@ -76,6 +128,12 @@ export const ProjectModelsPage = () => {
       {error && (
         <div className={cn("project-models-page").elem("error").toClassName()}>
           <IconWarningCircleFilled /> {error}
+        </div>
+      )}
+
+      {deployError && (
+        <div className={cn("project-models-page").elem("error").toClassName()}>
+          <IconWarningCircleFilled /> {deployError}
         </div>
       )}
 
@@ -146,6 +204,20 @@ export const ProjectModelsPage = () => {
                         <a className="no-go" href={absoluteURL(run.last_download_url)} target="_blank" rel="noreferrer">
                           <IconFileDownload /> last.pt
                         </a>
+                        {run.status === "finished" && (
+                          <Button
+                            look="outlined"
+                            size="small"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeployToTriton(run.run_id);
+                            }}
+                            disabled={deployingRunId === run.run_id}
+                            aria-label="部署到 Triton"
+                          >
+                            {deployingRunId === run.run_id ? "部署中…" : "部署到 Triton"}
+                          </Button>
+                        )}
                       </div>
                     </div>
 

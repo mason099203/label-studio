@@ -1,0 +1,19 @@
+name: "ls_project_10_c8050295_c3fa_45f1_b565_cd10d1d99f3d"
+platform: "pytorch_libtorch"
+max_batch_size: 1
+
+input [
+  {
+    name: "images"
+    data_type: TYPE_FP32
+    dims: [3, 640, 640]
+  }
+]
+
+output [
+  {
+    name: "output0"
+    data_type: TYPE_FP32
+    dims: [-1, -1]
+  }
+]

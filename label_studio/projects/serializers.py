@@ -268,6 +268,7 @@ class ProjectSerializer(FlexFieldsModelSerializer):
             'queue_done',
             'config_suitable_for_bulk_annotation',
             'state',
+            'triton_api_key',
         ]
 
     def validate_label_config(self, value):

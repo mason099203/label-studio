@@ -65,6 +65,13 @@ export const API_CONFIG = {
     modelVersions: "/ml/:pk/versions",
     mlInteractive: "POST:/ml/:pk/interactive-annotating",
 
+    // Model deployment (user-trained models + API key)
+    deploymentsList: "GET:/deployments",
+    createDeployment: "POST:/deployments",
+    updateDeployment: "PATCH:/deployments/:pk",
+    deleteDeployment: "DELETE:/deployments/:pk",
+    deploymentPredict: "POST:/deployments/predict",
+
     // Export
     export: "/projects/:pk/export",
     previousExports: "/projects/:pk/export/files",
@@ -78,6 +85,10 @@ export const API_CONFIG = {
     trainingJobDownload: "/projects/:pk/training/jobs/:job_id/download",
     trainingPrepareDataset: "POST:/projects/:pk/training/datasets/prepare/",
     trainingHistory: "/projects/:pk/training/history/",
+    trainingRunDeployToTriton: "POST:/projects/:pk/training/runs/:run_id/deploy-to-triton",
+    trainingTritonModels: "/projects/:pk/training/triton/models/",
+    trainingTritonInfer: "POST:/projects/:pk/training/triton/infer/",
+    trainingModelUpload: "POST:/projects/:pk/training/upload",
 
     // Version
     version: "/version",

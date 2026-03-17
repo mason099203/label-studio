@@ -164,9 +164,16 @@ def _resolve_local_image_path(raw_value: str) -> Path | None:
     for prefix in media_prefixes:
         if raw_value.startswith(prefix):
             relative_path = raw_value[len(prefix) :].lstrip("/\\")
+            # Try direct relative to MEDIA_ROOT
             target = Path(settings.MEDIA_ROOT) / relative_path
             if target.exists():
                 return target.resolve()
+            
+            # Try with 'upload' prefix if it was /data/upload/
+            if prefix == "/data/upload/":
+                target_upload = Path(settings.MEDIA_ROOT) / "upload" / relative_path
+                if target_upload.exists():
+                    return target_upload.resolve()
 
     return None
 
@@ -332,6 +339,11 @@ def _prepare_classification_dataset(
 
     for task in tasks:
         image_value = task.data.get(data_key) if isinstance(task.data, dict) else None
+        if image_value is None and isinstance(task.data, dict):
+            image_value = task.data.get("$undefined$") or task.data.get("image")
+            if image_value is None and len(task.data) == 1:
+                image_value = list(task.data.values())[0]
+
         if not isinstance(image_value, str):
             continue
 
@@ -436,6 +448,7 @@ def prepare_training_dataset_for_project(
     project_id: int,
     train_ratio: float = 0.8,
     seed: int = 42,
+    export_format: str | None = None,
 ) -> Dict[str, Any]:
     """
     Prepare a training dataset based on the project's labeling interface.
@@ -454,7 +467,7 @@ def prepare_training_dataset_for_project(
             ds_root=ds_root,
             train_ratio=train_ratio,
             seed=seed,
-            export_format="YOLO_WITH_IMAGES",
+            export_format=export_format or "YOLO_WITH_IMAGES",
         )
     elif spec["task_type"] == "classification":
         meta = _prepare_classification_dataset(
@@ -462,7 +475,7 @@ def prepare_training_dataset_for_project(
             ds_root=ds_root,
             train_ratio=train_ratio,
             seed=seed,
-            export_format="JSON_MIN",
+            export_format=export_format or "JSON_MIN",
         )
     else:
         raise ValueError(f"Unsupported task_type: {spec['task_type']}")
