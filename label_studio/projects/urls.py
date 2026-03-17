@@ -106,6 +106,11 @@ _api_urlpatterns = [
         training_api.ProjectTrainingMetricsAPI.as_view(),
         name='project-training-metrics',
     ),
+    path(
+        '<int:pk>/training/metrics/history',
+        training_api.ProjectTrainingMetricsHistoryAPI.as_view(),
+        name='project-training-metrics-history',
+    ),
 ]
 
 _api_urlpatterns_templates = [

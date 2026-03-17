@@ -22,6 +22,7 @@ from rq.job import Job
 
 from .jobs import cnn_classification_train_job, yolo_classification_train_job, yolo_detect_train_job
 from .datasets import detect_training_interface, prepare_training_dataset_for_project
+from .monitoring import append_inference_event, append_metrics_snapshot, read_inference_events, read_metrics_snapshots
 from .triton_export import (
     export_torchscript_pt_to_triton,
     export_yolo_pt_to_triton,
@@ -86,6 +87,17 @@ def _safe_float(value: Any) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _safe_int(value: Any, default: int) -> int:
+    """
+    Convert a value to int, returning a default when conversion fails.
+    """
+
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _parse_prometheus_labels(label_text: str) -> Dict[str, str]:
@@ -234,18 +246,180 @@ def _matches_scope(project: Project, user_id: int, deployment: Dict[str, Any], s
     return False
 
 
+def _normalize_scope(raw_scope: str | None) -> str:
+    """
+    Normalize a requested monitoring scope.
+    """
+
+    scope = (raw_scope or "project").strip().lower()
+    return scope if scope in {"mine", "project"} else "project"
+
+
+def _build_selected_user(selected_user_id: int | None, selected_username: str | None) -> Dict[str, Any] | None:
+    """
+    Build the selected deployment owner payload.
+    """
+
+    if selected_user_id is None and not selected_username:
+        return None
+
+    return {
+        "id": selected_user_id,
+        "username": selected_username or None,
+    }
+
+
+def _extract_selected_user(request, deployments: List[Dict[str, Any]]) -> Dict[str, Any] | None:
+    """
+    Resolve the selected deployment owner from query params.
+    """
+
+    raw_user_id = request.query_params.get("user_id")
+    raw_username = (request.query_params.get("username") or "").strip()
+    selected_user_id = None
+
+    if raw_user_id not in (None, ""):
+        try:
+            selected_user_id = int(raw_user_id)
+        except (TypeError, ValueError):
+            selected_user_id = None
+
+    selected_username = raw_username or None
+    if selected_user_id is not None and not selected_username:
+        for deployment in deployments:
+            if deployment.get("deployed_by_user_id") == selected_user_id:
+                selected_username = deployment.get("deployed_by_username")
+                break
+
+    if selected_user_id is None and selected_username:
+        for deployment in deployments:
+            if deployment.get("deployed_by_username") == selected_username:
+                selected_user_id = deployment.get("deployed_by_user_id")
+                break
+
+    return _build_selected_user(selected_user_id, selected_username)
+
+
+def _matches_selected_user(
+    deployment: Dict[str, Any],
+    selected_user_id: int | None,
+    selected_username: str | None,
+) -> bool:
+    """
+    Check whether a deployment matches the selected owner filter.
+    """
+
+    if selected_user_id is None and not selected_username:
+        return True
+
+    if selected_user_id is not None and deployment.get("deployed_by_user_id") == selected_user_id:
+        return True
+
+    if selected_username and deployment.get("deployed_by_username") == selected_username:
+        return True
+
+    return False
+
+
+def _build_deployer_options(deployments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Build deployer filter options from deployment metadata.
+    """
+
+    by_key: Dict[str, Dict[str, Any]] = {}
+    for deployment in deployments:
+        user_id = deployment.get("deployed_by_user_id")
+        username = deployment.get("deployed_by_username")
+        if user_id is None and not username:
+            continue
+
+        option_key = f"{user_id}:{username or ''}"
+        option = by_key.setdefault(
+            option_key,
+            {
+                "id": user_id,
+                "username": username,
+                "model_count": 0,
+            },
+        )
+        option["model_count"] += 1
+
+    return sorted(by_key.values(), key=lambda item: ((item.get("username") or "").lower(), item.get("id") or 0))
+
+
+def _build_inference_request_summary(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Build a compact inference request summary for monitoring logs.
+    """
+
+    inputs = payload.get("inputs") or []
+    outputs = payload.get("outputs") or []
+    return {
+        "input_count": len(inputs),
+        "output_count": len(outputs),
+        "input_shapes": [item.get("shape") for item in inputs[:3]],
+        "output_names": [item.get("name") for item in outputs[:5]],
+    }
+
+
+def _filter_monitoring_items(
+    items: List[Dict[str, Any]],
+    *,
+    project: Project,
+    viewer_user_id: int,
+    scope: str,
+    selected_user_id: int | None,
+    selected_username: str | None,
+    item_scope_key: str | None = None,
+    item_selected_user_key: str | None = None,
+) -> List[Dict[str, Any]]:
+    """
+    Filter persisted monitoring items to the requested monitoring view.
+    """
+
+    filtered: List[Dict[str, Any]] = []
+    for item in items:
+        if item_scope_key and item.get(item_scope_key) != scope:
+            continue
+
+        if item_selected_user_key:
+            selected_user = item.get(item_selected_user_key) or {}
+            item_selected_user_id = selected_user.get("id")
+            item_selected_username = selected_user.get("username")
+            if selected_user_id != item_selected_user_id or (selected_username or None) != (item_selected_username or None):
+                continue
+            filtered.append(item)
+            continue
+
+        if not _matches_scope(project, viewer_user_id, item, scope):
+            continue
+        if not _matches_selected_user(item, selected_user_id, selected_username):
+            continue
+        filtered.append(item)
+
+    return filtered
+
+
 def _build_model_usage_stats(
     project: Project,
     user_id: int,
     scope: str,
     metrics_payload: str | None,
+    *,
+    selected_user_id: int | None = None,
+    selected_username: str | None = None,
 ) -> Dict[str, Any]:
     """
     Build per-model usage stats from Triton deployments and Prometheus metrics.
     """
 
     raw_deployments = list_triton_model_deployments(project_ids=[project.id])
-    deployments = [item for item in raw_deployments if _matches_scope(project, user_id, item, scope)]
+    deployments = [
+        item
+        for item in raw_deployments
+        if _matches_scope(project, user_id, item, scope)
+        and _matches_selected_user(item, selected_user_id, selected_username)
+    ]
     parsed_metrics = _parse_prometheus_metrics(metrics_payload or "")
 
     models = []
@@ -741,9 +915,19 @@ class ProjectTrainingTritonModelsAPI(APIView):
 
     def get(self, request, pk: int, *args, **kwargs):
         project = _get_project_for_user(request, pk)
-        scope = (request.query_params.get("scope") or "project").strip().lower()
+        scope = _normalize_scope(request.query_params.get("scope"))
         deployments = list_triton_model_deployments(project_ids=[project.id])
-        deployments = [item for item in deployments if _matches_scope(project, request.user.id, item, scope)]
+        selected_user = _extract_selected_user(request, deployments)
+        deployments = [
+            item
+            for item in deployments
+            if _matches_scope(project, request.user.id, item, scope)
+            and _matches_selected_user(
+                item,
+                (selected_user or {}).get("id"),
+                (selected_user or {}).get("username"),
+            )
+        ]
 
         for item in deployments:
             item["owned_by_current_user"] = item.get("deployed_by_user_id") == request.user.id or (
@@ -756,6 +940,10 @@ class ProjectTrainingTritonModelsAPI(APIView):
                 "scope": scope,
                 "triton_repo_root": str(get_triton_model_repository_root()),
                 "triton_server_url": get_triton_server_url(),
+                "filters": {
+                    "deployers": _build_deployer_options(list_triton_model_deployments(project_ids=[project.id])),
+                    "selected_user": selected_user,
+                },
                 "models": deployments,
             },
             status=status.HTTP_200_OK,
@@ -772,7 +960,7 @@ class ProjectTrainingTritonInferAPI(APIView):
     def post(self, request, pk: int, *args, **kwargs):
         project = _get_project_for_user(request, pk)
         payload = dict(request.data or {})
-        
+
         # Verify API Key if project has one configured
         api_key = payload.pop("api_key", None)
         if project.triton_api_key:
@@ -804,10 +992,29 @@ class ProjectTrainingTritonInferAPI(APIView):
 
         triton_url = f"{get_triton_server_url()}/v2/models/{model_name}/infer"
         timeout = float(request.query_params.get("timeout", 60))
+        started_at = time.monotonic()
+        deployment_meta = deployed_models[model_name]
 
         try:
             triton_response = requests.post(triton_url, json=payload, timeout=timeout)
         except requests.RequestException as exc:
+            append_inference_event(
+                project.id,
+                {
+                    "project_id": project.id,
+                    "scope": "project",
+                    "model_name": model_name,
+                    "requested_by_user_id": request.user.id,
+                    "requested_by_username": request.user.username,
+                    "deployed_by_user_id": deployment_meta.get("deployed_by_user_id"),
+                    "deployed_by_username": deployment_meta.get("deployed_by_username"),
+                    "ok": False,
+                    "status_code": status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "duration_ms": round((time.monotonic() - started_at) * 1000, 2),
+                    "request": _build_inference_request_summary(payload),
+                    "error": str(exc),
+                },
+            )
             return Response(
                 {
                     "detail": f"Failed to reach Triton server: {exc}",
@@ -820,6 +1027,32 @@ class ProjectTrainingTritonInferAPI(APIView):
             response_body = triton_response.json()
         except ValueError:
             response_body = triton_response.text
+
+        response_preview = response_body
+        if isinstance(response_preview, (dict, list)):
+            response_preview = json.dumps(response_preview, ensure_ascii=True)
+        else:
+            response_preview = str(response_preview)
+        if len(response_preview) > 500:
+            response_preview = response_preview[:500] + "..."
+
+        append_inference_event(
+            project.id,
+            {
+                "project_id": project.id,
+                "scope": "project",
+                "model_name": model_name,
+                "requested_by_user_id": request.user.id,
+                "requested_by_username": request.user.username,
+                "deployed_by_user_id": deployment_meta.get("deployed_by_user_id"),
+                "deployed_by_username": deployment_meta.get("deployed_by_username"),
+                "ok": triton_response.ok,
+                "status_code": triton_response.status_code,
+                "duration_ms": round((time.monotonic() - started_at) * 1000, 2),
+                "request": _build_inference_request_summary(payload),
+                "response_preview": response_preview,
+            },
+        )
 
         return Response(
             {
@@ -906,7 +1139,9 @@ class ProjectTrainingMetricsAPI(APIView):
         import psutil
 
         project = _get_project_for_user(request, pk)
-        scope = (request.query_params.get("scope") or "project").strip().lower()
+        scope = _normalize_scope(request.query_params.get("scope"))
+        all_deployments = list_triton_model_deployments(project_ids=[project.id])
+        selected_user = _extract_selected_user(request, all_deployments)
         cpu_usage = psutil.cpu_percent()
         ram = psutil.virtual_memory()
         ram_usage = ram.percent
@@ -928,8 +1163,92 @@ class ProjectTrainingMetricsAPI(APIView):
         gpu_usage = round(sum(gpu_util_samples) / len(gpu_util_samples), 2) if gpu_util_samples else 0.0
         vram_used = _sum_metric_samples(parsed_metrics, "nv_gpu_memory_used_bytes") / (1024**3)
         vram_total = _sum_metric_samples(parsed_metrics, "nv_gpu_memory_total_bytes") / (1024**3)
-        usage_stats = _build_model_usage_stats(project, request.user.id, scope, metrics_payload)
+        usage_stats = _build_model_usage_stats(
+            project,
+            request.user.id,
+            scope,
+            metrics_payload,
+            selected_user_id=(selected_user or {}).get("id"),
+            selected_username=(selected_user or {}).get("username"),
+        )
         inference_summary = usage_stats["summary"]
+
+        response_payload = {
+            "scope": scope,
+            "viewer": {
+                "id": request.user.id,
+                "username": request.user.username,
+            },
+            "filters": {
+                "deployers": _build_deployer_options(all_deployments),
+                "selected_user": selected_user,
+            },
+            "health": {
+                **triton_health,
+                "metrics_available": metrics_available,
+            },
+            "hardware": {
+                "cpu": round(cpu_usage, 2),
+                "ram": round(ram_usage, 2),
+                "ram_used_gb": ram_used_gb,
+                "gpu": gpu_usage,
+                "vram_used_gb": round(vram_used, 2),
+                "vram_total_gb": round(vram_total, 2),
+            },
+            "inference": inference_summary,
+            "models": usage_stats["models"],
+        }
+
+        append_metrics_snapshot(
+            project.id,
+            {
+                "project_id": project.id,
+                "scope": scope,
+                "viewer": response_payload["viewer"],
+                "selected_user": selected_user,
+                "health": response_payload["health"],
+                "hardware": response_payload["hardware"],
+                "inference": response_payload["inference"],
+                "model_count": len(response_payload["models"]),
+            },
+        )
+
+        return Response(response_payload)
+
+
+class ProjectTrainingMetricsHistoryAPI(APIView):
+    """
+    Return persisted inference events and metrics snapshots for monitoring history.
+    """
+
+    permission_required = ViewClassPermission(GET=all_permissions.projects_view)
+
+    def get(self, request, pk: int, *args, **kwargs):
+        project = _get_project_for_user(request, pk)
+        scope = _normalize_scope(request.query_params.get("scope"))
+        all_deployments = list_triton_model_deployments(project_ids=[project.id])
+        selected_user = _extract_selected_user(request, all_deployments)
+        event_limit = min(max(_safe_int(request.query_params.get("event_limit", 20), 20), 1), 100)
+        snapshot_limit = min(max(_safe_int(request.query_params.get("snapshot_limit", 20), 20), 1), 100)
+
+        filtered_events = _filter_monitoring_items(
+            read_inference_events(project.id, limit=event_limit * 5),
+            project=project,
+            viewer_user_id=request.user.id,
+            scope=scope,
+            selected_user_id=(selected_user or {}).get("id"),
+            selected_username=(selected_user or {}).get("username"),
+        )[-event_limit:]
+        filtered_snapshots = _filter_monitoring_items(
+            read_metrics_snapshots(project.id, limit=snapshot_limit * 5),
+            project=project,
+            viewer_user_id=request.user.id,
+            scope=scope,
+            selected_user_id=(selected_user or {}).get("id"),
+            selected_username=(selected_user or {}).get("username"),
+            item_scope_key="scope",
+            item_selected_user_key="selected_user",
+        )[-snapshot_limit:]
 
         return Response(
             {
@@ -938,19 +1257,11 @@ class ProjectTrainingMetricsAPI(APIView):
                     "id": request.user.id,
                     "username": request.user.username,
                 },
-                "health": {
-                    **triton_health,
-                    "metrics_available": metrics_available,
+                "filters": {
+                    "deployers": _build_deployer_options(all_deployments),
+                    "selected_user": selected_user,
                 },
-                "hardware": {
-                    "cpu": round(cpu_usage, 2),
-                    "ram": round(ram_usage, 2),
-                    "ram_used_gb": ram_used_gb,
-                    "gpu": gpu_usage,
-                    "vram_used_gb": round(vram_used, 2),
-                    "vram_total_gb": round(vram_total, 2),
-                },
-                "inference": inference_summary,
-                "models": usage_stats["models"],
+                "events": list(reversed(filtered_events)),
+                "snapshots": list(reversed(filtered_snapshots)),
             }
         )
