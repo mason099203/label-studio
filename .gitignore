@@ -91,6 +91,7 @@ deploy/pgsql/certs/*
 docker-compose.override.yml
 
 .config/*
+*.jsonl
 .python_history
 .viminfo
 .bash_history
