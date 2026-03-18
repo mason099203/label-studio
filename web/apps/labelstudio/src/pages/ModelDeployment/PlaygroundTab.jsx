@@ -298,16 +298,16 @@ export function PlaygroundTab() {
   return (
     <section className={rootClass.toClassName()}>
       <Typography variant="headline" size="medium" className="mb-wide">
-        Playground
+        模型測試
       </Typography>
       <Typography variant="body" size="small" className="text-neutral-content-subtle mb-wide">
-        選擇 Triton 已部署之模型，並上傳圖片來測試其推理效能與視覺化結果。
+        選擇已部署之模型，並上傳圖片來測試其效能與結果。
       </Typography>
 
       <div className={rootClass.elem("form").toClassName()}>
         <div className={rootClass.elem("form-row").toClassName()} style={{ display: "flex", gap: "16px", marginBottom: "16px" }}>
            <div className={rootClass.elem("field").toClassName()} style={{ flex: 1 }}>
-             <label className="text-label-small text-neutral-content mb-tightest block">資源專案 ID</label>
+             <label className="text-label-small text-neutral-content mb-tightest block">專案名稱</label>
              <input
                type="text"
                className={rootClass.elem("input").toClassName()}
@@ -316,7 +316,7 @@ export function PlaygroundTab() {
                placeholder="例如：10"
              />
            </div>
-           <div className={rootClass.elem("field").toClassName()} style={{ flex: 1 }}>
+           {/* <div className={rootClass.elem("field").toClassName()} style={{ flex: 1 }}>
              <label className="text-label-small text-neutral-content mb-tightest block">Triton 安全金鑰 (API Key)</label>
              <input
                type="password"
@@ -325,7 +325,7 @@ export function PlaygroundTab() {
                onChange={(e) => setApiKey(e.target.value)}
                placeholder="輸入專案對應的 API Key (選填)"
              />
-           </div>
+           </div> */}
         </div>
 
         <div className={rootClass.elem("field").toClassName()} style={{ marginBottom: "16px" }}>
@@ -351,9 +351,9 @@ export function PlaygroundTab() {
         </div>
 
         <div className={rootClass.elem("field").toClassName()} style={{ marginBottom: "24px", border: "1px solid #e0e0e0", padding: "16px", borderRadius: "8px", backgroundColor: "#fff" }}>
-          <label className="text-label-small text-neutral-content block" style={{ marginBottom: "8px", fontWeight: "bold" }}>測試圖片上傳</label>
+          <label className="text-label-small text-neutral-content block" style={{ marginBottom: "8px", fontWeight: "bold" }}>上傳圖片</label>
           <input type="file" accept="image/*" onChange={handleImageUpload} disabled={processingImage} />
-          {processingImage && <span className="text-neutral-content-subtle ml-tight">前處理運算中...</span>}
+          {processingImage && <span className="text-neutral-content-subtle ml-tight">運算中...</span>}
           
           <div style={{ marginTop: "16px", display: imagePreview ? "block" : "none", textAlign: "center" }}>
               <canvas 
@@ -368,16 +368,16 @@ export function PlaygroundTab() {
           look="filled"
           onClick={sendRequest}
           disabled={loading || !projectId.trim() || !modelName.trim() || !imagePreview || processingImage}
-          aria-label="發送 Triton 請求"
+          aria-label="發送請求"
         >
-          {loading ? "推理執行中…" : "發送影像至模型測試"}
+          {loading ? "推理執行中…" : "模型測試"}
         </Button>
       </div>
 
       {(response.status != null || response.error) && (
         <div className={rootClass.elem("response").toClassName()} style={{ marginTop: "24px" }}>
           <Typography variant="title" size="medium" className="mb-tight mt-wide block">
-            推理結果
+            結果
           </Typography>
           {response.error && (
             <div className={rootClass.elem("error").toClassName()} style={{ padding: "12px", background: "#fee2e2", color: "#b91c1c", borderRadius: "6px" }}>

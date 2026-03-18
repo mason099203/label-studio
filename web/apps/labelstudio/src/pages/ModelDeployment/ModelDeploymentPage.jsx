@@ -19,11 +19,11 @@ export function ModelDeploymentPage() {
 
   return (
     <div className={rootClass.toClassName()}>
-      <Tabs defaultValue="deploy" variant="flat" className={rootClass.elem("tabs").toClassName()}>
+      <Tabs defaultValue="playground" variant="flat" className={rootClass.elem("tabs").toClassName()}>
         <TabsList>
-          <TabsTrigger value="deploy">模型部署</TabsTrigger>
-          <TabsTrigger value="playground">Playground</TabsTrigger>
-          <TabsTrigger value="logs">日誌與效能</TabsTrigger>
+          {/* <TabsTrigger value="deploy">模型部署</TabsTrigger> */}
+          <TabsTrigger value="playground">模型測試</TabsTrigger>
+          <TabsTrigger value="logs">儀錶板</TabsTrigger>
         </TabsList>
         <TabsContent value="deploy" className={rootClass.elem("tab-content").toClassName()}>
           <DeployTab />

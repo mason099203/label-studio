@@ -115,14 +115,11 @@ export const ProjectModelsPage = () => {
     <div className={cn("project-models-page").toClassName()}>
       <div className={cn("project-models-page").elem("header").toClassName()}>
         <div>
-          <h2 className={cn("project-models-page").elem("title").toClassName()}>Models</h2>
+          <h2 className={cn("project-models-page").elem("title").toClassName()}>模型紀錄</h2>
           <div className={cn("project-models-page").elem("subtitle").toClassName()}>
-            查看先前訓練過的模型、狀態、結果與圖表，不需進入 Labeling。
+            查看先前訓練過的模型、狀態、結果與圖表。
           </div>
         </div>
-        <Button to={`/projects/${params.id}/data/training`} look="outlined" size="small" data-external>
-          開啟 Training
-        </Button>
       </div>
 
       {error && (
@@ -137,9 +134,9 @@ export const ProjectModelsPage = () => {
         </div>
       )}
 
-      {datasets.length > 0 && (
+      {/* {datasets.length > 0 && (
         <section className={cn("project-models-page").elem("section").toClassName()}>
-          <div className={cn("project-models-page").elem("section-title").toClassName()}>Datasets</div>
+          <div className={cn("project-models-page").elem("section-title").toClassName()}>資料集</div>
           <div className={cn("project-models-page").elem("dataset-list").toClassName()}>
             {datasets.slice(0, 10).map((dataset) => (
               <div key={dataset.dataset_id} className={cn("project-models-page").elem("dataset-card").toClassName()}>
@@ -154,10 +151,10 @@ export const ProjectModelsPage = () => {
             ))}
           </div>
         </section>
-      )}
+      )} */}
 
       <section className={cn("project-models-page").elem("section").toClassName()}>
-        <div className={cn("project-models-page").elem("section-title").toClassName()}>Trained Models</div>
+        <div className={cn("project-models-page").elem("section-title").toClassName()}>模型訓練紀錄</div>
         <div className={cn("project-models-page").elem("run-list").toClassName()}>
           {runs.length === 0 && (
             <div className={cn("project-models-page").elem("empty").toClassName()}>尚無歷史模型紀錄。</div>
@@ -179,7 +176,7 @@ export const ProjectModelsPage = () => {
                     <div className={cn("project-models-page").elem("run-summary-title").toClassName()}>
                       {project?.title ?? `Project ${params.id}`}
                     </div>
-                    <div className={cn("project-models-page").elem("run-summary-time").toClassName()}>{trainingTime}</div>
+                    {/* <div className={cn("project-models-page").elem("run-summary-time").toClassName()}>{trainingTime}</div> */}
                   </div>
                   <div className={cn("project-models-page").elem("run-summary-side").toClassName()}>
                     <div className={cn("project-models-page").elem("run-status").mod({ [run.status ?? "unknown"]: true }).toClassName()}>
@@ -199,11 +196,11 @@ export const ProjectModelsPage = () => {
                       </div>
                       <div className={cn("project-models-page").elem("run-actions").toClassName()}>
                         <a className="no-go" href={absoluteURL(run.best_download_url)} target="_blank" rel="noreferrer">
-                          <IconFileDownload /> best.pt
+                          <IconFileDownload /> 模型
                         </a>
-                        <a className="no-go" href={absoluteURL(run.last_download_url)} target="_blank" rel="noreferrer">
+                        {/* <a className="no-go" href={absoluteURL(run.last_download_url)} target="_blank" rel="noreferrer">
                           <IconFileDownload /> last.pt
-                        </a>
+                        </a> */}
                         {run.status === "finished" && (
                           <Button
                             look="outlined"
@@ -213,9 +210,9 @@ export const ProjectModelsPage = () => {
                               handleDeployToTriton(run.run_id);
                             }}
                             disabled={deployingRunId === run.run_id}
-                            aria-label="部署到 Triton"
+                            aria-label="部署模型"
                           >
-                            {deployingRunId === run.run_id ? "部署中…" : "部署到 Triton"}
+                            {deployingRunId === run.run_id ? "部署中…" : "部署模型"}
                           </Button>
                         )}
                       </div>
@@ -224,8 +221,8 @@ export const ProjectModelsPage = () => {
                     <div className={cn("project-models-page").elem("run-description").toClassName()}>
                       {run.message && <div>{run.message}</div>}
                       {run.error && <div className={cn("project-models-page").elem("run-error").toClassName()}>{run.error}</div>}
-                      {run.params?.base_weights && <div>Base: {run.params.base_weights}</div>}
-                      {run.params?.data_yaml && <div>Dataset: {run.params.data_yaml}</div>}
+                      {/* {run.params?.base_weights && <div>Base: {run.params.base_weights}</div>} */}
+                      {/* {run.params?.data_yaml && <div>Dataset: {run.params.data_yaml}</div>} */}
                     </div>
 
                     {run.metrics && (

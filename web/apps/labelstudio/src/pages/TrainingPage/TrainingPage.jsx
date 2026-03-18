@@ -255,7 +255,7 @@ export const TrainingPage = () => {
     >
       <div className={cn("training-page").toClassName()}>
         <div className={cn("training-page").elem("intro").toClassName()}>
-          使用此專案資料在本機 server 進行訓練，並檢視效能指標與輸出模型。
+          使用此專案資料進行訓練，並檢視效能指標與輸出模型。
         </div>
 
         {/* 專案與資料摘要 */}
@@ -284,7 +284,7 @@ export const TrainingPage = () => {
 
         {/* 選擇 base 模型 */}
         <div className={cn("training-page").elem("section").toClassName()}>
-          <div className={cn("training-page").elem("section-title").toClassName()}>Base 模型（本機）</div>
+          <div className={cn("training-page").elem("section-title").toClassName()}>基礎模型</div>
           {localModels.length === 0 ? (
             <div className={cn("training-page").elem("hint").toClassName()}>
               找不到本機權重檔。請把 `.pt` 放到 `data/training/models/original/`，即可在此選擇。
@@ -316,11 +316,6 @@ export const TrainingPage = () => {
         {/* dataset_config.json 路徑 */}
         <div className={cn("training-page").elem("section").toClassName()}>
           <div className={cn("training-page").elem("section-title").toClassName()}>資料集設定</div>
-          <div className={cn("training-page").elem("hint").toClassName()}>
-            會依專案的 Labeling Interface 自動輸出對應的 JSON 設定檔：
-            detect 會建立 YOLO detect dataset，classification 會建立分類資料夾與 JSON manifest。
-            您也可以在下方選擇要使用的匯出格式（若不確定請選擇「自動決定」）。
-          </div>
           <div style={{ marginTop: 10, display: "flex", gap: 8, alignItems: "center" }}>
             <select
               className={cn("training-page").elem("input").toClassName()}
@@ -328,7 +323,7 @@ export const TrainingPage = () => {
               value={exportFormat}
               onChange={(e) => setExportFormat(e.target.value)}
             >
-              <option value="">自動決定 (依專案預設)</option>
+              <option value="">依專案預設</option>
               <option value="YOLO_WITH_IMAGES">YOLO_WITH_IMAGES (YOLO v8/v11 偵測)</option>
               <option value="JSON_MIN">JSON_MIN (輕量 / 分類資料結構)</option>
               <option value="YOLO">YOLO (僅座標，無圖片)</option>
@@ -342,7 +337,7 @@ export const TrainingPage = () => {
               disabled={!isDefined(pageParams?.id)}
               aria-label="Prepare dataset from export"
             >
-              產生 dataset_config.json
+              生成訓練資料集
             </Button>
           </div>
           <div className={cn("training-page").elem("stats").toClassName()} style={{ marginTop: 8 }}>
@@ -353,11 +348,7 @@ export const TrainingPage = () => {
               onChange={(e) => setDatasetConfigPath(e.target.value)}
             />
           </div>
-          {datasetMeta?.dataset_config && (
-            <div className={cn("training-page").elem("hint").toClassName()} style={{ marginTop: 8 }}>
-              已產生資料集：{datasetMeta.dataset_root}（{datasetMeta.task_type} / {datasetMeta.training_model} / train {datasetMeta.train_count} / val {datasetMeta.val_count}）
-            </div>
-          )}
+
 
           {/* 訓練引擎選擇 (僅限分類任務) */}
           {(datasetMeta?.task_type === "classification" || trainingSpec?.task_type === "classification") && (
@@ -457,7 +448,7 @@ export const TrainingPage = () => {
               <IconFileDownload /> 輸出模型
             </div>
             <div className={cn("training-page").elem("output").toClassName()}>
-              <p>訓練完成，可下載模型用於後續部署或更新 ML Backend。</p>
+              <p>訓練完成。</p>
               <Button
                 as="a"
                 href={outputModelUrl}
@@ -473,94 +464,10 @@ export const TrainingPage = () => {
           </div>
         )}
 
-        {artifacts?.length > 0 && (
-          <div className={cn("training-page").elem("section").toClassName()}>
-            <div className={cn("training-page").elem("section-title").toClassName()}>Artifacts</div>
-            <div className={cn("training-page").elem("hint").toClassName()}>
-              {artifacts.map((a) => (
-                <div key={a.download_url}>
-                  <a className="no-go" href={absoluteURL(a.download_url)} target="_blank" rel="noreferrer">
-                    {a.name}
-                  </a>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {(trainingHistory?.runs?.length || trainingHistory?.datasets?.length) && (
-          <div className={cn("training-page").elem("section").toClassName()}>
-            <div className={cn("training-page").elem("section-title").toClassName()}>歷史紀錄</div>
-
-            {trainingHistory?.runs?.length > 0 && (
-              <div className={cn("training-page").elem("hint").toClassName()} style={{ marginBottom: 12 }}>
-                <div style={{ fontWeight: 600, marginBottom: 6 }}>已訓練模型（runs）</div>
-                {trainingHistory.runs.slice(0, 10).map((r) => (
-                  <div key={r.run_id} style={{ marginBottom: 10 }}>
-                    <div>
-                      <span style={{ fontFamily: "monospace" }}>{r.run_id}</span>
-                      {r.task_type && (
-                        <span style={{ marginLeft: 8, color: "var(--color-neutral-content-subtle)" }}>{r.task_type}</span>
-                      )}
-                      {r.metrics?.map50 != null && (
-                        <span style={{ marginLeft: 8, color: "var(--color-neutral-content-subtle)" }}>
-                          mAP50: {(r.metrics.map50 * 100).toFixed(2)}%
-                        </span>
-                      )}
-                      {r.metrics?.top1 != null && (
-                        <span style={{ marginLeft: 8, color: "var(--color-neutral-content-subtle)" }}>
-                          Top-1: {(r.metrics.top1 * 100).toFixed(2)}%
-                        </span>
-                      )}
-                    </div>
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
-                      <a className="no-go" href={absoluteURL(r.best_download_url)} target="_blank" rel="noreferrer">
-                        best.pt
-                      </a>
-                      <a className="no-go" href={absoluteURL(r.last_download_url)} target="_blank" rel="noreferrer">
-                        last.pt
-                      </a>
-                      {(r.artifacts ?? []).slice(0, 6).map((a) => (
-                        <a key={a.download_url} className="no-go" href={absoluteURL(a.download_url)} target="_blank" rel="noreferrer">
-                          {a.name}
-                        </a>
-                      ))}
-                      {/* 舊有的 DeployToTritonButton 已移除，統一至「模型部署」頁面管理 */}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {trainingHistory?.datasets?.length > 0 && (
-              <div className={cn("training-page").elem("hint").toClassName()}>
-                <div style={{ fontWeight: 600, marginBottom: 6 }}>已產生資料集（datasets）</div>
-                {trainingHistory.datasets.slice(0, 10).map((d) => (
-                  <div key={d.dataset_id} style={{ marginBottom: 10 }}>
-                    <div>
-                      <span style={{ fontFamily: "monospace" }}>{d.dataset_id}</span>
-                      {d.meta?.train_count != null && (
-                        <span style={{ marginLeft: 8, color: "var(--color-neutral-content-subtle)" }}>
-                          train {d.meta.train_count} / val {d.meta.val_count}
-                        </span>
-                      )}
-                    </div>
-                    <div style={{ marginTop: 6, color: "var(--color-neutral-content-subtle)" }}>
-                      {d.task_type ?? "unknown"} / {d.training_model ?? "unknown"} / dataset_config:
-                      {" "}
-                      {d.dataset_config ?? d.data_yaml ?? "—"}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
         <div className={cn("training-page").elem("footer").toClassName()}>
           <Space spread style={{ width: "100%" }}>
             <span className={cn("training-page").elem("footer-hint").toClassName()}>
-              標註資料將以專案現有標註為訓練集；可先從 Export 匯出備份。
+              {/* 標註資料將以專案現有標註為訓練集；可先從 Export 匯出備份。 */}
             </span>
             <Button onClick={closeAndBack} look="outlined" size="small" aria-label="Close">
               關閉

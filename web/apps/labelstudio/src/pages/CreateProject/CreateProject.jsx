@@ -55,7 +55,7 @@ const ProjectName = ({ name, setName, onSaveName, onSubmit, error, description, 
           className="project-description w-full"
         />
       </div>
-      {isFF(FF_LSDV_E_297) && (
+      {/* {isFF(FF_LSDV_E_297) && (
         <div className="w-full flex flex-col gap-2">
           <label>
             Workspace
@@ -81,7 +81,7 @@ const ProjectName = ({ name, setName, onSaveName, onSubmit, error, description, 
           </Typography>
           <HeidiTips collection="projectCreation" />
         </div>
-      )}
+      )} */}
     </form>
   );
 

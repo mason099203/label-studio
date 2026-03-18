@@ -325,14 +325,14 @@ export function LogsAndMetricsTab() {
       <div className={rootClass.elem("hero").toClassName()}>
         <div className={rootClass.elem("hero-copy").toClassName()}>
           <Typography variant="headline" size="medium">
-            日誌與效能
+            儀錶板
           </Typography>
           <Typography variant="body" size="small" className="text-neutral-content-subtle">
             即時查看部署模型、推論事件、效能快照與監控入口。
           </Typography>
           <div className={rootClass.elem("hero-meta").toClassName()}>
             <span className={rootClass.elem("meta-chip").toClassName()}>
-              專案 ID: {projectId}
+              專案名稱: {projectId}
             </span>
             <span className={rootClass.elem("meta-chip").toClassName()}>
               檢視範圍: {VIEW_MODES[scope]}{data?.viewer?.username ? ` (${data.viewer.username})` : ""}
