@@ -1,6 +1,5 @@
 {
   "$schema": "./node_modules/nx/schemas/nx-schema.json",
-  "plugins": ["./node_modules/nx/src/adapter/angular-json"],
   "tasksRunnerOptions": {
     "default": {
       "options": {

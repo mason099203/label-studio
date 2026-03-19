@@ -9,9 +9,16 @@ require("dotenv").config({
   path: path.resolve(__dirname, "../.env"),
 });
 
-// Import webpack plugins from the same webpack version that @nx/webpack uses for compilation,
-// to avoid version mismatches between the root webpack and the NX-bundled webpack.
-const nxWebpack = require("@nx/webpack/node_modules/webpack");
+// Prefer Nx's bundled webpack when available, but fall back to the workspace
+// dependency because newer @nx/webpack releases no longer ship a nested copy.
+let nxWebpack;
+
+try {
+  nxWebpack = require("@nx/webpack/node_modules/webpack");
+} catch {
+  nxWebpack = require("webpack");
+}
+
 const { EnvironmentPlugin, DefinePlugin } = nxWebpack;
 const TerserPlugin = require("terser-webpack-plugin");
 const CssMinimizerPlugin = require("css-minimizer-webpack-plugin");
