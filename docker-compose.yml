@@ -18,7 +18,7 @@ services:
     #      - NGINX_SSL_CERT=/certs/cert.pem
     #      - NGINX_SSL_CERT_KEY=/certs/cert.key
     volumes:
-      - ./mydata:/label-studio/data:rw
+      - ./data:/label-studio/data:rw
       - ./deploy/nginx/certs:/certs:ro
     #   Optional: Override nginx default conf
     #      - ./deploy/my.conf:/etc/nginx/nginx.conf
@@ -34,6 +34,7 @@ services:
       - "8000"
     depends_on:
       - db
+      - redis
     environment:
       - DJANGO_DB=default
       - POSTGRE_NAME=postgres
@@ -43,10 +44,43 @@ services:
       - POSTGRE_HOST=db
       - LABEL_STUDIO_HOST=${LABEL_STUDIO_HOST:-}
       - JSON_LOG=1
+      # Redis（可選）：若你有啟用背景任務/快取，通常會用到這些設定
+      # 注意：Label Studio Community 版是否實際啟用 Redis，取決於你目前這個分支的後端設定
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - REDIS_URL=redis://redis:6379/0
+      - REDIS_ENABLED=1
+      - RQ_REDIS_HOST=redis
+      - RQ_REDIS_PORT=6379
+      - RQ_REDIS_DB=0
     #      - LOG_LEVEL=DEBUG
     volumes:
-      - ./mydata:/label-studio/data:rw
+      - ./data:/label-studio/data:rw
     command: label-studio-uwsgi
+
+  rqworker:
+    build: .
+    image: heartexlabs/label-studio:latest
+    restart: unless-stopped
+    depends_on:
+      - db
+      - redis
+    environment:
+      - DJANGO_DB=default
+      - POSTGRE_NAME=postgres
+      - POSTGRE_USER=postgres
+      - POSTGRE_PASSWORD=
+      - POSTGRE_PORT=5432
+      - POSTGRE_HOST=db
+      - JSON_LOG=1
+      - REDIS_ENABLED=1
+      - RQ_REDIS_HOST=redis
+      - RQ_REDIS_PORT=6379
+      - RQ_REDIS_DB=0
+    volumes:
+      - ./data:/label-studio/data:rw
+    command: python label_studio/manage.py rqworker low --worker-class rq.worker.SimpleWorker
 
   db:
     image: pgautoupgrade/pgautoupgrade:17-alpine
@@ -66,6 +100,14 @@ services:
       - ${POSTGRES_DATA_DIR:-./postgres-data}:/var/lib/postgresql/data
       - ./deploy/pgsql/certs:/var/lib/postgresql/certs:ro
 
+  redis:
+    image: redis:7-alpine
+    hostname: redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+
   triton:
     image: nvcr.io/nvidia/tritonserver:24.01-py3
     container_name: triton
@@ -78,3 +120,6 @@ services:
       - ./data/triton_models:/models
     command: tritonserver --model-repository=/models --model-control-mode=poll --repository-poll-secs=5 --exit-on-error=false
     restart: unless-stopped
+
+volumes:
+  redis-data:
