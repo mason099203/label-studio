@@ -93,6 +93,30 @@ def _read_dataset_config(dataset_config: str) -> Dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _disable_ultralytics_git_metadata() -> None:
+    """
+    Disable Ultralytics' Git metadata reading.
+
+    Ultralytics will read `.git` refs (for `GIT.commit`) when saving checkpoints.
+    In restricted environments (e.g. RQ worker with limited filesystem permissions),
+    reading `.git/refs/heads/...` may raise `PermissionError` and fail the training job.
+    """
+
+    try:
+        from ultralytics.utils import GIT  # type: ignore
+
+        # Clear cached properties to ensure they won't be re-used.
+        for k in ("head", "branch", "commit", "origin"):
+            GIT.__dict__.pop(k, None)
+
+        # Mark as non-repo so GIT.commit returns None without reading git files.
+        GIT.root = None
+        GIT.gitdir = None
+    except Exception:
+        # Best-effort only; if it fails, training might still work.
+        return
+
+
 def yolo_detect_train_job(
     *,
     project_id: int,
@@ -228,6 +252,8 @@ def yolo_detect_train_job(
     )
 
     try:
+        # Prevent Ultralytics from reading `.git` refs when saving checkpoints.
+        _disable_ultralytics_git_metadata()
         model = YOLO(base_weights)
         model.train(
             data=str(data_path),
@@ -471,7 +497,9 @@ def yolo_classification_train_job(
                 target_weights = str(alt) if alt.exists() else cls_name
         except Exception:
             pass
-            
+
+        # Prevent Ultralytics from reading `.git` refs when saving checkpoints.
+        _disable_ultralytics_git_metadata()
         model = YOLO(target_weights)
         model.train(
             data=str(dataset_root),

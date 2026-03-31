@@ -14,6 +14,10 @@ label_studio/**/*.pyc
 
 # FRONTEND
 !web
+# Dockerfile 的 version 步驟使用 `--mount=bind,source=.git`：在 Docker Desktop / BuildKit 下，
+# 若 `.git` 被排除，掛載會失敗（`"/.git": not found`）。因此必須保留 `!.git`。
+# 若 context 過大，請在本機執行 `git gc`、或改用 shallow clone，而非從 .dockerignore 拿掉 .git。
+!.git
 # 本機已 build 的產物不必送入 context（映像內會執行 yarn build）
 web/dist
 # Re-ignore node_modules and nx cache
@@ -27,13 +31,8 @@ web/dist
 !poetry.lock
 
 # ---------------------------------------------------------------------------
-# 縮小 build context（避免數 GB 傳輸）
-#
-# 注意：不要加入 `!.git`。`.git` 由 Dockerfile 內
-# `--mount=type=bind,source=.git,target=...` 從主機掛載，用於 version 產生，
-# 不需（也不應）把整個 .git 打包進 context。
+# 縮小 build context（排除執行時資料與本機目錄；勿再排除 `.git`，見上方說明）
 # ---------------------------------------------------------------------------
-.git
 data/
 mydata/
 postgres-data/
