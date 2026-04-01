@@ -51,11 +51,12 @@ switch ($resolved.kind) {
         & $resolved.path label_studio/manage.py rqworker low --worker-class rq.worker.SimpleWorker
     }
     default {
-        Write-Error @"
-未偵測到 Poetry 或專案目錄下的 .venv\Scripts\python.exe。
-請安裝 Poetry 後再執行本腳本，並於專案根目錄執行：poetry install
-（參考 poetry.toml：虛擬環境會建立於 .venv）
-"@
+        $msgLines = @(
+            'Poetry not found and .venv\\Scripts\\python.exe is missing.'
+            'Install Poetry, then run: poetry install (from the repo root).'
+            'Hint: poetry.toml config usually creates the venv under .venv.'
+        )
+        Write-Error ($msgLines -join "`r`n")
         exit 1
     }
 }
