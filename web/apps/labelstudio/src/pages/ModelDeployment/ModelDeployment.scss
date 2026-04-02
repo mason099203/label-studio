@@ -202,6 +202,58 @@
     overflow: auto;
     max-height: 300px;
   }
+
+  &__api-docs {
+    margin-bottom: var(--spacing-wide);
+    padding: 20px;
+    border-radius: 16px;
+    background: rgba(248, 250, 252, 0.95);
+    border: 1px solid rgba(148, 163, 184, 0.25);
+  }
+
+  &__api-docs-url {
+    display: inline-block;
+    margin-top: 4px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    font-size: 12px;
+    word-break: break-all;
+    font-family: "Fira Code", "Roboto Mono", monospace;
+  }
+
+  &__api-docs-details {
+    margin-top: 10px;
+    border-radius: 10px;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    background: rgba(255, 255, 255, 0.65);
+    padding: 0 12px;
+  }
+
+  &__api-docs-summary {
+    cursor: pointer;
+    padding: 10px 0;
+    font-weight: 600;
+    font-size: 13px;
+    color: #334155;
+    list-style-position: outside;
+  }
+
+  &__api-docs-pre {
+    margin: 0 0 12px;
+    padding: 12px;
+    border-radius: 8px;
+    background: #0f172a;
+    color: #e2e8f0;
+    font-family: "Fira Code", "Roboto Mono", monospace;
+    font-size: 11px;
+    line-height: 1.45;
+    overflow: auto;
+    max-height: 280px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
 }
 
 /* 日誌與效能分頁 */
