@@ -170,14 +170,16 @@ export const TrainingPage = () => {
 
   const canStart =
     localModels.length > 0 &&
-    trainingState === "idle" &&
+    (trainingState === "idle" || trainingState === "error") &&
     Boolean(selectedBaseWeights) &&
     Boolean(datasetConfigPath);
 
   const hasDatasetReady = Boolean(datasetConfigPath);
 
   const disabledReason = (() => {
-    if (trainingState !== "idle") return "目前已有任務進行中";
+    if (trainingState === "running") return "目前已有任務進行中";
+    if (trainingState === "done")
+      return "本次訓練已完成；若要再次訓練請關閉此視窗後重新開啟 Training。";
     if (localModels.length === 0) return "找不到本機權重檔（請確認 data/training/models/original/）";
     if (!selectedBaseWeights) return "請先選擇 base 模型";
     if (!datasetConfigPath) return "請先輸入或從 Export 產生 dataset_config.json";
@@ -229,7 +231,9 @@ export const TrainingPage = () => {
 
         if (failed) {
           setTrainingState("error");
-          setErrorMessage(meta?.message ?? "Training failed");
+          const headline = meta?.message ?? "Training failed";
+          const detail = meta?.error ? `\n詳情：${meta.error}` : "";
+          setErrorMessage(headline + detail);
           return;
         }
       } finally {

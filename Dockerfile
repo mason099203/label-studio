@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1
 ARG NODE_VERSION=22
-ARG PYTHON_VERSION=3.13
+# yolo-training（ultralytics/torch）之 manylinux 輪子需 glibc；Alpine/musl 會無法安裝 CUDA/torch 等依賴
+ARG PYTHON_VERSION=3.12
 ARG POETRY_VERSION=2.3.2
 ARG VERSION_OVERRIDE
 ARG BRANCH_OVERRIDE
@@ -42,9 +43,17 @@ RUN apk add --no-cache \
 COPY web/package.json .
 COPY web/yarn.lock .
 COPY web/tools tools
+# --network-timeout：大專案拉 tarball 較久；迴圈重試：緩解 registry 502（yarnpkg 短暫故障）
 RUN --mount=type=cache,target=/root/web/.yarn,id=yarn-cache,sharing=locked \
     --mount=type=cache,target=/root/web/.nx,id=nx-cache,sharing=locked \
-    yarn install --prefer-offline --no-progress --pure-lockfile --frozen-lockfile --ignore-engines --non-interactive --production=false
+    set -e; \
+    ok=0; \
+    for attempt in 1 2 3 4 5; do \
+      if yarn install --prefer-offline --no-progress --pure-lockfile --frozen-lockfile --ignore-engines --non-interactive --production=false --network-timeout 600000; then ok=1; break; fi; \
+      echo "yarn install failed (attempt $attempt/5), retrying in 25s..."; \
+      sleep 25; \
+    done; \
+    test "$ok" -eq 1
 
 COPY web/ .
 COPY pyproject.toml ../pyproject.toml
@@ -60,28 +69,39 @@ RUN --mount=type=cache,target=/root/web/.yarn,id=yarn-cache,sharing=locked \
     yarn version:libs
 
 ################################ Stage: venv-builder (prepare the virtualenv)
-FROM python:${PYTHON_VERSION}-alpine AS venv-builder
+FROM python:${PYTHON_VERSION}-slim-bookworm AS venv-builder
 ARG POETRY_VERSION
 ARG PYTHON_VERSION
 
+# PIP_DEFAULT_TIMEOUT / PIP_RETRIES：隔離建置（如 opencv-python-headless）會再拉 PyPI，網路慢時易逾時
+# POETRY_INSTALLER_PARALLEL=false：改為序列安裝，減少同時連線、降低逾時機率
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=off \
     PIP_DISABLE_PIP_VERSION_CHECK=on \
-    PIP_DEFAULT_TIMEOUT=100 \
+    PIP_DEFAULT_TIMEOUT=1200 \
+    PIP_RETRIES=10 \
     PIP_CACHE_DIR="/.cache" \
     POETRY_CACHE_DIR="/.poetry-cache" \
     POETRY_HOME="/opt/poetry" \
     POETRY_VIRTUALENVS_IN_PROJECT=true \
     POETRY_VIRTUALENVS_PREFER_ACTIVE_PYTHON=true \
+    POETRY_INSTALLER_PARALLEL=false \
     PATH="/opt/poetry/bin:$PATH"
 
-RUN apk add --no-cache \
-    build-base \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
     git \
-    linux-headers \
-    python3-dev \
-    pcre2-dev
+    libpcre3-dev \
+    libssl-dev \
+    libxml2-dev \
+    libxslt1-dev \
+    zlib1g-dev \
+    libjpeg-dev \
+    libpng-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
 
 ADD https://install.python-poetry.org /tmp/install-poetry.py
 RUN python /tmp/install-poetry.py
@@ -100,20 +120,39 @@ COPY pyproject.toml poetry.lock README.md ./
 ARG INCLUDE_DEV=false
 
 # Install dependencies
-RUN --mount=type=cache,target=/.poetry-cache,id=poetry-cache-alpine,sharing=locked \
-    poetry check --lock && \
-    if [ "$INCLUDE_DEV" = "true" ]; then \
-        poetry install --no-root --extras uwsgi --with test; \
+# lock 會解析出含 CUDA 的 torch；slim 映像無系統 libcudnn，import 會報錯。
+# 安裝後強制改為 PyTorch 官方 CPU 輪子（較小、無 cuDNN），訓練可用 CPU；若要 GPU 請改用 nvidia/cuda 基底映像並勿覆寫此步驟。
+RUN --mount=type=cache,target=/.poetry-cache,id=poetry-cache-bookworm,sharing=locked \
+    set -e; \
+    poetry check --lock; \
+    set +e; \
+    if [ "${INCLUDE_DEV:-false}" = "true" ]; then \
+        poetry install --no-root --extras uwsgi --extras yolo-training --with test; \
     else \
-        poetry install --no-root --without test --extras uwsgi; \
-    fi
+        poetry install --no-root --without test --extras uwsgi --extras yolo-training; \
+    fi; \
+    poetry_ec=$?; \
+    set -e; \
+    if [ "$poetry_ec" -ne 0 ]; then \
+        echo "note: poetry install exited $poetry_ec（常見：下載逾時／yanked）；仍嘗試覆寫 CPU torch 並驗證"; \
+    fi; \
+    /label-studio/.venv/bin/pip install --no-cache-dir --force-reinstall --upgrade \
+        "torch" "torchvision" \
+        --index-url https://download.pytorch.org/whl/cpu; \
+    /label-studio/.venv/bin/python -c "import django, torch, ultralytics; print('deps OK', django.get_version(), torch.__version__, 'cuda=', torch.cuda.is_available())"
 
-# Install LS
+# Install LS（再跑一次 --no-root：補齊因上一層快取／曾失敗導致缺 Django 等依賴的 venv）
 COPY label_studio label_studio
-RUN --mount=type=cache,target=/.poetry-cache,id=poetry-cache-alpine,sharing=locked \
-    # `--extras uwsgi` is mandatory here due to poetry bug: https://github.com/python-poetry/poetry/issues/7302
-    poetry install --only-root --extras uwsgi && \
-    python3 label_studio/manage.py collectstatic --no-input
+RUN --mount=type=cache,target=/.poetry-cache,id=poetry-cache-bookworm,sharing=locked \
+    set -e; \
+    if [ "${INCLUDE_DEV:-false}" = "true" ]; then \
+        poetry install --no-root --extras uwsgi --extras yolo-training --with test; \
+    else \
+        poetry install --no-root --without test --extras uwsgi --extras yolo-training; \
+    fi; \
+    poetry install --only-root --extras uwsgi --extras yolo-training; \
+    /label-studio/.venv/bin/python -c "import django"; \
+    /label-studio/.venv/bin/python label_studio/manage.py collectstatic --no-input
 
 ################################ Stage: py-version-generator
 FROM venv-builder AS py-version-generator
@@ -125,7 +164,7 @@ RUN --mount=type=bind,source=.git,target=./.git \
     VERSION_OVERRIDE=${VERSION_OVERRIDE} BRANCH_OVERRIDE=${BRANCH_OVERRIDE} poetry run python label_studio/core/version.py
 
 ################################### Stage: prod
-FROM python:${PYTHON_VERSION}-alpine AS production
+FROM python:${PYTHON_VERSION}-slim-bookworm AS production
 
 ENV LS_DIR=/label-studio \
     HOME=/label-studio \
@@ -138,15 +177,22 @@ ENV LS_DIR=/label-studio \
 
 WORKDIR $LS_DIR
 
-# install prerequisites for app
-RUN apk add --no-cache \
-    expat \
-    mesa-gl \
-    glib \
-    curl \
-    nginx \
+# 執行期依賴：nginx、redis-server（EMBEDDED_REDIS=1）、opencv/torch 常用系統庫
+RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
-    procps
+    ca-certificates \
+    curl \
+    libexpat1 \
+    libglib2.0-0 \
+    libgomp1 \
+    libgl1 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
+    nginx \
+    procps \
+    redis-server \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN set -eux; \
     mkdir -p $LS_DIR $LABEL_STUDIO_BASE_DATA_DIR $OPT_DIR && \

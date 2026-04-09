@@ -1,7 +1,7 @@
 services:
   nginx:
     build: .
-    image: heartexlabs/label-studio:latest
+    image: custom_labelstudio:latest
     restart: unless-stopped
     ports:
       - "8080:8085"
@@ -28,13 +28,14 @@ services:
     stdin_open: true
     tty: true
     build: .
-    image: heartexlabs/label-studio:latest
+    image: custom_labelstudio:latest
     restart: unless-stopped
     expose:
       - "8000"
     depends_on:
       - db
       - redis
+      - triton
     environment:
       - DJANGO_DB=default
       - POSTGRE_NAME=postgres
@@ -54,6 +55,8 @@ services:
       - RQ_REDIS_HOST=redis
       - RQ_REDIS_PORT=6379
       - RQ_REDIS_DB=0
+      # 與同 compose 內的 triton 服務通訊（勿用 localhost，那是容器自己）
+      - TRITON_SERVER_URL=http://triton:8000
     #      - LOG_LEVEL=DEBUG
     volumes:
       - ./data:/label-studio/data:rw
@@ -61,11 +64,12 @@ services:
 
   rqworker:
     build: .
-    image: heartexlabs/label-studio:latest
+    image: custom_labelstudio:latest
     restart: unless-stopped
     depends_on:
       - db
       - redis
+      - triton
     environment:
       - DJANGO_DB=default
       - POSTGRE_NAME=postgres
@@ -75,9 +79,14 @@ services:
       - POSTGRE_HOST=db
       - JSON_LOG=1
       - REDIS_ENABLED=1
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - REDIS_URL=redis://redis:6379/0
       - RQ_REDIS_HOST=redis
       - RQ_REDIS_PORT=6379
       - RQ_REDIS_DB=0
+      - TRITON_SERVER_URL=http://triton:8000
     volumes:
       - ./data:/label-studio/data:rw
     command: python label_studio/manage.py rqworker low --worker-class rq.worker.SimpleWorker

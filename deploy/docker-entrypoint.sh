@@ -60,6 +60,42 @@ exec_or_wrap_n_exec() {
 
 source_inject_envvars
 
+# 單一容器內嵌 Redis：設 EMBEDDED_REDIS=1，且 CMD 為 label-studio-uwsgi 或 python … manage.py … rqworker 時，
+# 於 127.0.0.1:6379 背景啟動 redis-server（資料在 $LABEL_STUDIO_BASE_DATA_DIR/redis）。
+# 並匯出 REDIS_URL / RQ_REDIS_*（若未設定），讓 Django-RQ 連本容器內 Redis。
+embedded_redis_maybe_start() {
+  [ "${EMBEDDED_REDIS:-0}" = "1" ] || return 0
+  local should_start=0
+  case "${1:-}" in
+    label-studio-uwsgi) should_start=1 ;;
+    python|python3)
+      case "$*" in
+        *manage.py*rqworker*) should_start=1 ;;
+      esac
+      ;;
+  esac
+  [ "$should_start" = "1" ] || return 0
+  if ! command -v redis-server >/dev/null 2>&1; then
+    echo >&3 "$0: EMBEDDED_REDIS=1 but redis-server not found. Rebuild image with: apk add --no-cache redis"
+    exit 1
+  fi
+  local rdir="${LABEL_STUDIO_BASE_DATA_DIR:-/label-studio/data}/redis"
+  mkdir -p "$rdir"
+  echo >&3 "$0: Starting embedded Redis (bind 127.0.0.1:6379, dir $rdir)"
+  redis-server \
+    --bind 127.0.0.1 \
+    --port 6379 \
+    --dir "$rdir" \
+    --appendonly yes \
+    --daemonize yes
+  export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379/0}"
+  export RQ_REDIS_HOST="${RQ_REDIS_HOST:-127.0.0.1}"
+  export RQ_REDIS_PORT="${RQ_REDIS_PORT:-6379}"
+  export RQ_REDIS_DB="${RQ_REDIS_DB:-0}"
+}
+
+embedded_redis_maybe_start "$@"
+
 if [ -f "$OPT_DIR"/config_env ]; then
   echo >&3 "$0: Remove config_env"
   rm -f "$OPT_DIR"/config_env

@@ -85,7 +85,8 @@ label-studio = "label_studio.server:main"
 [project.optional-dependencies]
 uwsgi = ['pyuwsgi (==2.0.28.post1)', 'uwsgitop (==0.12)']
 # YOLO 分類／偵測內建訓練（RQ jobs）需要；會帶入 torch 等大型依賴
-yolo-training = ["ultralytics (>=8.3.0,<9.0.0)"]
+# 排除已 yanked 之 8.4.35（PyPI 標註 platform training issues）
+yolo-training = ["ultralytics (>=8.3.0,<9.0.0,!=8.4.35)"]
 
 [tool.ruff]
 # Assume Python 3.10 at a minimum

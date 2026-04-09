@@ -17,6 +17,64 @@ from rq import get_current_job
 logger = logging.getLogger(__name__)
 
 
+def _get_ultralytics_yolo():
+    """
+    載入 ultralytics.YOLO。
+
+    將 ModuleNotFoundError 與其他匯入錯誤分開，避免把 torch/cuDNN/OpenCV 等問題一律顯示成「未安裝 ultralytics」。
+
+    @returns YOLO 類別
+    @raises ImportError 無法載入時（訊息依原因區分）
+    """
+    try:
+        from ultralytics import YOLO  # type: ignore[import-not-found]
+
+        return YOLO
+    except ModuleNotFoundError as exc:
+        name = getattr(exc, "name", "") or ""
+        if name == "ultralytics" or "ultralytics" in str(exc):
+            raise ImportError(
+                "Ultralytics is not installed on the server. Install `ultralytics` to enable training."
+            ) from exc
+        raise ImportError(
+            f"訓練依賴缺少模組「{name}」。請確認伺服器已安裝 yolo-training 依賴（例如 poetry/Docker 映像含 ultralytics/torch）。原始錯誤: {exc}"
+        ) from exc
+    except Exception as exc:
+        raise ImportError(
+            "Ultralytics 匯入失敗（不一定是未安裝 ultralytics）。常見原因：PyTorch 與 CUDA/cuDNN 或 CPU 輪子不一致、動態庫缺失。"
+            f" 詳情: {exc}"
+        ) from exc
+
+
+def _friendly_hint_for_yolo_error(exc: Exception, *, classification: bool = False) -> str | None:
+    """
+    依常見例外文字補充使用者可理解的提示（仍會一併寫入 meta.error 的原始訊息）。
+
+    @param exc 訓練過程例外
+    @param classification 是否為 YOLO 分類任務
+    @returns 提示字串，若無則 None
+    """
+    text = str(exc)
+    if "SPPF.__init__" in text and "positional arguments" in text:
+        return (
+            "此權重檔與目前 server 上的 Ultralytics/YOLO 版本不相容。"
+            "請先用 yolov8n.pt / yolov8s.pt 測試流程是否可正常訓練，"
+            "或安裝與該權重相容的 Ultralytics 版本後再試。"
+        )
+    if classification:
+        tl = text.lower()
+        if "no labels" in tl or "found 0 images" in tl or "no images found" in tl:
+            return (
+                "資料夾結構或影像數量可能有誤。YOLO 分類需：dataset_root/train/<類別名>/<圖片> 與 "
+                "dataset_root/val/<類別名>/<圖片>，且每類至少各 1 張。"
+            )
+        if "yaml" in tl and ("not found" in tl or "missing" in tl):
+            return "分類訓練使用 ImageFolder 根目錄；請確認 dataset_config 的 dataset_root 指向正確目錄。"
+    if "out of memory" in tl and ("cuda" in tl or "cudnn" in tl):
+        return "GPU 記憶體不足，可嘗試調小 batch 或 imgsz，或改用 CPU 版 torch。"
+    return None
+
+
 def _safe_mkdir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
@@ -195,24 +253,12 @@ def yolo_detect_train_job(
             },
         )
 
-    def _friendly_hint_for_error(exc: Exception) -> str | None:
-        # Ultralytics model/weights incompatibility often shows up as a TypeError
-        # during model parsing (e.g. SPPF signature mismatch).
-        text = str(exc)
-        if "SPPF.__init__" in text and "positional arguments" in text:
-            return (
-                "此權重檔與目前 server 上的 Ultralytics/YOLO 版本不相容。"
-                "請先用 yolov8n.pt / yolov8s.pt 測試流程是否可正常訓練，"
-                "或安裝與該權重相容的 Ultralytics 版本後再試。"
-            )
-        return None
-
     try:
-        from ultralytics import YOLO  # type: ignore
-    except Exception as exc:
-        msg = "Ultralytics is not installed on the server. Install `ultralytics` to enable training."
+        YOLO = _get_ultralytics_yolo()
+    except ImportError as exc:
+        msg = str(exc)
         logger.exception(msg)
-        _fail(msg, exc)
+        _fail(msg, exc.__cause__ if exc.__cause__ is not None else exc)
         raise
 
     if dataset_config:
@@ -265,7 +311,7 @@ def yolo_detect_train_job(
             name="train",
         )
     except Exception as exc:
-        hint = _friendly_hint_for_error(exc)
+        hint = _friendly_hint_for_yolo_error(exc, classification=False)
         msg = "Training failed."
         if hint:
             msg = f"{msg} {hint}"
@@ -447,11 +493,11 @@ def yolo_classification_train_job(
         )
 
     try:
-        from ultralytics import YOLO  # type: ignore
-    except Exception as exc:
-        msg = "Ultralytics is not installed on the server. Install `ultralytics` to enable training."
+        YOLO = _get_ultralytics_yolo()
+    except ImportError as exc:
+        msg = str(exc)
         logger.exception(msg)
-        _fail(msg, exc)
+        _fail(msg, exc.__cause__ if exc.__cause__ is not None else exc)
         raise
 
     if not dataset_root.exists():
@@ -511,8 +557,12 @@ def yolo_classification_train_job(
             name="train",
         )
     except Exception as exc:
+        hint = _friendly_hint_for_yolo_error(exc, classification=True)
+        msg = "Classification training failed."
+        if hint:
+            msg = f"{msg} {hint}"
         logger.exception("Classification training job failed")
-        _fail("Classification training failed.", exc)
+        _fail(msg, exc)
         _release_training_resources()
         raise
 

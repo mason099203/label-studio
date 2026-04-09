@@ -357,32 +357,41 @@ TEMPLATES = [
 # OSS version does not support Redis
 REDIS_ENABLED = False
 
-# RQ
+
+def _env_str_or_none(key: str):
+    """若環境變數未設或為空白字串，視為未設定。"""
+    v = get_env(key, None)
+    if v is None:
+        return None
+    s = str(v).strip()
+    return s if s else None
+
+
+# RQ（django-rq）：訓練等背景任務使用 `low` queue。
+# 1) 優先使用 REDIS_URL / RQ_REDIS_URL（與 docker-compose 的 redis://redis:6379/0 一致；django-rq 對 URL 支援最完整）
+# 2) 否則使用 RQ_REDIS_HOST + PORT + DB（本機未設時預設 localhost:6379）
+_RQ_REDIS_URL = _env_str_or_none('RQ_REDIS_URL') or _env_str_or_none('REDIS_URL')
+if _RQ_REDIS_URL:
+    _RQ_QUEUE_BASE = {
+        'URL': _RQ_REDIS_URL,
+        'DEFAULT_TIMEOUT': 180,
+    }
+else:
+    _RQ_REDIS_HOST = _env_str_or_none('RQ_REDIS_HOST') or _env_str_or_none('REDIS_HOST') or 'localhost'
+    _RQ_REDIS_PORT = int(get_env('RQ_REDIS_PORT', get_env('REDIS_PORT', '6379')))
+    _RQ_REDIS_DB = int(get_env('RQ_REDIS_DB', get_env('REDIS_DB', '0')))
+    _RQ_QUEUE_BASE = {
+        'HOST': _RQ_REDIS_HOST,
+        'PORT': _RQ_REDIS_PORT,
+        'DB': _RQ_REDIS_DB,
+        'DEFAULT_TIMEOUT': 180,
+    }
+
 RQ_QUEUES = {
-    'critical': {
-        'HOST': 'localhost',
-        'PORT': 6379,
-        'DB': 0,
-        'DEFAULT_TIMEOUT': 180,
-    },
-    'high': {
-        'HOST': 'localhost',
-        'PORT': 6379,
-        'DB': 0,
-        'DEFAULT_TIMEOUT': 180,
-    },
-    'default': {
-        'HOST': 'localhost',
-        'PORT': 6379,
-        'DB': 0,
-        'DEFAULT_TIMEOUT': 180,
-    },
-    'low': {
-        'HOST': 'localhost',
-        'PORT': 6379,
-        'DB': 0,
-        'DEFAULT_TIMEOUT': 180,
-    },
+    'critical': dict(_RQ_QUEUE_BASE),
+    'high': dict(_RQ_QUEUE_BASE),
+    'default': dict(_RQ_QUEUE_BASE),
+    'low': dict(_RQ_QUEUE_BASE),
 }
 
 # How long to keep failed RQ jobs (in seconds); default is 30 days
