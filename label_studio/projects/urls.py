@@ -92,6 +92,11 @@ _api_urlpatterns = [
         name='project-training-triton-models',
     ),
     path(
+        '<int:pk>/training/triton/health/',
+        training_api.ProjectTrainingTritonHealthAPI.as_view(),
+        name='project-training-triton-health',
+    ),
+    path(
         '<int:pk>/training/triton/infer/',
         training_api.ProjectTrainingTritonInferAPI.as_view(),
         name='project-training-triton-infer',

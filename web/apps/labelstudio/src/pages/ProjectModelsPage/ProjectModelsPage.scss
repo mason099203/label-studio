@@ -30,6 +30,82 @@
     margin-bottom: 12px;
   }
 
+  &__triton-deploy-config {
+    margin-bottom: 16px;
+    padding: 12px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--color-neutral-border-subtler);
+    background: var(--color-neutral-surface);
+  }
+
+  &__triton-deploy-label {
+    font-weight: 600;
+    font-size: 14px;
+    margin-bottom: 8px;
+  }
+
+  &__triton-deploy-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+  }
+
+  &__triton-deploy-select {
+    min-width: 220px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--color-neutral-border-subtler);
+    font-size: 14px;
+    background: var(--color-neutral-surface);
+    color: inherit;
+  }
+
+  &__triton-deploy-input {
+    flex: 1;
+    min-width: 200px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--color-neutral-border-subtler);
+    font-size: 14px;
+  }
+
+  &__triton-deploy-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+  }
+
+  &__triton-verify-msg {
+    font-size: 13px;
+    line-height: 1.4;
+
+    &--success {
+      color: var(--color-positive-content, #166534);
+    }
+
+    &--warning {
+      color: var(--color-warning-content, #92400e);
+    }
+
+    &--error {
+      color: var(--color-negative-content, #991b1b);
+    }
+  }
+
+  &__triton-deploy-hint {
+    margin-top: 8px;
+    font-size: 13px;
+    color: var(--color-neutral-content-subtle);
+    line-height: 1.45;
+
+    code {
+      font-size: 12px;
+    }
+  }
+
   &__dataset-list,
   &__run-list {
     display: grid;

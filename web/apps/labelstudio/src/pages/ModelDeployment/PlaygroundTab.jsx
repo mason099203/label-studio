@@ -2,18 +2,25 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Typography } from "@humansignal/ui";
 import { useAPI } from "../../providers/ApiProvider";
 import { cn } from "../../utils/bem";
+import { TRITON_PLAYGROUND_STATE_KEY, verifyTritonConnection } from "./tritonUrlState";
 import "./ModelDeployment.scss";
 
 const rootClass = cn("playground-tab");
-const PLAYGROUND_STATE_KEY = "labelstudio.triton.playground";
 
 /**
  * 讀取最近一次部署後寫入的 Playground 預設值。
- * @returns {{ projectId: string, modelName: string, apiKey?: string, taskType?: string }}
+ * @returns {{
+ *   projectId: string,
+ *   modelName: string,
+ *   apiKey?: string,
+ *   taskType?: string,
+ *   tritonServerUrl?: string,
+ *   tritonMetricsUrl?: string,
+ * }}
  */
 function readSavedPlaygroundState() {
   try {
-    const raw = window.localStorage.getItem(PLAYGROUND_STATE_KEY);
+    const raw = window.localStorage.getItem(TRITON_PLAYGROUND_STATE_KEY);
     const parsed = raw ? JSON.parse(raw) : {};
 
     return {
@@ -21,19 +28,35 @@ function readSavedPlaygroundState() {
       modelName: parsed?.modelName ?? "",
       apiKey: parsed?.apiKey ?? "",
       taskType: parsed?.taskType === "classification" ? "classification" : "detect",
+      tritonServerUrl: typeof parsed?.tritonServerUrl === "string" ? parsed.tritonServerUrl : "",
+      tritonMetricsUrl: typeof parsed?.tritonMetricsUrl === "string" ? parsed.tritonMetricsUrl : "",
     };
   } catch (_) {
-    return { projectId: "", modelName: "", apiKey: "", taskType: "detect" };
+    return {
+      projectId: "",
+      modelName: "",
+      apiKey: "",
+      taskType: "detect",
+      tritonServerUrl: "",
+      tritonMetricsUrl: "",
+    };
   }
 }
 
 /**
  * 儲存 Playground 最近使用的專案、模型與設定，讓部署後可直接測試。
- * @param {{ projectId: string, modelName: string, apiKey: string, taskType?: string }} nextState
+ * @param {{
+ *   projectId: string,
+ *   modelName: string,
+ *   apiKey: string,
+ *   taskType?: string,
+ *   tritonServerUrl?: string,
+ *   tritonMetricsUrl?: string,
+ * }} nextState
  */
 function persistPlaygroundState(nextState) {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(PLAYGROUND_STATE_KEY, JSON.stringify(nextState));
+  window.localStorage.setItem(TRITON_PLAYGROUND_STATE_KEY, JSON.stringify(nextState));
 }
 
 /** Playground 輸入解析度（與送進 Triton 的 tensor 一致）。 */
@@ -503,6 +526,13 @@ export function PlaygroundTab() {
   const [projectId, setProjectId] = useState(savedState.projectId);
   const [modelName, setModelName] = useState(savedState.modelName);
   const [apiKey, setApiKey] = useState(savedState.apiKey);
+  /** 後端轉發 Triton 時使用的 HTTP 基底（例如 http://192.168.1.10:8000）；空則用伺服器環境變數。 */
+  const [tritonServerUrl, setTritonServerUrl] = useState(savedState.tritonServerUrl ?? "");
+  /** 供儀錶板共用之 Prometheus metrics 完整 URL；空則由儀錶板依基底推導。 */
+  const [tritonMetricsUrl, setTritonMetricsUrl] = useState(savedState.tritonMetricsUrl ?? "");
+  /** Triton 連線驗證結果（按「驗證連線」後更新）。 */
+  const [tritonVerifyLoading, setTritonVerifyLoading] = useState(false);
+  const [tritonVerifyResult, setTritonVerifyResult] = useState(null);
   /** 與後端模型任務對齊：偵測畫框；分類顯示每類分數。 */
   const [taskType, setTaskType] = useState(savedState.taskType ?? "detect");
   const [models, setModels] = useState([]);
@@ -597,6 +627,36 @@ export function PlaygroundTab() {
     };
   }, [api]);
 
+  /**
+   * 可選查詢參數：轉發至指定 Triton 基底（須與後端可連線）。
+   */
+  const tritonProxyQueryParams = useMemo(() => {
+    const u = tritonServerUrl.trim();
+    return u ? { triton_url: u } : {};
+  }, [tritonServerUrl]);
+
+  /**
+   * 請後端向 Triton `/v2/health` 探測連線（空位址則檢查伺服器預設）。
+   */
+  const handleVerifyTriton = useCallback(async () => {
+    setTritonVerifyResult(null);
+    if (!projectId.trim()) {
+      setTritonVerifyResult({ level: "error", text: "請先選擇專案。" });
+      return;
+    }
+    setTritonVerifyLoading(true);
+    try {
+      const r = await verifyTritonConnection(api, projectId, tritonServerUrl);
+      setTritonVerifyResult({ level: r.level, text: r.message });
+    } finally {
+      setTritonVerifyLoading(false);
+    }
+  }, [api, projectId, tritonServerUrl]);
+
+  useEffect(() => {
+    setTritonVerifyResult(null);
+  }, [tritonServerUrl]);
+
   /** Label Studio 代理 Triton 推論的 REST URL（隨專案 ID 更新）。 */
   const inferProxyUrl = useMemo(() => {
     const hostname = typeof window !== "undefined" ? window.APP_SETTINGS?.hostname ?? "" : "";
@@ -615,8 +675,15 @@ export function PlaygroundTab() {
   );
 
   useEffect(() => {
-    persistPlaygroundState({ projectId, modelName, apiKey, taskType });
-  }, [projectId, modelName, apiKey, taskType]);
+    persistPlaygroundState({
+      projectId,
+      modelName,
+      apiKey,
+      taskType,
+      tritonServerUrl,
+      tritonMetricsUrl,
+    });
+  }, [projectId, modelName, apiKey, taskType, tritonServerUrl, tritonMetricsUrl]);
 
   useEffect(() => {
     const pk = Number.parseInt(projectId.trim(), 10);
@@ -679,7 +746,7 @@ export function PlaygroundTab() {
 
     api
       .callApi("trainingTritonModels", {
-        params: { pk: projectId },
+        params: { pk: projectId, ...tritonProxyQueryParams },
         errorFilter: () => true,
       })
       .then((res) => {
@@ -711,7 +778,7 @@ export function PlaygroundTab() {
     return () => {
       cancelled = true;
     };
-  }, [api, projectId]);
+  }, [api, projectId, tritonProxyQueryParams]);
 
   // 處理圖片上傳與預先調整大小轉換為 Tensor
   const handleImageUpload = (e) => {
@@ -805,7 +872,7 @@ export function PlaygroundTab() {
       }
 
       const res = await api.callApi("trainingTritonInfer", {
-        params: { pk: projectId },
+        params: { pk: projectId, ...tritonProxyQueryParams },
         body: { model_name: modelName, api_key: apiKey, ...tensorPayloadRef.current },
         errorFilter: () => true,
       });
@@ -822,11 +889,16 @@ export function PlaygroundTab() {
           .join("\n");
       }
 
+      // res.status_code：Triton 回傳的 HTTP status（由 Django proxy 放入 JSON body）
+      // res.status：api.callApi 錯誤包裹層的 HTTP status（Django 層級的非 2xx 回應）
+      // 優先以 status_code（Triton 實際狀態）顯示，回退到 HTTP 包裹層 status，再回退 200
+      const displayStatus = res?.status_code ?? res?.status ?? 200;
+      const isOk = Boolean(res?.ok);
       setResponse({
-        status: res?.status_code ?? 200,
-        statusText: res?.ok ? "OK" : "ERROR",
+        status: displayStatus,
+        statusText: isOk ? "OK" : "ERROR",
         summary: summaryStr || `${JSON.stringify(res?.body ?? res).substring(0, 200)}...`,
-        ok: Boolean(res?.ok),
+        ok: isOk,
       });
 
       if (res?.ok && imagePreview && canvasRef.current && res?.body?.outputs?.length) {
@@ -871,7 +943,17 @@ export function PlaygroundTab() {
     } finally {
       setLoading(false);
     }
-  }, [api, modelName, projectId, apiKey, imagePreview, taskType, interfaceClassificationLabels, interfaceDetectionLabels]);
+  }, [
+    api,
+    modelName,
+    projectId,
+    apiKey,
+    imagePreview,
+    taskType,
+    interfaceClassificationLabels,
+    interfaceDetectionLabels,
+    tritonProxyQueryParams,
+  ]);
 
   return (
     <section className={rootClass.toClassName()}>
@@ -891,7 +973,8 @@ export function PlaygroundTab() {
           <code>{`/v2/models/<name>/infer`}</code>。請求方法為 <code>POST</code>，內容類型{" "}
           <code>application/json</code>
           ；需具專案檢視權限（與網頁相同之登入狀態或對應 Cookie／Token）。若專案設定了 Triton 安全金鑰，JSON 內須含{" "}
-          <code>api_key</code>。可選查詢參數 <code>?timeout=60</code>（秒）調整逾時。
+          <code>api_key</code>。可選查詢參數 <code>?timeout=60</code>（秒）調整逾時；<code>?triton_url=...</code>{" "}
+          指定後端轉發之 Triton HTTP 基底（與下方「Triton 服務位址」一致）。
         </Typography>
         {inferProxyUrl ? (
           <Typography variant="body" size="small" className="mb-tight block">
@@ -958,6 +1041,84 @@ export function PlaygroundTab() {
                placeholder="輸入專案對應的 API Key (選填)"
              />
            </div> */}
+        </div>
+
+        <div className={rootClass.elem("form-row").toClassName()} style={{ display: "flex", gap: "16px", marginBottom: "16px", flexWrap: "wrap" }}>
+          <div className={rootClass.elem("field").toClassName()} style={{ flex: "1 1 280px" }}>
+            <label className="text-label-small text-neutral-content mb-tightest block" htmlFor="playground-triton-server-url">
+              Triton 服務位址（選填）
+            </label>
+            <input
+              id="playground-triton-server-url"
+              type="url"
+              className={rootClass.elem("input").toClassName()}
+              value={tritonServerUrl}
+              onChange={(e) => setTritonServerUrl(e.target.value)}
+              placeholder="http://主機:8000（空則使用伺服器 TRITON_SERVER_URL）"
+              autoComplete="off"
+              style={{ width: "100%", padding: "8px", borderRadius: "4px", border: "1px solid #ccc", minHeight: "36px" }}
+            />
+            <Typography variant="body" size="small" className="text-neutral-content-subtle mt-tightest block">
+              模型列表與推論會經由後端轉發至此 Triton；須從 Label Studio 主機可連線。
+            </Typography>
+          </div>
+          <div className={rootClass.elem("field").toClassName()} style={{ flex: "1 1 280px" }}>
+            <label className="text-label-small text-neutral-content mb-tightest block" htmlFor="playground-triton-metrics-url">
+              Metrics URL（選填，儀錶板用）
+            </label>
+            <input
+              id="playground-triton-metrics-url"
+              type="url"
+              className={rootClass.elem("input").toClassName()}
+              value={tritonMetricsUrl}
+              onChange={(e) => setTritonMetricsUrl(e.target.value)}
+              placeholder="http://主機:8002/metrics（空則儀錶板依上欄推導）"
+              autoComplete="off"
+              style={{ width: "100%", padding: "8px", borderRadius: "4px", border: "1px solid #ccc", minHeight: "36px" }}
+            />
+          </div>
+        </div>
+
+        <div
+          className={rootClass.elem("form-row").toClassName()}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "12px",
+            flexWrap: "wrap",
+            marginBottom: "16px",
+          }}
+        >
+          <Button
+            type="button"
+            variant="neutral"
+            look="outlined"
+            size="small"
+            disabled={tritonVerifyLoading || !projectId.trim()}
+            onClick={handleVerifyTriton}
+          >
+            {tritonVerifyLoading ? "驗證中…" : "驗證 Triton 連線"}
+          </Button>
+          {tritonVerifyResult ? (
+            <Typography
+              variant="body"
+              size="small"
+              style={{
+                color:
+                  tritonVerifyResult.level === "success"
+                    ? "var(--color-positive-content, #166534)"
+                    : tritonVerifyResult.level === "warning"
+                      ? "var(--color-warning-content, #92400e)"
+                      : "var(--color-negative-content, #991b1b)",
+              }}
+            >
+              {tritonVerifyResult.text}
+            </Typography>
+          ) : (
+            <Typography variant="body" size="small" className="text-neutral-content-subtle">
+              送出推論前可先驗證；未填 Triton 位址時會檢查伺服器預設。
+            </Typography>
+          )}
         </div>
 
         <div className={rootClass.elem("field").toClassName()} style={{ marginBottom: "16px" }}>

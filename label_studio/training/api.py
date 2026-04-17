@@ -36,6 +36,42 @@ from .triton_export import (
 _TRITON_COUNTER_CACHE: Dict[str, Dict[str, float]] = {}
 
 
+def _sanitize_optional_http_url(raw: str | None) -> str | None:
+    """
+    僅允許 http(s) 基底 URL，供使用者指定遠端 Triton；無效則忽略。
+    """
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s or len(s) > 2048:
+        return None
+    if not s.startswith(("http://", "https://")):
+        return None
+    return s.rstrip("/")
+
+
+def _default_triton_metrics_url(triton_base: str) -> str:
+    """
+    Triton Prometheus 常見為同主機、埠 8002、路徑 /metrics。
+    """
+    from urllib.parse import urlparse
+
+    p = urlparse(triton_base.rstrip("/"))
+    scheme = p.scheme or "http"
+    host = p.hostname or "localhost"
+    return f"{scheme}://{host}:8002/metrics"
+
+
+def _resolve_triton_base_for_request(request, query_key: str = "triton_url") -> str:
+    """
+    從查詢參數或環境預設解析 Triton HTTP 基底（無尾隨斜線）。
+    """
+    sanitized = _sanitize_optional_http_url(request.query_params.get(query_key))
+    if sanitized:
+        return sanitized
+    return get_triton_server_url().rstrip("/")
+
+
 def _get_original_models_dir() -> Path:
     """
     Directory that contains locally-available base weights (.pt).
@@ -191,12 +227,12 @@ def _compute_counter_rate(cache_key: str, counter_value: float) -> float:
     return round(delta_value / delta_time, 2)
 
 
-def _fetch_triton_service_health(timeout: float = 1.5) -> Dict[str, Any]:
+def _fetch_triton_service_health(timeout: float = 1.5, base_url: str | None = None) -> Dict[str, Any]:
     """
     Fetch Triton liveness and readiness endpoints.
     """
 
-    base_url = get_triton_server_url()
+    base_url = (base_url or get_triton_server_url()).rstrip("/")
     live = False
     ready = False
     detail = None
@@ -216,13 +252,16 @@ def _fetch_triton_service_health(timeout: float = 1.5) -> Dict[str, Any]:
     }
 
 
-def _fetch_triton_model_ready_state(model_name: str, timeout: float = 1.5) -> bool:
+def _fetch_triton_model_ready_state(
+    model_name: str, timeout: float = 1.5, base_url: str | None = None
+) -> bool:
     """
     Fetch Triton readiness for a single deployed model.
     """
 
+    base = (base_url or get_triton_server_url()).rstrip("/")
     try:
-        response = requests.get(f"{get_triton_server_url()}/v2/models/{model_name}/ready", timeout=timeout)
+        response = requests.get(f"{base}/v2/models/{model_name}/ready", timeout=timeout)
         return response.ok
     except requests.RequestException:
         return False
@@ -408,6 +447,7 @@ def _build_model_usage_stats(
     *,
     selected_user_id: int | None = None,
     selected_username: str | None = None,
+    triton_base_url: str | None = None,
 ) -> Dict[str, Any]:
     """
     Build per-model usage stats from Triton deployments and Prometheus metrics.
@@ -427,6 +467,8 @@ def _build_model_usage_stats(
     total_failure = 0.0
     total_latency_us = 0.0
     total_rps = 0.0
+
+    infer_base = (triton_base_url or get_triton_server_url()).rstrip("/")
 
     for deployment in deployments:
         model_name = deployment.get("model_name")
@@ -454,7 +496,9 @@ def _build_model_usage_stats(
             f"project:{project.id}:scope:{scope}:model:{model_name}:success",
             success_count,
         )
-        is_ready = _fetch_triton_model_ready_state(model_name) if model_name else False
+        is_ready = (
+            _fetch_triton_model_ready_state(model_name, base_url=infer_base) if model_name else False
+        )
         is_owned = deployment.get("deployed_by_user_id") == user_id or (
             deployment.get("deployed_by_user_id") is None and project.created_by_id == user_id
         )
@@ -853,6 +897,7 @@ class ProjectTrainingRunDeployToTritonAPI(APIView):
         payload = request.data or {}
         raw_name = (payload.get("model_name") or f"ls_project_{project.id}_{run_id}").strip()
         model_name = sanitize_triton_model_name(raw_name, fallback=f"ls_project_{project.id}_run")
+        public_triton_base = _sanitize_optional_http_url(payload.get("triton_url"))
 
         # Determine model type from run_meta.json
         run_meta = {}
@@ -875,6 +920,7 @@ class ProjectTrainingRunDeployToTritonAPI(APIView):
                 imgsz=imgsz,
                 deployed_by_user_id=request.user.id,
                 deployed_by_username=request.user.username,
+                public_triton_base_url=public_triton_base,
             )
         else:
             imgsz = int(payload.get("imgsz", 640))
@@ -887,6 +933,7 @@ class ProjectTrainingRunDeployToTritonAPI(APIView):
                 imgsz=imgsz,
                 deployed_by_user_id=request.user.id,
                 deployed_by_username=request.user.username,
+                public_triton_base_url=public_triton_base,
             )
 
         if result.get("error"):
@@ -899,7 +946,7 @@ class ProjectTrainingRunDeployToTritonAPI(APIView):
             {
                 "message": "Model copied to Triton repository.",
                 "triton_repo_root": str(get_triton_model_repository_root()),
-                "triton_server_url": get_triton_server_url(),
+                "triton_server_url": (public_triton_base or get_triton_server_url()).rstrip("/"),
                 **result,
             },
             status=status.HTTP_200_OK,
@@ -915,6 +962,7 @@ class ProjectTrainingTritonModelsAPI(APIView):
 
     def get(self, request, pk: int, *args, **kwargs):
         project = _get_project_for_user(request, pk)
+        triton_base = _resolve_triton_base_for_request(request)
         scope = _normalize_scope(request.query_params.get("scope"))
         deployments = list_triton_model_deployments(project_ids=[project.id])
         selected_user = _extract_selected_user(request, deployments)
@@ -933,18 +981,63 @@ class ProjectTrainingTritonModelsAPI(APIView):
             item["owned_by_current_user"] = item.get("deployed_by_user_id") == request.user.id or (
                 item.get("deployed_by_user_id") is None and project.created_by_id == request.user.id
             )
+            mn = item.get("model_name")
+            if mn:
+                item["infer_url"] = f"{triton_base}/v2/models/{mn}/infer"
 
         return Response(
             {
                 "project_id": project.id,
                 "scope": scope,
                 "triton_repo_root": str(get_triton_model_repository_root()),
-                "triton_server_url": get_triton_server_url(),
+                "triton_server_url": triton_base,
                 "filters": {
                     "deployers": _build_deployer_options(list_triton_model_deployments(project_ids=[project.id])),
                     "selected_user": selected_user,
                 },
                 "models": deployments,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class ProjectTrainingTritonHealthAPI(APIView):
+    """
+    連線檢查：對 Triton HTTP 基底呼叫 /v2/health/live 與 /v2/health/ready。
+    查詢參數 triton_url 選填；未帶則使用伺服器 TRITON_SERVER_URL。
+    """
+
+    permission_required = ViewClassPermission(GET=all_permissions.projects_view)
+
+    def get(self, request, pk: int, *args, **kwargs):
+        _get_project_for_user(request, pk)
+        raw = request.query_params.get("triton_url")
+        if raw is not None and str(raw).strip():
+            sanitized = _sanitize_optional_http_url(raw)
+            if not sanitized:
+                return Response(
+                    {
+                        "ok": False,
+                        "detail": "無效的 triton_url：請使用以 http:// 或 https:// 開頭的網址",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            base = sanitized
+        else:
+            base = get_triton_server_url().rstrip("/")
+
+        health = _fetch_triton_service_health(base_url=base)
+        live = bool(health.get("live"))
+        ready = bool(health.get("ready"))
+        ok = live and ready
+        return Response(
+            {
+                "ok": ok,
+                "base_url": health.get("base_url"),
+                "live": live,
+                "ready": ready,
+                "status": health.get("status"),
+                "detail": health.get("detail"),
             },
             status=status.HTTP_200_OK,
         )
@@ -990,7 +1083,8 @@ class ProjectTrainingTritonInferAPI(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        triton_url = f"{get_triton_server_url()}/v2/models/{model_name}/infer"
+        triton_base = _resolve_triton_base_for_request(request)
+        triton_url = f"{triton_base}/v2/models/{model_name}/infer"
         timeout = float(request.query_params.get("timeout", 60))
         started_at = time.monotonic()
         deployment_meta = deployed_models[model_name]
@@ -1085,7 +1179,8 @@ class ProjectTrainingModelUploadAPI(APIView):
             model_name = Path(uploaded_file.name).stem
             
         imgsz = int(request.data.get("imgsz", 640))
-        
+        public_triton_base = _sanitize_optional_http_url(request.data.get("triton_url"))
+
         # Save temporary
         temp_dir = _get_training_output_root() / f"project_{project.id}" / "uploads"
         temp_dir.mkdir(parents=True, exist_ok=True)
@@ -1107,6 +1202,7 @@ class ProjectTrainingModelUploadAPI(APIView):
             imgsz=imgsz,
             deployed_by_user_id=request.user.id,
             deployed_by_username=request.user.username,
+            public_triton_base_url=public_triton_base,
         )
         
         # Clean up temp file
@@ -1121,7 +1217,7 @@ class ProjectTrainingModelUploadAPI(APIView):
         return Response(
             {
                 "message": "Model uploaded and deployed to Triton.",
-                "triton_server_url": get_triton_server_url(),
+                "triton_server_url": (public_triton_base or get_triton_server_url()).rstrip("/"),
                 **result,
             },
             status=status.HTTP_201_CREATED,
@@ -1139,6 +1235,10 @@ class ProjectTrainingMetricsAPI(APIView):
         import psutil
 
         project = _get_project_for_user(request, pk)
+        triton_base = _resolve_triton_base_for_request(request)
+        metrics_url = _sanitize_optional_http_url(request.query_params.get("triton_metrics_url"))
+        if not metrics_url:
+            metrics_url = _default_triton_metrics_url(triton_base)
         scope = _normalize_scope(request.query_params.get("scope"))
         all_deployments = list_triton_model_deployments(project_ids=[project.id])
         selected_user = _extract_selected_user(request, all_deployments)
@@ -1146,12 +1246,13 @@ class ProjectTrainingMetricsAPI(APIView):
         ram = psutil.virtual_memory()
         ram_usage = ram.percent
         ram_used_gb = round(ram.used / (1024**3), 2)
-        triton_health = _fetch_triton_service_health()
+        triton_health = _fetch_triton_service_health(base_url=triton_base)
+        triton_health["metrics_endpoint"] = metrics_url
         metrics_payload = None
         metrics_available = False
         parsed_metrics: Dict[str, List[Dict[str, Any]]] = {}
         try:
-            metrics_res = requests.get("http://localhost:8002/metrics", timeout=2)
+            metrics_res = requests.get(metrics_url, timeout=2)
             if metrics_res.ok:
                 metrics_payload = metrics_res.text
                 parsed_metrics = _parse_prometheus_metrics(metrics_payload)
@@ -1170,6 +1271,7 @@ class ProjectTrainingMetricsAPI(APIView):
             metrics_payload,
             selected_user_id=(selected_user or {}).get("id"),
             selected_username=(selected_user or {}).get("username"),
+            triton_base_url=triton_base,
         )
         inference_summary = usage_stats["summary"]
 

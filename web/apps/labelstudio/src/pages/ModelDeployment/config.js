@@ -47,9 +47,10 @@ export const DEPLOYED_SERVICES = [
   },
 ];
 
-/** Grafana / Prometheus 等監控入口（對應 docker-compose） */
+/**
+ * Grafana / Prometheus 等監控入口預設（Triton Metrics 由儀錶板依使用者填寫之 Triton 位址動態產生）。
+ */
 export const MONITORING_ENDPOINTS = [
   { name: "Grafana", url: "http://localhost:3000", description: "儀表板與視覺化" },
   { name: "Prometheus", url: "http://localhost:9090", description: "指標查詢" },
-  { name: "Triton Metrics", url: "http://localhost:8002/metrics", description: "Triton 推論指標" },
 ];

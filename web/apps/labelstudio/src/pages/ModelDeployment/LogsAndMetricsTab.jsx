@@ -1,10 +1,16 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Typography, Button, buttonVariant, Spinner } from "@humansignal/ui";
 import { IconExternal, IconTerminal, IconCode, IconInfoOutline, IconAnalytics } from "@humansignal/icons";
 import { ToggleItems } from "../../components";
 import { Select } from "../../components/Form";
 import { cn } from "../../utils/bem";
 import { MONITORING_ENDPOINTS } from "./config";
+import {
+  readTritonUrlState,
+  persistTritonUrlFields,
+  verifyTritonConnection,
+  TRITON_PLAYGROUND_STATE_KEY,
+} from "./tritonUrlState";
 import { useAPI } from "../../providers/ApiProvider";
 import { useProject } from "../../providers/ProjectProvider";
 import "./ModelDeployment.scss";
@@ -15,8 +21,6 @@ const VIEW_MODES = {
   project: "專案全部",
 };
 const ALL_DEPLOYERS = "__all__";
-const PLAYGROUND_STATE_KEY = "labelstudio.triton.playground";
-
 /**
  * 數據統計磁貼元件
  */
@@ -94,6 +98,22 @@ function getHealthBadge(status) {
  * @param {{ pk?: number, scope: string, selectedUserId: string }} params
  * @returns {{ pk?: number, scope: string, user_id?: number, username?: string }}
  */
+/**
+ * 自 Triton HTTP 基底推導常見 metrics 位址（同主機、埠 8002）。
+ * @param {string} tritonBase
+ * @returns {string}
+ */
+function defaultMetricsUrlFromTritonBase(tritonBase) {
+  const b = (tritonBase || "").trim();
+  if (!b) return "http://localhost:8002/metrics";
+  try {
+    const u = new URL(b);
+    return `${u.protocol}//${u.hostname}:8002/metrics`;
+  } catch {
+    return "http://localhost:8002/metrics";
+  }
+}
+
 function buildMetricsParams({ pk, scope, selectedUserId }) {
   const params = { pk, scope };
 
@@ -144,7 +164,7 @@ function readSavedProjectId() {
   if (typeof window === "undefined") return "";
 
   try {
-    const raw = window.localStorage.getItem(PLAYGROUND_STATE_KEY);
+    const raw = window.localStorage.getItem(TRITON_PLAYGROUND_STATE_KEY);
     const parsed = raw ? JSON.parse(raw) : {};
     return parsed?.projectId ? String(parsed.projectId) : "";
   } catch (_) {
@@ -160,10 +180,10 @@ function persistProjectId(projectId) {
   if (typeof window === "undefined") return;
 
   try {
-    const raw = window.localStorage.getItem(PLAYGROUND_STATE_KEY);
+    const raw = window.localStorage.getItem(TRITON_PLAYGROUND_STATE_KEY);
     const parsed = raw ? JSON.parse(raw) : {};
     window.localStorage.setItem(
-      PLAYGROUND_STATE_KEY,
+      TRITON_PLAYGROUND_STATE_KEY,
       JSON.stringify({
         ...parsed,
         projectId: projectId || "",
@@ -178,6 +198,12 @@ export function LogsAndMetricsTab() {
   const api = useAPI();
   const project = useProject()?.project;
   const [projectId, setProjectId] = useState(() => String(project?.id ?? readSavedProjectId() ?? ""));
+  /** 與模型測試頁共用：後端查詢 Triton 健康與轉發之 HTTP 基底。 */
+  const [tritonServerUrl, setTritonServerUrl] = useState(() => readTritonUrlState().tritonServerUrl);
+  /** 完整 Prometheus metrics URL；空則依基底推導或由後端預設。 */
+  const [tritonMetricsUrl, setTritonMetricsUrl] = useState(() => readTritonUrlState().tritonMetricsUrl);
+  const [tritonVerifyLoading, setTritonVerifyLoading] = useState(false);
+  const [tritonVerifyResult, setTritonVerifyResult] = useState(null);
   const [iframeUrl, setIframeUrl] = useState(null);
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
@@ -195,6 +221,44 @@ export function LogsAndMetricsTab() {
     persistProjectId(projectId);
   }, [projectId]);
 
+  useEffect(() => {
+    persistTritonUrlFields({ tritonServerUrl, tritonMetricsUrl });
+  }, [tritonServerUrl, tritonMetricsUrl]);
+
+  useEffect(() => {
+    setTritonVerifyResult(null);
+  }, [tritonServerUrl]);
+
+  /**
+   * 驗證目前 Triton 基底是否可由後端連線（與載入監控資料相同之權限）。
+   */
+  const handleVerifyTriton = useCallback(async () => {
+    if (!projectId.trim()) {
+      setTritonVerifyResult({ level: "error", text: "請先填寫專案 ID。" });
+      return;
+    }
+    setTritonVerifyResult(null);
+    setTritonVerifyLoading(true);
+    try {
+      const r = await verifyTritonConnection(api, projectId, tritonServerUrl);
+      setTritonVerifyResult({ level: r.level, text: r.message });
+    } finally {
+      setTritonVerifyLoading(false);
+    }
+  }, [api, projectId, tritonServerUrl]);
+
+  const monitoringEndpoints = useMemo(() => {
+    const metricsUrl = tritonMetricsUrl.trim() || defaultMetricsUrlFromTritonBase(tritonServerUrl);
+    return [
+      ...MONITORING_ENDPOINTS,
+      {
+        name: "Triton Metrics",
+        url: metricsUrl,
+        description: "Triton 推論指標（Prometheus）",
+      },
+    ];
+  }, [tritonServerUrl, tritonMetricsUrl]);
+
   const fetchMetrics = useCallback(async () => {
     if (!projectId) {
       setLoading(false);
@@ -204,11 +268,17 @@ export function LogsAndMetricsTab() {
     }
     try {
       const params = buildMetricsParams({ pk: projectId, scope, selectedUserId });
+      const tritonParams = {};
+      const tu = tritonServerUrl.trim();
+      if (tu) tritonParams.triton_url = tu;
+      const tm = tritonMetricsUrl.trim();
+      if (tm) tritonParams.triton_metrics_url = tm;
+      const merged = { ...params, ...tritonParams };
       const [metricsRes, metricsHistoryRes] = await Promise.all([
-        api.callApi("trainingMetrics", { params }),
+        api.callApi("trainingMetrics", { params: merged }),
         api.callApi("trainingMetricsHistory", {
           params: {
-            ...params,
+            ...merged,
             event_limit: 12,
             snapshot_limit: 12,
           },
@@ -221,7 +291,7 @@ export function LogsAndMetricsTab() {
     } finally {
       setLoading(false);
     }
-  }, [api, projectId, scope, selectedUserId]);
+  }, [api, projectId, scope, selectedUserId, tritonServerUrl, tritonMetricsUrl]);
 
   useEffect(() => {
     if (scope === "mine" && selectedUserId !== ALL_DEPLOYERS) {
@@ -368,9 +438,59 @@ export function LogsAndMetricsTab() {
               placeholder="例如 1"
             />
           </div>
+          <div className={rootClass.elem("field").mod({ project: true }).toClassName()}>
+            <label className={rootClass.elem("field-label").toClassName()}>
+              Triton 服務位址
+            </label>
+            <input
+              className={rootClass.elem("text-input").toClassName()}
+              value={tritonServerUrl}
+              onChange={(event) => setTritonServerUrl(event.target.value)}
+              placeholder="http://主機:8000（空＝伺服器預設）"
+              type="url"
+            />
+          </div>
+          <div className={rootClass.elem("field").mod({ project: true }).toClassName()}>
+            <label className={rootClass.elem("field-label").toClassName()}>
+              Metrics URL
+            </label>
+            <input
+              className={rootClass.elem("text-input").toClassName()}
+              value={tritonMetricsUrl}
+              onChange={(event) => setTritonMetricsUrl(event.target.value)}
+              placeholder="空則依 Triton 位址推導 :8002/metrics"
+              type="url"
+            />
+          </div>
           <Button variant="neutral" look="outlined" onClick={fetchMetrics} disabled={!projectId}>
             重新載入
           </Button>
+          <Button
+            variant="neutral"
+            look="outlined"
+            type="button"
+            onClick={handleVerifyTriton}
+            disabled={!projectId || tritonVerifyLoading}
+          >
+            {tritonVerifyLoading ? "驗證中…" : "驗證 Triton"}
+          </Button>
+          {tritonVerifyResult ? (
+            <Typography
+              variant="body"
+              size="small"
+              style={{
+                maxWidth: 360,
+                color:
+                  tritonVerifyResult.level === "success"
+                    ? "var(--color-positive-content, #166534)"
+                    : tritonVerifyResult.level === "warning"
+                      ? "var(--color-warning-content, #92400e)"
+                      : "var(--color-negative-content, #991b1b)",
+              }}
+            >
+              {tritonVerifyResult.text}
+            </Typography>
+          ) : null}
           <div className={rootClass.elem("filters").toClassName()}>
             <ToggleItems items={VIEW_MODES} active={scope} onSelect={setScope} />
             <div className={rootClass.elem("select-wrap").toClassName()}>
@@ -546,7 +666,7 @@ export function LogsAndMetricsTab() {
 
       <SectionBlock title="監控與分析入口" description="快速進入外部監控工具，查看更完整的圖表與即時資料。">
         <div className={rootClass.elem("grid").toClassName()}>
-          {MONITORING_ENDPOINTS.map((item) => (
+          {monitoringEndpoints.map((item) => (
             <div key={item.name} className={rootClass.elem("item-card").toClassName()}>
               <div>
                 <Typography variant="title" size="small" className={rootClass.elem("item-title").toClassName()}>
@@ -584,7 +704,7 @@ export function LogsAndMetricsTab() {
         <div className={rootClass.elem("iframe-wrap").toClassName()}>
           <div className={rootClass.elem("iframe-header").toClassName()}>
             <Typography variant="title" size="small">
-              {MONITORING_ENDPOINTS.find((e) => e.url === iframeUrl)?.name ?? "預覽模式"}
+              {monitoringEndpoints.find((e) => e.url === iframeUrl)?.name ?? "預覽模式"}
             </Typography>
             <Button variant="neutral" look="outlined" size="small" onClick={() => setIframeUrl(null)}>
               關閉視窗

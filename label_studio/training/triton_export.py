@@ -84,6 +84,7 @@ def export_torchscript_pt_to_triton(
     imgsz: int = 224,
     deployed_by_user_id: Optional[int] = None,
     deployed_by_username: Optional[str] = None,
+    public_triton_base_url: Optional[str] = None,
 ) -> dict:
     """
     Export a general TorchScript model (.pt) into Triton's libtorch layout.
@@ -123,14 +124,17 @@ def export_torchscript_pt_to_triton(
         "deployed_by_user_id": deployed_by_user_id,
         "deployed_by_username": deployed_by_username,
     }
+    if public_triton_base_url:
+        metadata["triton_public_base_url"] = public_triton_base_url.rstrip("/")
     metadata_path.write_text(json.dumps(metadata, ensure_ascii=True, indent=2), encoding="utf-8")
 
+    infer_base = (public_triton_base_url or get_triton_server_url()).rstrip("/")
     return {
         "model_name": model_name,
         "repo_path": str(repo_root),
         "model_dir": str(model_dir),
         "metadata_path": str(metadata_path),
-        "infer_url": f"{get_triton_server_url()}/v2/models/{model_name}/infer",
+        "infer_url": f"{infer_base}/v2/models/{model_name}/infer",
     }
 
 
@@ -143,6 +147,7 @@ def export_yolo_pt_to_triton(
     imgsz: int = 640,
     deployed_by_user_id: Optional[int] = None,
     deployed_by_username: Optional[str] = None,
+    public_triton_base_url: Optional[str] = None,
 ) -> dict:
     """
     Export a trained YOLO checkpoint into Triton's libtorch model layout.
@@ -208,8 +213,11 @@ def export_yolo_pt_to_triton(
         "deployed_by_user_id": deployed_by_user_id,
         "deployed_by_username": deployed_by_username,
     }
+    if public_triton_base_url:
+        metadata["triton_public_base_url"] = public_triton_base_url.rstrip("/")
     metadata_path.write_text(json.dumps(metadata, ensure_ascii=True, indent=2), encoding="utf-8")
 
+    infer_base = (public_triton_base_url or get_triton_server_url()).rstrip("/")
     return {
         "model_name": model_name,
         "repo_path": str(repo_root),
@@ -219,7 +227,7 @@ def export_yolo_pt_to_triton(
         "config_path": str(config_path),
         "legacy_bptxt_path": str(legacy_bptxt_path),
         "metadata_path": str(metadata_path),
-        "infer_url": f"{get_triton_server_url()}/v2/models/{model_name}/infer",
+        "infer_url": f"{infer_base}/v2/models/{model_name}/infer",
     }
 
 
@@ -255,13 +263,15 @@ def list_triton_model_deployments(
         model_name = metadata.get("model_name")
         model_dir = metadata_path.parent
         version_dir = model_dir / "1"
+        public = (metadata.get("triton_public_base_url") or "").strip().rstrip("/")
+        infer_base = public or get_triton_server_url().rstrip("/")
         items.append(
             {
                 **metadata,
                 "model_dir": str(model_dir),
                 "version_dir": str(version_dir),
                 "exists": version_dir.exists(),
-                "infer_url": f"{get_triton_server_url()}/v2/models/{model_name}/infer",
+                "infer_url": f"{infer_base}/v2/models/{model_name}/infer",
             }
         )
 

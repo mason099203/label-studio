@@ -7,9 +7,13 @@ import { useParams } from "../../providers/RoutesProvider";
 import { useProject } from "../../providers/ProjectProvider";
 import { cn } from "../../utils/bem";
 import { absoluteURL } from "../../utils/helpers";
+import {
+  readTritonUrlState,
+  persistTritonUrlFields,
+  verifyTritonConnection,
+  TRITON_PLAYGROUND_STATE_KEY,
+} from "../ModelDeployment/tritonUrlState";
 import "./ProjectModelsPage.scss";
-
-const PLAYGROUND_STATE_KEY = "labelstudio.triton.playground";
 
 /**
  * 將最新部署的 Triton 模型寫入 Playground 預設值。
@@ -18,9 +22,17 @@ const PLAYGROUND_STATE_KEY = "labelstudio.triton.playground";
  */
 function saveTritonPlaygroundState(projectId, modelName) {
   if (typeof window === "undefined") return;
+  let existing = {};
+  try {
+    const raw = window.localStorage.getItem(TRITON_PLAYGROUND_STATE_KEY);
+    existing = raw ? JSON.parse(raw) : {};
+  } catch {
+    existing = {};
+  }
   window.localStorage.setItem(
-    PLAYGROUND_STATE_KEY,
+    TRITON_PLAYGROUND_STATE_KEY,
     JSON.stringify({
+      ...existing,
       projectId: String(projectId),
       modelName,
     }),
@@ -43,6 +55,20 @@ export const ProjectModelsPage = () => {
   const [selectedChart, setSelectedChart] = useState(null);
   const [deployingRunId, setDeployingRunId] = useState(null);
   const [deployError, setDeployError] = useState(null);
+  /**
+   * 部署目標 Triton HTTP 基底（與模型測試／儀錶板共用 localStorage）。
+   * 空字串表示後端使用 TRITON_SERVER_URL 環境變數。
+   */
+  const [deployTritonServerUrl, setDeployTritonServerUrl] = useState(() => readTritonUrlState().tritonServerUrl);
+  /** 部署用 Triton 快速選項：default／本機 8000／自訂（與右側網址欄同步）。 */
+  const [tritonPreset, setTritonPreset] = useState(() => {
+    const u = (readTritonUrlState().tritonServerUrl || "").trim();
+    if (!u) return "default";
+    if (u === "http://localhost:8000" || u === "http://127.0.0.1:8000") return "local8000";
+    return "custom";
+  });
+  const [tritonVerifyLoading, setTritonVerifyLoading] = useState(false);
+  const [tritonVerifyResult, setTritonVerifyResult] = useState(null);
 
   useEffect(() => {
     if (!params?.id) return;
@@ -58,14 +84,69 @@ export const ProjectModelsPage = () => {
   const runs = history?.runs ?? [];
   const datasets = history?.datasets ?? [];
 
-  const handleDeployToTriton = (runId) => {
+  /**
+   * 由網址推斷預設選項（供手動輸入後同步下拉）。
+   * @param {string} url
+   * @returns {"default" | "local8000" | "custom"}
+   */
+  const presetFromUrl = (url) => {
+    const u = (url || "").trim();
+    if (!u) return "default";
+    if (u === "http://localhost:8000" || u === "http://127.0.0.1:8000") return "local8000";
+    return "custom";
+  };
+
+  /**
+   * 變更部署用 Triton 位址並寫入與模型測試頁相同之儲存。
+   * @param {string} nextUrl
+   */
+  const commitDeployTritonUrl = (nextUrl) => {
+    setDeployTritonServerUrl(nextUrl);
+    setTritonPreset(presetFromUrl(nextUrl));
+    persistTritonUrlFields({ tritonServerUrl: nextUrl });
+  };
+
+  useEffect(() => {
+    setTritonVerifyResult(null);
+  }, [deployTritonServerUrl]);
+
+  /**
+   * 手動驗證目前選定之 Triton 是否可由後端連線。
+   */
+  const handleVerifyDeployTriton = async () => {
+    if (!params?.id) return;
+    setTritonVerifyResult(null);
+    setTritonVerifyLoading(true);
+    try {
+      const r = await verifyTritonConnection(api, params.id, deployTritonServerUrl);
+      setTritonVerifyResult({ level: r.level, text: r.message });
+    } finally {
+      setTritonVerifyLoading(false);
+    }
+  };
+
+  const handleDeployToTriton = async (runId) => {
     if (!params?.id || !runId) return;
     setDeployError(null);
+    const tu = (deployTritonServerUrl || "").trim();
+    if (tu) {
+      setTritonVerifyLoading(true);
+      const check = await verifyTritonConnection(api, params.id, tu);
+      setTritonVerifyLoading(false);
+      setTritonVerifyResult({ level: check.level, text: check.message });
+      // degraded（live=true，ready=false）仍允許部署；只有完全無法連線才阻擋
+      if (check.level === "error") {
+        setDeployError(`Triton 無法連線，請確認伺服器狀態：${check.message}`);
+        return;
+      }
+    }
     setDeployingRunId(runId);
+    const body = {};
+    if (tu) body.triton_url = tu;
     api
       .callApi("trainingRunDeployToTriton", {
         params: { pk: params.id, run_id: runId },
-        body: {},
+        body,
         errorFilter: () => true,
       })
       .then((res) => {
@@ -155,6 +236,70 @@ export const ProjectModelsPage = () => {
 
       <section className={cn("project-models-page").elem("section").toClassName()}>
         <div className={cn("project-models-page").elem("section-title").toClassName()}>模型訓練紀錄</div>
+        <div className={cn("project-models-page").elem("triton-deploy-config").toClassName()}>
+          <div className={cn("project-models-page").elem("triton-deploy-label").toClassName()}>
+            部署目標 Triton 伺服器
+          </div>
+          <div className={cn("project-models-page").elem("triton-deploy-row").toClassName()}>
+            <select
+              className={cn("project-models-page").elem("triton-deploy-select").toClassName()}
+              aria-label="選擇 Triton 伺服器預設"
+              value={tritonPreset}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === "default") commitDeployTritonUrl("");
+                else if (v === "local8000") commitDeployTritonUrl("http://localhost:8000");
+                else setTritonPreset("custom");
+              }}
+            >
+              <option value="default">後端環境預設（不指定 URL）</option>
+              <option value="local8000">本機 Triton（localhost:8000）</option>
+              <option value="custom">自訂網址…</option>
+            </select>
+            <input
+              type="url"
+              className={cn("project-models-page").elem("triton-deploy-input").toClassName()}
+              value={deployTritonServerUrl}
+              onChange={(e) => {
+                const next = e.target.value;
+                setDeployTritonServerUrl(next);
+                setTritonPreset(presetFromUrl(next));
+              }}
+              onBlur={() => persistTritonUrlFields({ tritonServerUrl: deployTritonServerUrl })}
+              placeholder="http://主機:8000"
+              aria-label="Triton HTTP 基底網址"
+            />
+          </div>
+          <div className={cn("project-models-page").elem("triton-deploy-actions").toClassName()}>
+            <Button
+              type="button"
+              look="outlined"
+              size="small"
+              disabled={tritonVerifyLoading}
+              onClick={handleVerifyDeployTriton}
+            >
+              {tritonVerifyLoading ? "驗證中…" : "驗證連線"}
+            </Button>
+            {tritonVerifyResult ? (
+              <span
+                className={cn("project-models-page")
+                  .elem("triton-verify-msg")
+                  .mod({
+                    success: tritonVerifyResult.level === "success",
+                    warning: tritonVerifyResult.level === "warning",
+                    error: tritonVerifyResult.level === "error",
+                  })
+                  .toClassName()}
+              >
+                {tritonVerifyResult.text}
+              </span>
+            ) : null}
+          </div>
+          <div className={cn("project-models-page").elem("triton-deploy-hint").toClassName()}>
+            選擇預設或手動輸入；部署時會將此前綴寫入模型後設，並供模型測試／儀錶板轉發使用。指定 URL 時會先經後端連線檢查再部署。空值表示由伺服器{' '}
+            <code>TRITON_SERVER_URL</code> 決定。
+          </div>
+        </div>
         <div className={cn("project-models-page").elem("run-list").toClassName()}>
           {runs.length === 0 && (
             <div className={cn("project-models-page").elem("empty").toClassName()}>尚無歷史模型紀錄。</div>
@@ -209,7 +354,7 @@ export const ProjectModelsPage = () => {
                               e.stopPropagation();
                               handleDeployToTriton(run.run_id);
                             }}
-                            disabled={deployingRunId === run.run_id}
+                            disabled={tritonVerifyLoading || deployingRunId === run.run_id}
                             aria-label="部署模型"
                           >
                             {deployingRunId === run.run_id ? "部署中…" : "部署模型"}
