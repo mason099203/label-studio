@@ -89,6 +89,7 @@ deploy/pgsql/certs/*
 1/*
 */*/1/*
 docker-compose.override.yml
+docker-build-context
 
 .config/*
 *.jsonl

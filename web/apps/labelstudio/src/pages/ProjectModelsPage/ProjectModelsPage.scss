@@ -68,6 +68,12 @@
     border-radius: 6px;
     border: 1px solid var(--color-neutral-border-subtler);
     font-size: 14px;
+
+    &--wide {
+      width: 100%;
+      min-width: 0;
+      box-sizing: border-box;
+    }
   }
 
   &__triton-deploy-actions {

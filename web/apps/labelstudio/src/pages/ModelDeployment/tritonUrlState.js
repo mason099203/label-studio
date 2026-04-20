@@ -6,12 +6,12 @@
 export const TRITON_PLAYGROUND_STATE_KEY = "labelstudio.triton.playground";
 
 /**
- * 讀取已儲存的 Triton 基底 URL 與 Metrics URL。
- * @returns {{ tritonServerUrl: string, tritonMetricsUrl: string }}
+ * 讀取已儲存的 Triton 基底 URL、Metrics URL 與模型儲存庫路徑。
+ * @returns {{ tritonServerUrl: string, tritonMetricsUrl: string, tritonModelRepository: string }}
  */
 export function readTritonUrlState() {
   if (typeof window === "undefined") {
-    return { tritonServerUrl: "", tritonMetricsUrl: "" };
+    return { tritonServerUrl: "", tritonMetricsUrl: "", tritonModelRepository: "" };
   }
   try {
     const raw = window.localStorage.getItem(TRITON_PLAYGROUND_STATE_KEY);
@@ -19,15 +19,18 @@ export function readTritonUrlState() {
     return {
       tritonServerUrl: typeof parsed?.tritonServerUrl === "string" ? parsed.tritonServerUrl : "",
       tritonMetricsUrl: typeof parsed?.tritonMetricsUrl === "string" ? parsed.tritonMetricsUrl : "",
+      /** 部署時覆寫 TRITON_MODEL_REPOSITORY；空值表示由伺服器環境變數決定。 */
+      tritonModelRepository:
+        typeof parsed?.tritonModelRepository === "string" ? parsed.tritonModelRepository : "",
     };
   } catch (_) {
-    return { tritonServerUrl: "", tritonMetricsUrl: "" };
+    return { tritonServerUrl: "", tritonMetricsUrl: "", tritonModelRepository: "" };
   }
 }
 
 /**
  * 合併寫入 Triton URL 欄位，保留同鍵內其他 Playground 狀態。
- * @param {{ tritonServerUrl?: string, tritonMetricsUrl?: string }} partial
+ * @param {{ tritonServerUrl?: string, tritonMetricsUrl?: string, tritonModelRepository?: string }} partial
  */
 export function persistTritonUrlFields(partial) {
   if (typeof window === "undefined") return;

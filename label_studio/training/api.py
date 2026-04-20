@@ -899,6 +899,10 @@ class ProjectTrainingRunDeployToTritonAPI(APIView):
         model_name = sanitize_triton_model_name(raw_name, fallback=f"ls_project_{project.id}_run")
         public_triton_base = _sanitize_optional_http_url(payload.get("triton_url"))
 
+        # 允許前端指定模型儲存庫路徑（不寫入 .env，每次部署隨請求傳入）
+        raw_repo = (payload.get("triton_model_repository") or "").strip()
+        triton_repo_override = raw_repo if raw_repo else None
+
         # Determine model type from run_meta.json
         run_meta = {}
         try:
@@ -917,6 +921,7 @@ class ProjectTrainingRunDeployToTritonAPI(APIView):
                 model_name=model_name,
                 project_id=project.id,
                 run_id=run_id,
+                triton_repo_root=triton_repo_override,
                 imgsz=imgsz,
                 deployed_by_user_id=request.user.id,
                 deployed_by_username=request.user.username,
@@ -929,7 +934,7 @@ class ProjectTrainingRunDeployToTritonAPI(APIView):
                 model_name=model_name,
                 project_id=project.id,
                 run_id=run_id,
-                triton_repo_root=None,
+                triton_repo_root=triton_repo_override,
                 imgsz=imgsz,
                 deployed_by_user_id=request.user.id,
                 deployed_by_username=request.user.username,
@@ -1180,6 +1185,8 @@ class ProjectTrainingModelUploadAPI(APIView):
             
         imgsz = int(request.data.get("imgsz", 640))
         public_triton_base = _sanitize_optional_http_url(request.data.get("triton_url"))
+        raw_repo = (request.data.get("triton_model_repository") or "").strip()
+        triton_repo_override = raw_repo if raw_repo else None
 
         # Save temporary
         temp_dir = _get_training_output_root() / f"project_{project.id}" / "uploads"
@@ -1199,6 +1206,7 @@ class ProjectTrainingModelUploadAPI(APIView):
             model_name=model_name,
             project_id=project.id,
             run_id="manual_upload",
+            triton_repo_root=triton_repo_override,
             imgsz=imgsz,
             deployed_by_user_id=request.user.id,
             deployed_by_username=request.user.username,

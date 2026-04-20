@@ -76,65 +76,274 @@ function buildTritonInferProxyUrl(hostname, projectId) {
 }
 
 /**
+ * 從瀏覽器 Cookie 中讀取 `sessionid` 值。
+ * 僅用於填充程式碼範例，方便複製後直接執行。
+ * @returns {string} 找不到時回傳空字串
+ */
+function readSessionIdFromCookie() {
+  if (typeof document === "undefined") return "";
+  const seg = document.cookie.split(";").find((c) => c.trim().startsWith("sessionid="));
+  return seg ? seg.trim().slice("sessionid=".length) : "";
+}
+
+/**
  * 產生模型測試頁「程式呼叫 API」區塊的範例字串（供 pre 區塊顯示）。
- * @param {{ inferUrl: string, modelName: string, apiKey: string }} opts
+ * 當有 sessionId 時直接填入；Python／JS 均含完整圖片前處理程式碼，
+ * 使用者只需改圖片路徑或 <input> 來源即可直接執行。
+ *
+ * Python 範例包含兩種呼叫方式：
+ *   1. 直接呼叫 Triton REST API（`/v2/models/{model}/infer`）
+ *   2. 透過 Label Studio 代理（`/api/projects/{pk}/training/triton/infer/`，需 sessionid Cookie）
+ *
+ * @param {{
+ *   inferUrl: string,
+ *   modelName: string,
+ *   apiKey: string,
+ *   sessionId?: string,
+ *   tritonServerUrl?: string,
+ * }} opts
  * @returns {{ js: string, curl: string, py: string }}
  */
 function buildPlaygroundApiExampleSnippets(opts) {
-  const { inferUrl, modelName, apiKey } = opts;
+  const { inferUrl, modelName, apiKey, sessionId, tritonServerUrl } = opts;
+  const SIZE = PLAYGROUND_INPUT_SIZE;
   const modelJson = JSON.stringify(modelName || "YOUR_MODEL_NAME");
   const apiKeyJson = JSON.stringify(apiKey && String(apiKey).trim() ? String(apiKey).trim() : "");
+  const sid = sessionId && String(sessionId).trim() ? String(sessionId).trim() : "YOUR_SESSION";
+  const urlStr = inferUrl || "https://YOUR_HOST/api/projects/YOUR_PROJECT_ID/training/triton/infer/";
 
-  const js = `// 與本頁相同：POST JSON（Triton v2 infer）；需已登入且具專案檢視權限（credentials: include）
-// 若專案設定了 Triton API Key，請在 body 內填寫 api_key
-const url = ${JSON.stringify(inferUrl || "https://YOUR_HOST/api/projects/YOUR_PROJECT_ID/training/triton/infer/")};
+  /* ── 從 tritonServerUrl 解析出 host / port（供 Python 直接呼叫範例） ─────── */
+  let tritonHost = "YOUR_TRITON_HOST";
+  let tritonPort = 8000;
+  if (tritonServerUrl) {
+    try {
+      const parsed = new URL(tritonServerUrl);
+      tritonHost = parsed.hostname || tritonHost;
+      tritonPort = parsed.port ? Number(parsed.port) : (parsed.protocol === "https:" ? 443 : 8000);
+    } catch (_) {
+      // URL 格式不合法，保留佔位符
+    }
+  }
+
+  /* ── JavaScript（canvas letterbox + fetch） ─────────────────────────────── */
+  const js = `/**
+ * 與本頁 Playground 完全一致的前處理：
+ *   letterbox 縮放至 ${SIZE}×${SIZE}，灰邊 rgb(114,114,114)，
+ *   像素轉 CHW Float32（0.0 ~ 1.0）後攤平為一維陣列。
+ *
+ * 使用方式：將 <input type="file"> 選取的 File 傳入 imageFileToTensor()，
+ * 取得 data 陣列後填入 payload.inputs[0].data。
+ */
+const SIZE = ${SIZE};
+
+/**
+ * @param {File} file
+ * @returns {Promise<number[]>}
+ */
+async function imageFileToTensor(file) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = SIZE;
+      const ctx = canvas.getContext("2d");
+      const scale = Math.min(SIZE / img.width, SIZE / img.height);
+      const nw = img.width * scale, nh = img.height * scale;
+      const ox = (SIZE - nw) / 2, oy = (SIZE - nh) / 2;
+      ctx.fillStyle = "rgb(114,114,114)";
+      ctx.fillRect(0, 0, SIZE, SIZE);
+      ctx.drawImage(img, ox, oy, nw, nh);
+      const px = ctx.getImageData(0, 0, SIZE, SIZE).data; // RGBA
+      const n = SIZE * SIZE;
+      const t = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) {
+        t[i]         = px[i * 4]     / 255; // R channel
+        t[n + i]     = px[i * 4 + 1] / 255; // G channel
+        t[n * 2 + i] = px[i * 4 + 2] / 255; // B channel
+      }
+      resolve(Array.from(t)); // length = ${1 * 3 * SIZE * SIZE}
+    };
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+// ── 送出推論 ──────────────────────────────────────────────────────────────
+const url = ${JSON.stringify(urlStr)};
+
+// 取得圖片（瀏覽器環境：已登入，credentials: "include" 自動帶 Cookie）
+const fileInput = document.querySelector('input[type="file"]');
+const tensorData = await imageFileToTensor(fileInput.files[0]);
+
 const body = {
   model_name: ${modelJson},
   api_key: ${apiKeyJson},
-  inputs: [
-    {
-      name: "images",
-      shape: [1, 3, ${PLAYGROUND_INPUT_SIZE}, ${PLAYGROUND_INPUT_SIZE}],
-      datatype: "FP32",
-      // 一維 CHW、0~1；長度 1*3*${PLAYGROUND_INPUT_SIZE}*${PLAYGROUND_INPUT_SIZE}（與本頁 letterbox 一致）
-      data: [],
-    },
-  ],
+  inputs: [{
+    name: "images",
+    shape: [1, 3, ${SIZE}, ${SIZE}],
+    datatype: "FP32",
+    data: tensorData,
+  }],
   outputs: [{ name: "output0" }],
 };
+
 const res = await fetch(url, {
   method: "POST",
-  credentials: "include",
+  credentials: "include",           // 自動帶入 sessionid Cookie
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify(body),
 });
-const json = await res.json();`;
+const json = await res.json();
+console.log(json);`;
 
-  const curl = `# data 請換成實際 FP32 陣列（JSON 陣列很長，建議用 Python／檔案產生）
-curl -X POST ${JSON.stringify(inferUrl || "https://YOUR_HOST/api/projects/1/training/triton/infer/")} \\
-  -H "Content-Type: application/json" \\
-  -H "Cookie: sessionid=YOUR_SESSION" \\
-  -d '{"model_name":${modelJson},"api_key":${apiKeyJson},"inputs":[{"name":"images","shape":[1,3,${PLAYGROUND_INPUT_SIZE},${PLAYGROUND_INPUT_SIZE}],"datatype":"FP32","data":[]}],"outputs":[{"name":"output0"}]}'`;
+  /* ── Python（PIL letterbox + requests） ─────────────────────────────────── */
+  const py = `"""
+與本頁 Playground 完全一致的前處理：
+  letterbox 縮放至 ${SIZE}×${SIZE}，灰邊 (114,114,114)，CHW Float32 (0.0~1.0)。
 
-  const py = `import requests
+依賴：pip install requests Pillow numpy
+使用：修改 IMAGE_PATH 為你的圖片路徑，即可直接執行。
+"""
+import requests
+import numpy as np
+from PIL import Image
 
-url = ${JSON.stringify(inferUrl || "https://YOUR_HOST/api/projects/1/training/triton/infer/")}
-# 需具專案檢視權限：帶入 sessionid 等 Cookie，或依部署調整認證
+IMAGE_PATH = "your_image.jpg"   # ← 改成你的圖片路徑
+SIZE = ${SIZE}
+
+def letterbox_to_tensor(path, size=SIZE):
+    """讀取圖片並執行 letterbox 前處理，回傳一維 FP32 list（CHW，0~1）。"""
+    img = Image.open(path).convert("RGB")
+    w, h = img.size
+    scale = min(size / w, size / h)
+    nw, nh = int(w * scale), int(h * scale)
+    img = img.resize((nw, nh), Image.LANCZOS)
+    canvas = Image.new("RGB", (size, size), (114, 114, 114))
+    canvas.paste(img, ((size - nw) // 2, (size - nh) // 2))
+    arr = np.array(canvas, dtype=np.float32) / 255.0   # HWC, 0~1
+    arr = arr.transpose(2, 0, 1).ravel().tolist()       # CHW → 一維
+    return arr  # length = ${1 * 3 * SIZE * SIZE}
+
+url = ${JSON.stringify(urlStr)}
+tensor = letterbox_to_tensor(IMAGE_PATH)
+
 payload = {
     "model_name": ${modelJson},
     "api_key": ${apiKeyJson},
     "inputs": [{
         "name": "images",
-        "shape": [1, 3, ${PLAYGROUND_INPUT_SIZE}, ${PLAYGROUND_INPUT_SIZE}],
+        "shape": [1, 3, ${SIZE}, ${SIZE}],
         "datatype": "FP32",
-        "data": tensor_flat_fp32,  # 長度 ${1 * 3 * PLAYGROUND_INPUT_SIZE * PLAYGROUND_INPUT_SIZE}，CHW、0.0~1.0
+        "data": tensor,
     }],
     "outputs": [{"name": "output0"}],
 }
-r = requests.post(url, json=payload, cookies={"sessionid": "YOUR_SESSION"})
-print(r.status_code, r.json())`;
+
+# sessionid 取自瀏覽器 Cookie（F12 → Application → Cookies → sessionid）
+r = requests.post(url, json=payload, cookies={"sessionid": "${sid}"})
+print(r.status_code)
+print(r.json())`;
+
+  /* ── cURL（由 Python 產生 payload 檔再呼叫） ──────────────────────────── */
+  const curl = `# Tensor 資料龐大（${1 * 3 * SIZE * SIZE} 個 float），不適合直接嵌入 cURL 指令。
+# 建議：先用 Python 將 payload 存成 JSON 檔，再以 cURL 傳送。
+
+# 步驟 1 — 產生 payload.json（執行一次即可）
+python3 - <<'EOF'
+import json
+import numpy as np
+from PIL import Image
+
+SIZE = ${SIZE}
+def letterbox_to_tensor(path, size=SIZE):
+    img = Image.open(path).convert("RGB")
+    w, h = img.size
+    scale = min(size/w, size/h)
+    nw, nh = int(w*scale), int(h*scale)
+    img = img.resize((nw, nh), Image.LANCZOS)
+    c = Image.new("RGB", (size, size), (114,114,114))
+    c.paste(img, ((size-nw)//2, (size-nh)//2))
+    arr = np.array(c, dtype=np.float32)/255.0
+    return arr.transpose(2,0,1).ravel().tolist()
+
+payload = {
+    "model_name": ${modelJson},
+    "api_key": ${apiKeyJson},
+    "inputs": [{"name":"images","shape":[1,3,${SIZE},${SIZE}],"datatype":"FP32","data":letterbox_to_tensor("your_image.jpg")}],
+    "outputs": [{"name":"output0"}],
+}
+with open("payload.json","w") as f:
+    json.dump(payload, f)
+print("payload.json 已產生")
+EOF
+
+# 步驟 2 — 送出推論（sessionid 取自瀏覽器 Cookie）
+curl -X POST ${JSON.stringify(urlStr)} \\
+  -H "Content-Type: application/json" \\
+  -H "Cookie: sessionid=${sid}" \\
+  --data @payload.json`;
 
   return { js, curl, py };
+}
+
+/**
+ * 一鍵複製程式碼按鈕。點擊後顯示「已複製 ✓」2 秒，並回復原狀。
+ * 使用 Clipboard API，降級至 execCommand。
+ * @param {{ text: string, className?: string }} props
+ */
+function CopyCodeButton({ text, className }) {
+  const [copied, setCopied] = useState(false);
+
+  /** @param {React.MouseEvent} e */
+  const handleCopy = (e) => {
+    // 防止觸發 <details> 的展開/收合
+    e.preventDefault();
+    e.stopPropagation();
+
+    const done = () => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    };
+
+    if (navigator?.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(() => {
+        execCommandCopy(text);
+        done();
+      });
+    } else {
+      execCommandCopy(text);
+      done();
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      className={className}
+      onClick={handleCopy}
+      aria-label="複製程式碼"
+    >
+      {copied ? "已複製 ✓" : "複製"}
+    </button>
+  );
+}
+
+/**
+ * 降級複製方案：使用 document.execCommand('copy')。
+ * @param {string} text
+ */
+function execCommandCopy(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.cssText = "position:fixed;opacity:0;pointer-events:none;";
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  try {
+    document.execCommand("copy");
+  } catch (_) {
+    // 無法複製時靜默失敗
+  }
+  document.body.removeChild(ta);
 }
 
 /**
@@ -670,7 +879,11 @@ export function PlaygroundTab() {
         inferUrl: inferProxyUrl,
         modelName,
         apiKey,
+        sessionId: readSessionIdFromCookie(),
       }),
+    // readSessionIdFromCookie() 為純同步讀取，不需列入 deps；
+    // 每次 inferProxyUrl / modelName / apiKey 任一改變時重算即已涵蓋頁面設定變更。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [inferProxyUrl, modelName, apiKey],
   );
 
@@ -987,15 +1200,33 @@ export function PlaygroundTab() {
           </Typography>
         )}
         <details className={rootClass.elem("api-docs-details").toClassName()}>
-          <summary className={rootClass.elem("api-docs-summary").toClassName()}>JavaScript（fetch）</summary>
+          <summary className={rootClass.elem("api-docs-summary").toClassName()}>
+            <span>JavaScript（fetch）</span>
+            <CopyCodeButton
+              text={apiExampleSnippets.js}
+              className={rootClass.elem("api-docs-copy-btn").toClassName()}
+            />
+          </summary>
           <pre className={rootClass.elem("api-docs-pre").toClassName()}>{apiExampleSnippets.js}</pre>
         </details>
         <details className={rootClass.elem("api-docs-details").toClassName()}>
-          <summary className={rootClass.elem("api-docs-summary").toClassName()}>cURL</summary>
+          <summary className={rootClass.elem("api-docs-summary").toClassName()}>
+            <span>cURL</span>
+            <CopyCodeButton
+              text={apiExampleSnippets.curl}
+              className={rootClass.elem("api-docs-copy-btn").toClassName()}
+            />
+          </summary>
           <pre className={rootClass.elem("api-docs-pre").toClassName()}>{apiExampleSnippets.curl}</pre>
         </details>
         <details className={rootClass.elem("api-docs-details").toClassName()}>
-          <summary className={rootClass.elem("api-docs-summary").toClassName()}>Python（requests）</summary>
+          <summary className={rootClass.elem("api-docs-summary").toClassName()}>
+            <span>Python（requests）</span>
+            <CopyCodeButton
+              text={apiExampleSnippets.py}
+              className={rootClass.elem("api-docs-copy-btn").toClassName()}
+            />
+          </summary>
           <pre className={rootClass.elem("api-docs-pre").toClassName()}>{apiExampleSnippets.py}</pre>
         </details>
       </div>
