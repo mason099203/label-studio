@@ -6,6 +6,86 @@
 export const TRITON_PLAYGROUND_STATE_KEY = "labelstudio.triton.playground";
 
 /**
+ * Triton HTTP 推論服務固定埠號（docker-compose `triton` service）。
+ * @type {number}
+ */
+export const TRITON_HTTP_PORT = 18000;
+
+/**
+ * Triton Prometheus Metrics 固定埠號（docker-compose `triton` service）。
+ * @type {number}
+ */
+export const TRITON_METRICS_PORT = 8002;
+
+/**
+ * 從完整 URL 或純 hostname 中提取主機名稱（IP 或 domain），去除 scheme、port 及路徑。
+ * @param {string} url - 可能是完整 URL 如 `http://10.0.0.1:18000` 或純 hostname 如 `10.0.0.1`
+ * @returns {string} 純 hostname，例如 `10.0.0.1`；無效時回傳原始字串
+ */
+export function extractHostFromUrl(url) {
+  const u = (url || "").trim();
+  if (!u) return "";
+  try {
+    const withScheme = /^https?:\/\//i.test(u) ? u : `http://${u}`;
+    return new URL(withScheme).hostname;
+  } catch (_) {
+    // URL 無效時回退：去除 scheme 與 port
+    return u.replace(/^https?:\/\//i, "").replace(/[:/].*$/, "");
+  }
+}
+
+/**
+ * 根據主機 IP 組成 Triton HTTP 基底 URL（固定埠 18000）。
+ * @param {string} host - 主機 IP 或 hostname，例如 `10.0.0.1`
+ * @returns {string} 完整 URL，例如 `http://10.0.0.1:18000`；host 為空時回傳空字串
+ */
+export function buildTritonBaseUrl(host) {
+  const h = (host || "").trim();
+  if (!h) return "";
+  return `http://${h}:${TRITON_HTTP_PORT}`;
+}
+
+/**
+ * 根據主機 IP 組成 Triton Prometheus Metrics URL（固定埠 8002）。
+ * @param {string} host - 主機 IP 或 hostname，例如 `10.0.0.1`
+ * @returns {string} 完整 Metrics URL，例如 `http://10.0.0.1:8002/metrics`；host 為空時回傳空字串
+ */
+export function buildTritonMetricsUrl(host) {
+  const h = (host || "").trim();
+  if (!h) return "";
+  return `http://${h}:${TRITON_METRICS_PORT}/metrics`;
+}
+
+/**
+ * 正規化 Triton HTTP URL：若使用者未指定埠號，自動補上 {@link TRITON_HTTP_PORT}。
+ *
+ * @example
+ * normalizeTritonUrl("http://10.0.0.1")       // → "http://10.0.0.1:18000"
+ * normalizeTritonUrl("http://10.0.0.1:18000") // → "http://10.0.0.1:18000"（原樣）
+ * normalizeTritonUrl("http://10.0.0.1:9000")  // → "http://10.0.0.1:9000"（原樣）
+ * normalizeTritonUrl("")                       // → ""
+ *
+ * @param {string} url - 使用者輸入的網址（可含或不含埠號）
+ * @returns {string} 補足埠號後的完整 URL；無效或空值時回傳原始字串
+ */
+export function normalizeTritonUrl(url) {
+  const u = (url || "").trim();
+  if (!u) return u;
+  try {
+    const withScheme = /^https?:\/\//i.test(u) ? u : `http://${u}`;
+    const parsed = new URL(withScheme);
+    // parsed.port 為空字串表示使用者未指定埠號，補上預設值
+    if (!parsed.port) {
+      parsed.port = String(TRITON_HTTP_PORT);
+    }
+    // 只回傳 scheme + host + port，捨棄路徑避免污染基底 URL
+    return parsed.origin;
+  } catch (_) {
+    return u;
+  }
+}
+
+/**
  * 讀取已儲存的 Triton 基底 URL、Metrics URL 與模型儲存庫路徑。
  * @returns {{ tritonServerUrl: string, tritonMetricsUrl: string, tritonModelRepository: string }}
  */

@@ -56,6 +56,7 @@ services:
       - RQ_REDIS_PORT=6379
       - RQ_REDIS_DB=0
       # 與同 compose 內的 triton 服務通訊（勿用 localhost，那是容器自己）
+      # triton 容器內部監聽 8000，主機對外才是 18000（ports: "18000:8000"）
       - TRITON_SERVER_URL=http://triton:8000
     #      - LOG_LEVEL=DEBUG
     volumes:
@@ -86,6 +87,7 @@ services:
       - RQ_REDIS_HOST=redis
       - RQ_REDIS_PORT=6379
       - RQ_REDIS_DB=0
+      # triton 容器內部監聽 8000，主機對外才是 18000（ports: "18000:8000"）
       - TRITON_SERVER_URL=http://triton:8000
     volumes:
       - ./data:/label-studio/data:rw
@@ -117,18 +119,6 @@ services:
     volumes:
       - redis-data:/data
 
-  triton:
-    image: nvcr.io/nvidia/tritonserver:24.01-py3
-    container_name: triton
-    # runtime: nvidia   # 有 GPU 再開
-    ports:
-      - "8000:8000"
-      - "8001:8001"
-      - "8002:8002"
-    volumes:
-      - ./data/triton_models:/models
-    command: tritonserver --model-repository=/models --model-control-mode=poll --repository-poll-secs=5 --exit-on-error=false
-    restart: unless-stopped
 
 volumes:
   redis-data:

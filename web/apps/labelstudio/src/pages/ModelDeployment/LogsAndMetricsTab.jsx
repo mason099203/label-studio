@@ -10,6 +10,9 @@ import {
   persistTritonUrlFields,
   verifyTritonConnection,
   TRITON_PLAYGROUND_STATE_KEY,
+  extractHostFromUrl,
+  buildTritonBaseUrl,
+  buildTritonMetricsUrl,
 } from "./tritonUrlState";
 import { useAPI } from "../../providers/ApiProvider";
 import { useProject } from "../../providers/ProjectProvider";
@@ -198,10 +201,14 @@ export function LogsAndMetricsTab() {
   const api = useAPI();
   const project = useProject()?.project;
   const [projectId, setProjectId] = useState(() => String(project?.id ?? readSavedProjectId() ?? ""));
-  /** 與模型測試頁共用：後端查詢 Triton 健康與轉發之 HTTP 基底。 */
-  const [tritonServerUrl, setTritonServerUrl] = useState(() => readTritonUrlState().tritonServerUrl);
-  /** 完整 Prometheus metrics URL；空則依基底推導或由後端預設。 */
-  const [tritonMetricsUrl, setTritonMetricsUrl] = useState(() => readTritonUrlState().tritonMetricsUrl);
+  /** Triton 伺服器主機 IP（如 `192.168.1.10`）；port 18000/8002 固定。空值表示使用伺服器 TRITON_SERVER_URL。 */
+  const [tritonServerHost, setTritonServerHost] = useState(
+    () => extractHostFromUrl(readTritonUrlState().tritonServerUrl),
+  );
+  /** 後端查詢 Triton 健康與轉發之完整 HTTP URL（固定埠 18000）；由 tritonServerHost 自動組成。 */
+  const tritonServerUrl = useMemo(() => buildTritonBaseUrl(tritonServerHost), [tritonServerHost]);
+  /** Prometheus Metrics 完整 URL（固定埠 8002）；由 tritonServerHost 自動組成。 */
+  const tritonMetricsUrl = useMemo(() => buildTritonMetricsUrl(tritonServerHost), [tritonServerHost]);
   const [tritonVerifyLoading, setTritonVerifyLoading] = useState(false);
   const [tritonVerifyResult, setTritonVerifyResult] = useState(null);
   const [iframeUrl, setIframeUrl] = useState(null);
@@ -440,26 +447,15 @@ export function LogsAndMetricsTab() {
           </div>
           <div className={rootClass.elem("field").mod({ project: true }).toClassName()}>
             <label className={rootClass.elem("field-label").toClassName()}>
-              Triton 服務位址
+              Triton 伺服器 IP
             </label>
             <input
               className={rootClass.elem("text-input").toClassName()}
-              value={tritonServerUrl}
-              onChange={(event) => setTritonServerUrl(event.target.value)}
-              placeholder="http://主機:8000（空＝伺服器預設）"
-              type="url"
-            />
-          </div>
-          <div className={rootClass.elem("field").mod({ project: true }).toClassName()}>
-            <label className={rootClass.elem("field-label").toClassName()}>
-              Metrics URL
-            </label>
-            <input
-              className={rootClass.elem("text-input").toClassName()}
-              value={tritonMetricsUrl}
-              onChange={(event) => setTritonMetricsUrl(event.target.value)}
-              placeholder="空則依 Triton 位址推導 :8002/metrics"
-              type="url"
+              value={tritonServerHost}
+              onChange={(event) => setTritonServerHost(event.target.value.trim())}
+              placeholder="192.168.1.10（空＝伺服器預設）"
+              type="text"
+              title={tritonServerHost.trim() ? `HTTP: ${tritonServerUrl}  Metrics: ${tritonMetricsUrl}` : ""}
             />
           </div>
           <Button variant="neutral" look="outlined" onClick={fetchMetrics} disabled={!projectId}>

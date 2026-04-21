@@ -11,6 +11,7 @@ import {
   readTritonUrlState,
   persistTritonUrlFields,
   verifyTritonConnection,
+  normalizeTritonUrl,
   TRITON_PLAYGROUND_STATE_KEY,
 } from "../ModelDeployment/tritonUrlState";
 import "./ProjectModelsPage.scss";
@@ -64,7 +65,7 @@ export const ProjectModelsPage = () => {
   const [tritonPreset, setTritonPreset] = useState(() => {
     const u = (readTritonUrlState().tritonServerUrl || "").trim();
     if (!u) return "default";
-    if (u === "http://localhost:8000" || u === "http://127.0.0.1:8000") return "local8000";
+    if (u === "http://localhost:18000" || u === "http://127.0.0.1:18000") return "local18000";
     return "custom";
   });
   /**
@@ -96,21 +97,28 @@ export const ProjectModelsPage = () => {
    * @param {string} url
    * @returns {"default" | "local8000" | "custom"}
    */
+  /**
+   * 由網址推斷預設選項（供手動輸入後同步下拉）。
+   * @param {string} url
+   * @returns {"default" | "local18000" | "custom"}
+   */
   const presetFromUrl = (url) => {
     const u = (url || "").trim();
     if (!u) return "default";
-    if (u === "http://localhost:8000" || u === "http://127.0.0.1:8000") return "local8000";
+    if (u === "http://localhost:18000" || u === "http://127.0.0.1:18000") return "local18000";
     return "custom";
   };
 
   /**
    * 變更部署用 Triton 位址並寫入與模型測試頁相同之儲存。
+   * 若 URL 未包含埠號，自動補上預設 TRITON_HTTP_PORT（18000）。
    * @param {string} nextUrl
    */
   const commitDeployTritonUrl = (nextUrl) => {
-    setDeployTritonServerUrl(nextUrl);
-    setTritonPreset(presetFromUrl(nextUrl));
-    persistTritonUrlFields({ tritonServerUrl: nextUrl });
+    const normalized = normalizeTritonUrl(nextUrl);
+    setDeployTritonServerUrl(normalized);
+    setTritonPreset(presetFromUrl(normalized));
+    persistTritonUrlFields({ tritonServerUrl: normalized });
   };
 
   /**
@@ -128,13 +136,19 @@ export const ProjectModelsPage = () => {
 
   /**
    * 手動驗證目前選定之 Triton 是否可由後端連線。
+   * 驗證前先正規化 URL（補足缺少的埠號），並更新欄位顯示。
    */
   const handleVerifyDeployTriton = async () => {
     if (!params?.id) return;
+    // 先正規化：補足使用者未輸入的埠號後再驗證
+    const normalized = normalizeTritonUrl(deployTritonServerUrl);
+    if (normalized !== deployTritonServerUrl) {
+      commitDeployTritonUrl(normalized);
+    }
     setTritonVerifyResult(null);
     setTritonVerifyLoading(true);
     try {
-      const r = await verifyTritonConnection(api, params.id, deployTritonServerUrl);
+      const r = await verifyTritonConnection(api, params.id, normalized);
       setTritonVerifyResult({ level: r.level, text: r.message });
     } finally {
       setTritonVerifyLoading(false);
@@ -144,7 +158,12 @@ export const ProjectModelsPage = () => {
   const handleDeployToTriton = async (runId) => {
     if (!params?.id || !runId) return;
     setDeployError(null);
-    const tu = (deployTritonServerUrl || "").trim();
+    // 部署前正規化 URL：補足缺少的埠號
+    const raw = (deployTritonServerUrl || "").trim();
+    const tu = raw ? normalizeTritonUrl(raw) : "";
+    if (tu !== raw) {
+      commitDeployTritonUrl(tu);
+    }
     if (tu) {
       setTritonVerifyLoading(true);
       const check = await verifyTritonConnection(api, params.id, tu);
@@ -266,12 +285,12 @@ export const ProjectModelsPage = () => {
               onChange={(e) => {
                 const v = e.target.value;
                 if (v === "default") commitDeployTritonUrl("");
-                else if (v === "local8000") commitDeployTritonUrl("http://localhost:8000");
+                else if (v === "local18000") commitDeployTritonUrl("http://localhost:18000");
                 else setTritonPreset("custom");
               }}
             >
               <option value="default">後端環境預設（不指定 URL）</option>
-              <option value="local8000">本機 Triton（localhost:8000）</option>
+              <option value="local18000">本機 Triton（localhost:18000）</option>
               <option value="custom">自訂網址…</option>
             </select>
             <input
@@ -283,8 +302,8 @@ export const ProjectModelsPage = () => {
                 setDeployTritonServerUrl(next);
                 setTritonPreset(presetFromUrl(next));
               }}
-              onBlur={() => persistTritonUrlFields({ tritonServerUrl: deployTritonServerUrl })}
-              placeholder="http://主機:8000"
+              onBlur={() => commitDeployTritonUrl(deployTritonServerUrl)}
+              placeholder="http://主機:18000"
               aria-label="Triton HTTP 基底網址"
             />
           </div>

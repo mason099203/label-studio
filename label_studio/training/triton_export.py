@@ -4,6 +4,22 @@ Utilities for exporting training artifacts into a Triton model repository.
 The deployment flow converts a trained YOLO checkpoint into a Triton-loadable
 TorchScript model, writes the Triton config files, and stores a small metadata
 file so the frontend Playground can discover project-specific deployments.
+
+Remote deployment flow
+----------------------
+When the target Triton is on a different host (e.g. http://10.214.57.20:18000),
+the Django backend cannot write directly to its model repository.  Instead the
+exported files are HTTP-POSTed to the companion ``upload_server`` service
+(same host, port ``TRITON_UPLOAD_SERVER_PORT``, default 8003), which shares the
+``triton_models`` Docker volume with Triton.
+
+  Django ──export──► temp model.pt + config.pbtxt
+                            │  HTTP POST
+                            ▼
+                   upload_server :8003
+                            │  shared volume
+                            ▼
+                   Triton /models ← model loaded
 """
 
 from __future__ import annotations
@@ -12,13 +28,19 @@ import logging
 import os
 import json
 import re
+import tempfile
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Iterable, Optional
+from urllib.parse import urlparse
 
+import requests
 import shutil
 
 logger = logging.getLogger(__name__)
+
+# Upload Server 對外埠號（與 docker-compose upload service 一致）
+TRITON_UPLOAD_SERVER_PORT: int = int(os.environ.get("TRITON_UPLOAD_SERVER_PORT", "8003"))
 
 
 def get_triton_model_repository_root() -> Path:
@@ -38,6 +60,99 @@ def get_triton_server_url() -> str:
     Base HTTP URL for Triton.
     """
     return os.environ.get("TRITON_SERVER_URL", "http://localhost:8000").rstrip("/")
+
+
+def _is_remote_triton(triton_url: str) -> bool:
+    """
+    判斷 Triton URL 是否指向遠端主機（非 localhost / 127.0.0.1）。
+
+    本機部署時 Django 可直接寫入共享磁碟；遠端時需透過 Upload Server 轉送。
+
+    @param {str} triton_url - Triton HTTP 基底 URL
+    @returns {bool} 是否為遠端主機
+    """
+    try:
+        host = urlparse(triton_url).hostname or ""
+        return host not in ("localhost", "127.0.0.1", "::1", "")
+    except Exception:
+        return False
+
+
+def derive_upload_server_url(triton_url: str) -> str:
+    """
+    從 Triton 基底 URL 推導 Upload Server URL（同主機、埠 TRITON_UPLOAD_SERVER_PORT）。
+
+    @example
+    derive_upload_server_url("http://10.214.57.20:18000") → "http://10.214.57.20:8003"
+
+    @param {str} triton_url - Triton HTTP 基底 URL
+    @returns {str} Upload Server 基底 URL
+    """
+    parsed = urlparse(triton_url)
+    scheme = parsed.scheme or "http"
+    host = parsed.hostname or "localhost"
+    return f"{scheme}://{host}:{TRITON_UPLOAD_SERVER_PORT}"
+
+
+def upload_model_to_remote_server(
+    upload_base_url: str,
+    model_name: str,
+    model_pt_path: Path,
+    config_content: str,
+    timeout: float = 60.0,
+) -> dict:
+    """
+    透過 Upload Server REST API 將模型檔案與設定檔上傳到遠端 Triton 模型倉庫。
+
+    上傳路徑（對應 upload_server.py 端點）：
+    - ``POST {upload_base_url}/upload/model?model_name={model_name}&version=1``
+    - ``POST {upload_base_url}/upload/config?model_name={model_name}``
+
+    @param {str} upload_base_url - Upload Server 基底 URL，例如 ``http://10.214.57.20:8003``
+    @param {str} model_name      - Triton 模型名稱
+    @param {Path} model_pt_path  - 本機已匯出的 model.pt 路徑
+    @param {str} config_content  - config.pbtxt 文字內容
+    @param {float} timeout       - HTTP 逾時秒數（預設 60）
+    @returns {dict} 上傳結果；包含 ``error`` 鍵時表示失敗
+    """
+    base = upload_base_url.rstrip("/")
+
+    # ── 上傳 model.pt ───────────────────────────────────────────────────────
+    try:
+        with model_pt_path.open("rb") as f:
+            resp = requests.post(
+                f"{base}/upload/model",
+                params={"model_name": model_name, "version": 1},
+                files={"file": (model_pt_path.name, f, "application/octet-stream")},
+                timeout=timeout,
+            )
+        if not resp.ok:
+            detail = resp.json().get("detail", resp.text) if resp.content else resp.reason
+            return {"error": f"Upload Server 拒絕模型檔案（{resp.status_code}）：{detail}"}
+        model_result = resp.json()
+    except requests.RequestException as exc:
+        return {"error": f"無法連線至 Upload Server（{base}）：{exc}"}
+
+    # ── 上傳 config.pbtxt ────────────────────────────────────────────────────
+    try:
+        resp = requests.post(
+            f"{base}/upload/config",
+            params={"model_name": model_name},
+            files={"file": ("config.pbtxt", config_content.encode("utf-8"), "text/plain")},
+            timeout=timeout,
+        )
+        if not resp.ok:
+            detail = resp.json().get("detail", resp.text) if resp.content else resp.reason
+            return {"error": f"Upload Server 拒絕 config.pbtxt（{resp.status_code}）：{detail}"}
+        config_result = resp.json()
+    except requests.RequestException as exc:
+        return {"error": f"上傳 config.pbtxt 失敗：{exc}"}
+
+    return {
+        "upload_server_url": base,
+        "model_saved_to": model_result.get("saved_to"),
+        "config_saved_to": config_result.get("saved_to"),
+    }
 
 
 def sanitize_triton_model_name(raw_name: str, fallback: str = "triton_model") -> str:
@@ -85,22 +200,82 @@ def export_torchscript_pt_to_triton(
     deployed_by_user_id: Optional[int] = None,
     deployed_by_username: Optional[str] = None,
     public_triton_base_url: Optional[str] = None,
+    upload_server_url: Optional[str] = None,
 ) -> dict:
     """
     Export a general TorchScript model (.pt) into Triton's libtorch layout.
+
+    若 ``upload_server_url`` 不為空，匯出的 model.pt 與 config.pbtxt 會透過
+    Upload Server HTTP API 推送到遠端 Triton 模型倉庫；否則直接複製到本機磁碟。
+
+    @param {str | Path} best_pt_path        - 訓練產出的 .pt 檔案路徑
+    @param {str} model_name                 - Triton 模型名稱
+    @param {Optional[int]} project_id       - Label Studio 專案 ID（寫入後設資料）
+    @param {Optional[str]} run_id           - 訓練 run ID（寫入後設資料）
+    @param {Optional[str | Path]} triton_repo_root - 本機模型倉庫根目錄（本機部署用）
+    @param {int} imgsz                      - 輸入圖片尺寸（用於 config.pbtxt）
+    @param {Optional[int]} deployed_by_user_id    - 部署者 user ID
+    @param {Optional[str]} deployed_by_username   - 部署者帳號
+    @param {Optional[str]} public_triton_base_url - 外部 Triton URL（寫入後設資料）
+    @param {Optional[str]} upload_server_url      - Upload Server 基底 URL；非空時走遠端上傳
+    @returns {dict} 部署結果；包含 ``error`` 鍵時表示失敗
     """
     best_pt_path = Path(best_pt_path)
     if not best_pt_path.exists():
         return {"error": f"TorchScript file not found: {best_pt_path}"}
 
+    model_name = sanitize_triton_model_name(model_name)
+    config_content = _build_triton_pbtxt(model_name=model_name, imgsz=imgsz)
+    infer_base = (public_triton_base_url or get_triton_server_url()).rstrip("/")
+
+    if upload_server_url:
+        # ── 遠端模式：透過 Upload Server HTTP API 上傳 ──────────────────────
+        upload_result = upload_model_to_remote_server(
+            upload_base_url=upload_server_url,
+            model_name=model_name,
+            model_pt_path=best_pt_path,
+            config_content=config_content,
+        )
+        if upload_result.get("error"):
+            return upload_result
+
+        # 後設資料仍寫到本機模型倉庫（供 list_triton_model_deployments 查詢）
+        repo_root = Path(triton_repo_root) if triton_repo_root else get_triton_model_repository_root()
+        repo_root.mkdir(parents=True, exist_ok=True)
+        model_dir = repo_root / model_name
+        model_dir.mkdir(parents=True, exist_ok=True)
+        metadata_path = model_dir / "deployment_meta.json"
+        metadata = {
+            "model_name": model_name,
+            "project_id": project_id,
+            "run_id": run_id,
+            "imgsz": imgsz,
+            "deployed_at": datetime.now(timezone.utc).isoformat(),
+            "model_type": "torchscript_cnn",
+            "deployed_by_user_id": deployed_by_user_id,
+            "deployed_by_username": deployed_by_username,
+            "upload_server_url": upload_server_url,
+            "triton_public_base_url": (public_triton_base_url or "").rstrip("/") or None,
+        }
+        metadata_path.write_text(json.dumps(metadata, ensure_ascii=True, indent=2), encoding="utf-8")
+
+        return {
+            "model_name": model_name,
+            "repo_path": str(repo_root),
+            "model_dir": str(model_dir),
+            "metadata_path": str(metadata_path),
+            "infer_url": f"{infer_base}/v2/models/{model_name}/infer",
+            **upload_result,
+        }
+
+    # ── 本機模式：直接複製到磁碟 ─────────────────────────────────────────────
     repo_root = Path(triton_repo_root) if triton_repo_root else get_triton_model_repository_root()
     repo_root.mkdir(parents=True, exist_ok=True)
 
-    model_name = sanitize_triton_model_name(model_name)
     model_dir = repo_root / model_name
     version_dir = model_dir / "1"
     version_dir.mkdir(parents=True, exist_ok=True)
-    
+
     model_pt_path = version_dir / "model.pt"
     config_path = model_dir / "config.pbtxt"
     metadata_path = model_dir / "deployment_meta.json"
@@ -110,7 +285,6 @@ def export_torchscript_pt_to_triton(
     except Exception as exc:
         return {"error": f"Failed to copy model: {exc}"}
 
-    config_content = _build_triton_pbtxt(model_name=model_name, imgsz=imgsz)
     config_path.write_text(config_content, encoding="utf-8")
 
     metadata = {
@@ -128,7 +302,6 @@ def export_torchscript_pt_to_triton(
         metadata["triton_public_base_url"] = public_triton_base_url.rstrip("/")
     metadata_path.write_text(json.dumps(metadata, ensure_ascii=True, indent=2), encoding="utf-8")
 
-    infer_base = (public_triton_base_url or get_triton_server_url()).rstrip("/")
     return {
         "model_name": model_name,
         "repo_path": str(repo_root),
@@ -148,29 +321,100 @@ def export_yolo_pt_to_triton(
     deployed_by_user_id: Optional[int] = None,
     deployed_by_username: Optional[str] = None,
     public_triton_base_url: Optional[str] = None,
+    upload_server_url: Optional[str] = None,
 ) -> dict:
     """
     Export a trained YOLO checkpoint into Triton's libtorch model layout.
 
-    Args:
-        best_pt_path: Path to best.pt (e.g. from training artifacts).
-        model_name: Triton model name (used as directory name under repo).
-        project_id: Optional project id used for deployment metadata.
-        run_id: Optional training run id used for deployment metadata.
-        triton_repo_root: Override repo root; default from get_triton_model_repository_root().
-        imgsz: Input size (H, W) for config.pbtxt; default 640.
+    若 ``upload_server_url`` 不為空，匯出的 model.pt 與 config.pbtxt 會透過
+    Upload Server HTTP API 推送到遠端 Triton 模型倉庫；否則直接複製到本機磁碟。
 
-    Returns:
-        dict with keys describing repository paths, metadata, and infer URL.
+    @param {str | Path} best_pt_path        - 訓練產出的 best.pt 檔案路徑
+    @param {str} model_name                 - Triton 模型名稱
+    @param {Optional[int]} project_id       - Label Studio 專案 ID（寫入後設資料）
+    @param {Optional[str]} run_id           - 訓練 run ID（寫入後設資料）
+    @param {Optional[str | Path]} triton_repo_root - 本機模型倉庫根目錄（本機部署用）
+    @param {int} imgsz                      - 輸入圖片尺寸（用於 config.pbtxt）
+    @param {Optional[int]} deployed_by_user_id    - 部署者 user ID
+    @param {Optional[str]} deployed_by_username   - 部署者帳號
+    @param {Optional[str]} public_triton_base_url - 外部 Triton URL（寫入後設資料）
+    @param {Optional[str]} upload_server_url      - Upload Server 基底 URL；非空時走遠端上傳
+    @returns {dict} 部署結果；包含 ``error`` 鍵時表示失敗
     """
     best_pt_path = Path(best_pt_path)
     if not best_pt_path.exists():
         return {"error": f"best.pt not found: {best_pt_path}"}
 
+    model_name = sanitize_triton_model_name(model_name)
+    infer_base = (public_triton_base_url or get_triton_server_url()).rstrip("/")
+
+    try:
+        from ultralytics import YOLO
+    except ImportError as exc:
+        return {"error": f"Ultralytics not installed: {exc}"}
+
+    # ── YOLO → TorchScript 匯出（不論本機/遠端皆需此步驟）─────────────────
+    try:
+        model = YOLO(str(best_pt_path))
+        exported = model.export(format="torchscript", imgsz=imgsz)
+        src_torchscript = (
+            Path(exported).resolve()
+            if exported
+            else (best_pt_path.parent / (best_pt_path.stem + ".torchscript"))
+        )
+        if not src_torchscript.exists():
+            return {"error": f"TorchScript export did not produce {src_torchscript}"}
+    except Exception as exc:
+        logger.exception("Failed to export trained model to TorchScript for Triton")
+        return {"error": str(exc)}
+
+    config_content = _build_triton_pbtxt(model_name=model_name, imgsz=imgsz)
+
+    if upload_server_url:
+        # ── 遠端模式：透過 Upload Server HTTP API 上傳 ──────────────────────
+        upload_result = upload_model_to_remote_server(
+            upload_base_url=upload_server_url,
+            model_name=model_name,
+            model_pt_path=src_torchscript,
+            config_content=config_content,
+        )
+        if upload_result.get("error"):
+            return upload_result
+
+        # 後設資料寫到本機模型倉庫（供 list_triton_model_deployments 查詢）
+        repo_root = Path(triton_repo_root) if triton_repo_root else get_triton_model_repository_root()
+        repo_root.mkdir(parents=True, exist_ok=True)
+        model_dir = repo_root / model_name
+        model_dir.mkdir(parents=True, exist_ok=True)
+        metadata_path = model_dir / "deployment_meta.json"
+        metadata = {
+            "model_name": model_name,
+            "project_id": project_id,
+            "run_id": run_id,
+            "imgsz": imgsz,
+            "source_pt_path": str(best_pt_path.resolve()),
+            "exported_torchscript_path": str(src_torchscript.resolve()),
+            "deployed_at": datetime.now(timezone.utc).isoformat(),
+            "deployed_by_user_id": deployed_by_user_id,
+            "deployed_by_username": deployed_by_username,
+            "upload_server_url": upload_server_url,
+            "triton_public_base_url": (public_triton_base_url or "").rstrip("/") or None,
+        }
+        metadata_path.write_text(json.dumps(metadata, ensure_ascii=True, indent=2), encoding="utf-8")
+
+        return {
+            "model_name": model_name,
+            "repo_path": str(repo_root),
+            "model_dir": str(model_dir),
+            "metadata_path": str(metadata_path),
+            "infer_url": f"{infer_base}/v2/models/{model_name}/infer",
+            **upload_result,
+        }
+
+    # ── 本機模式：直接複製到磁碟 ─────────────────────────────────────────────
     repo_root = Path(triton_repo_root) if triton_repo_root else get_triton_model_repository_root()
     repo_root.mkdir(parents=True, exist_ok=True)
 
-    model_name = sanitize_triton_model_name(model_name)
     model_dir = repo_root / model_name
     version_dir = model_dir / "1"
     version_dir.mkdir(parents=True, exist_ok=True)
@@ -180,22 +424,10 @@ def export_yolo_pt_to_triton(
     metadata_path = model_dir / "deployment_meta.json"
 
     try:
-        from ultralytics import YOLO
-    except ImportError as exc:
-        return {"error": f"Ultralytics not installed: {exc}"}
-
-    try:
-        model = YOLO(str(best_pt_path))
-        exported = model.export(format="torchscript", imgsz=imgsz)
-        src_torchscript = Path(exported).resolve() if exported else (best_pt_path.parent / (best_pt_path.stem + ".torchscript"))
-        if not src_torchscript.exists():
-            return {"error": f"TorchScript export did not produce {src_torchscript}"}
         shutil.copy2(src_torchscript, model_pt_path)
     except Exception as exc:
-        logger.exception("Failed to export trained model to TorchScript for Triton")
-        return {"error": str(exc)}
+        return {"error": f"Failed to copy TorchScript to repo: {exc}"}
 
-    config_content = _build_triton_pbtxt(model_name=model_name, imgsz=imgsz)
     config_path.write_text(config_content, encoding="utf-8")
     legacy_bptxt_path.write_text(config_content, encoding="utf-8")
 
@@ -217,7 +449,6 @@ def export_yolo_pt_to_triton(
         metadata["triton_public_base_url"] = public_triton_base_url.rstrip("/")
     metadata_path.write_text(json.dumps(metadata, ensure_ascii=True, indent=2), encoding="utf-8")
 
-    infer_base = (public_triton_base_url or get_triton_server_url()).rstrip("/")
     return {
         "model_name": model_name,
         "repo_path": str(repo_root),

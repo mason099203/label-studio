@@ -2,7 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Typography } from "@humansignal/ui";
 import { useAPI } from "../../providers/ApiProvider";
 import { cn } from "../../utils/bem";
-import { TRITON_PLAYGROUND_STATE_KEY, verifyTritonConnection } from "./tritonUrlState";
+import {
+  TRITON_PLAYGROUND_STATE_KEY,
+  verifyTritonConnection,
+  extractHostFromUrl,
+  buildTritonBaseUrl,
+  buildTritonMetricsUrl,
+} from "./tritonUrlState";
 import "./ModelDeployment.scss";
 
 const rootClass = cn("playground-tab");
@@ -114,12 +120,12 @@ function buildPlaygroundApiExampleSnippets(opts) {
 
   /* ── 從 tritonServerUrl 解析出 host / port（供 Python 直接呼叫範例） ─────── */
   let tritonHost = "YOUR_TRITON_HOST";
-  let tritonPort = 8000;
+  let tritonPort = 18000;
   if (tritonServerUrl) {
     try {
       const parsed = new URL(tritonServerUrl);
       tritonHost = parsed.hostname || tritonHost;
-      tritonPort = parsed.port ? Number(parsed.port) : (parsed.protocol === "https:" ? 443 : 8000);
+      tritonPort = parsed.port ? Number(parsed.port) : (parsed.protocol === "https:" ? 443 : 18000);
     } catch (_) {
       // URL 格式不合法，保留佔位符
     }
@@ -735,10 +741,14 @@ export function PlaygroundTab() {
   const [projectId, setProjectId] = useState(savedState.projectId);
   const [modelName, setModelName] = useState(savedState.modelName);
   const [apiKey, setApiKey] = useState(savedState.apiKey);
-  /** 後端轉發 Triton 時使用的 HTTP 基底（例如 http://192.168.1.10:8000）；空則用伺服器環境變數。 */
-  const [tritonServerUrl, setTritonServerUrl] = useState(savedState.tritonServerUrl ?? "");
-  /** 供儀錶板共用之 Prometheus metrics 完整 URL；空則由儀錶板依基底推導。 */
-  const [tritonMetricsUrl, setTritonMetricsUrl] = useState(savedState.tritonMetricsUrl ?? "");
+  /** Triton 伺服器主機 IP（如 `192.168.1.10`）；port 18000 固定。空值表示使用伺服器 TRITON_SERVER_URL。 */
+  const [tritonServerHost, setTritonServerHost] = useState(
+    () => extractHostFromUrl(savedState.tritonServerUrl),
+  );
+  /** 後端轉發 Triton 時使用的完整 HTTP URL（固定埠 18000）；由 tritonServerHost 自動組成。 */
+  const tritonServerUrl = useMemo(() => buildTritonBaseUrl(tritonServerHost), [tritonServerHost]);
+  /** Prometheus Metrics 完整 URL（固定埠 8002）；由 tritonServerHost 自動組成。 */
+  const tritonMetricsUrl = useMemo(() => buildTritonMetricsUrl(tritonServerHost), [tritonServerHost]);
   /** Triton 連線驗證結果（按「驗證連線」後更新）。 */
   const [tritonVerifyLoading, setTritonVerifyLoading] = useState(false);
   const [tritonVerifyResult, setTritonVerifyResult] = useState(null);
@@ -1276,37 +1286,28 @@ export function PlaygroundTab() {
 
         <div className={rootClass.elem("form-row").toClassName()} style={{ display: "flex", gap: "16px", marginBottom: "16px", flexWrap: "wrap" }}>
           <div className={rootClass.elem("field").toClassName()} style={{ flex: "1 1 280px" }}>
-            <label className="text-label-small text-neutral-content mb-tightest block" htmlFor="playground-triton-server-url">
-              Triton 服務位址（選填）
+            <label className="text-label-small text-neutral-content mb-tightest block" htmlFor="playground-triton-server-host">
+              Triton 伺服器 IP（選填）
             </label>
             <input
-              id="playground-triton-server-url"
-              type="url"
+              id="playground-triton-server-host"
+              type="text"
               className={rootClass.elem("input").toClassName()}
-              value={tritonServerUrl}
-              onChange={(e) => setTritonServerUrl(e.target.value)}
-              placeholder="http://主機:8000（空則使用伺服器 TRITON_SERVER_URL）"
+              value={tritonServerHost}
+              onChange={(e) => setTritonServerHost(e.target.value.trim())}
+              placeholder="192.168.1.10"
               autoComplete="off"
               style={{ width: "100%", padding: "8px", borderRadius: "4px", border: "1px solid #ccc", minHeight: "36px" }}
             />
             <Typography variant="body" size="small" className="text-neutral-content-subtle mt-tightest block">
-              模型列表與推論會經由後端轉發至此 Triton；須從 Label Studio 主機可連線。
+              {tritonServerHost.trim() ? (
+                <>
+                  HTTP：<code>{tritonServerUrl}</code>　Metrics：<code>{tritonMetricsUrl}</code>
+                </>
+              ) : (
+                "空值表示由伺服器 TRITON_SERVER_URL 決定。模型列表與推論經後端轉發，須從 Label Studio 主機可連線。"
+              )}
             </Typography>
-          </div>
-          <div className={rootClass.elem("field").toClassName()} style={{ flex: "1 1 280px" }}>
-            <label className="text-label-small text-neutral-content mb-tightest block" htmlFor="playground-triton-metrics-url">
-              Metrics URL（選填，儀錶板用）
-            </label>
-            <input
-              id="playground-triton-metrics-url"
-              type="url"
-              className={rootClass.elem("input").toClassName()}
-              value={tritonMetricsUrl}
-              onChange={(e) => setTritonMetricsUrl(e.target.value)}
-              placeholder="http://主機:8002/metrics（空則儀錶板依上欄推導）"
-              autoComplete="off"
-              style={{ width: "100%", padding: "8px", borderRadius: "4px", border: "1px solid #ccc", minHeight: "36px" }}
-            />
           </div>
         </div>
 

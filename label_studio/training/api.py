@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 import json
@@ -9,6 +10,8 @@ import re
 import time
 from typing import Any, Dict, List
 import requests
+
+logger = logging.getLogger(__name__)
 
 import django_rq
 from core.permissions import ViewClassPermission, all_permissions
@@ -30,6 +33,8 @@ from .triton_export import (
     get_triton_server_url,
     list_triton_model_deployments,
     sanitize_triton_model_name,
+    _is_remote_triton,
+    derive_upload_server_url,
 )
 
 
@@ -903,6 +908,17 @@ class ProjectTrainingRunDeployToTritonAPI(APIView):
         raw_repo = (payload.get("triton_model_repository") or "").strip()
         triton_repo_override = raw_repo if raw_repo else None
 
+        # 若目標 Triton 為遠端主機，自動推導 Upload Server URL（同主機、port 8003）
+        # 遠端時由 Upload Server 透過共享 volume 寫入模型倉庫，本機時直接寫磁碟
+        upload_server_url: str | None = None
+        if public_triton_base and _is_remote_triton(public_triton_base):
+            upload_server_url = derive_upload_server_url(public_triton_base)
+            logger.info(
+                "Remote Triton detected (%s); will upload via Upload Server: %s",
+                public_triton_base,
+                upload_server_url,
+            )
+
         # Determine model type from run_meta.json
         run_meta = {}
         try:
@@ -926,6 +942,7 @@ class ProjectTrainingRunDeployToTritonAPI(APIView):
                 deployed_by_user_id=request.user.id,
                 deployed_by_username=request.user.username,
                 public_triton_base_url=public_triton_base,
+                upload_server_url=upload_server_url,
             )
         else:
             imgsz = int(payload.get("imgsz", 640))
@@ -939,6 +956,7 @@ class ProjectTrainingRunDeployToTritonAPI(APIView):
                 deployed_by_user_id=request.user.id,
                 deployed_by_username=request.user.username,
                 public_triton_base_url=public_triton_base,
+                upload_server_url=upload_server_url,
             )
 
         if result.get("error"):
@@ -1188,6 +1206,16 @@ class ProjectTrainingModelUploadAPI(APIView):
         raw_repo = (request.data.get("triton_model_repository") or "").strip()
         triton_repo_override = raw_repo if raw_repo else None
 
+        # 若目標 Triton 為遠端主機，自動推導 Upload Server URL
+        upload_server_url: str | None = None
+        if public_triton_base and _is_remote_triton(public_triton_base):
+            upload_server_url = derive_upload_server_url(public_triton_base)
+            logger.info(
+                "Remote Triton detected (%s); will upload via Upload Server: %s",
+                public_triton_base,
+                upload_server_url,
+            )
+
         # Save temporary
         temp_dir = _get_training_output_root() / f"project_{project.id}" / "uploads"
         temp_dir.mkdir(parents=True, exist_ok=True)
@@ -1197,10 +1225,7 @@ class ProjectTrainingModelUploadAPI(APIView):
             for chunk in uploaded_file.chunks():
                 destination.write(chunk)
                 
-        # Deploy
-        # We try to detect if it's YOLO or generic TorchScript
-        # For safety/simplicity, if it has 'yolo' in name, we might use yolo exporter, 
-        # but generic TorchScript exporter is safer for uploaded .pt
+        # Deploy（generic TorchScript exporter 對手動上傳的 .pt 最安全）
         result = export_torchscript_pt_to_triton(
             best_pt_path=str(temp_path),
             model_name=model_name,
@@ -1211,6 +1236,7 @@ class ProjectTrainingModelUploadAPI(APIView):
             deployed_by_user_id=request.user.id,
             deployed_by_username=request.user.username,
             public_triton_base_url=public_triton_base,
+            upload_server_url=upload_server_url,
         )
         
         # Clean up temp file
