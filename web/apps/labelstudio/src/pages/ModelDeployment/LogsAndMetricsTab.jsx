@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { Typography, Button, buttonVariant, Spinner } from "@humansignal/ui";
-import { IconExternal, IconTerminal, IconCode, IconInfoOutline, IconAnalytics } from "@humansignal/icons";
+import { IconExternal, IconTerminal, IconCode, IconInfoOutline, IconAnalytics, IconTrash, IconChevronRight } from "@humansignal/icons";
 import { ToggleItems } from "../../components";
 import { Select } from "../../components/Form";
 import { cn } from "../../utils/bem";
@@ -201,6 +201,12 @@ export function LogsAndMetricsTab() {
   const api = useAPI();
   const project = useProject()?.project;
   const [projectId, setProjectId] = useState(() => String(project?.id ?? readSavedProjectId() ?? ""));
+  /**
+   * 所有可選專案清單，用於下拉篩選。
+   * @type {[Array<{id: number, title: string}>, Function]}
+   */
+  const [projects, setProjects] = useState([]);
+  const [projectsLoading, setProjectsLoading] = useState(false);
   /** Triton 伺服器主機 IP（如 `192.168.1.10`）；port 18000/8002 固定。空值表示使用伺服器 TRITON_SERVER_URL。 */
   const [tritonServerHost, setTritonServerHost] = useState(
     () => extractHostFromUrl(readTritonUrlState().tritonServerUrl),
@@ -217,6 +223,23 @@ export function LogsAndMetricsTab() {
   const [historyData, setHistoryData] = useState(null);
   const [scope, setScope] = useState("mine");
   const [selectedUserId, setSelectedUserId] = useState(ALL_DEPLOYERS);
+  /** @type {[Set<string>, Function]} 目前展開的模型名稱集合 */
+  const [expandedModels, setExpandedModels] = useState(new Set());
+  /** @type {[string | null, Function]} 正在刪除中的模型名稱 */
+  const [deletingModel, setDeletingModel] = useState(null);
+
+  /** 元件掛載時拉取所有專案，供名稱下拉篩選使用。 */
+  useEffect(() => {
+    setProjectsLoading(true);
+    api.callApi("projects").then((res) => {
+      const list = Array.isArray(res) ? res : (res?.results ?? []);
+      setProjects(list);
+    }).catch(() => {
+      setProjects([]);
+    }).finally(() => {
+      setProjectsLoading(false);
+    });
+  }, [api]);
 
   useEffect(() => {
     if (project?.id) {
@@ -237,11 +260,30 @@ export function LogsAndMetricsTab() {
   }, [tritonServerUrl]);
 
   /**
+   * 由 projectId 查找對應的專案名稱。
+   * @type {string}
+   */
+  const selectedProjectTitle = useMemo(() => {
+    if (!projectId) return "";
+    const found = projects.find((p) => String(p.id) === String(projectId));
+    return found?.title ?? projectId;
+  }, [projectId, projects]);
+
+  /**
+   * 供下拉選單使用的專案選項。
+   * @type {{ label: string, value: string }[]}
+   */
+  const projectOptions = useMemo(() => [
+    { label: "— 選擇專案 —", value: "" },
+    ...projects.map((p) => ({ label: p.title || `Project ${p.id}`, value: String(p.id) })),
+  ], [projects]);
+
+  /**
    * 驗證目前 Triton 基底是否可由後端連線（與載入監控資料相同之權限）。
    */
   const handleVerifyTriton = useCallback(async () => {
     if (!projectId.trim()) {
-      setTritonVerifyResult({ level: "error", text: "請先填寫專案 ID。" });
+      setTritonVerifyResult({ level: "error", text: "請先選擇專案。" });
       return;
     }
     setTritonVerifyResult(null);
@@ -300,6 +342,46 @@ export function LogsAndMetricsTab() {
     }
   }, [api, projectId, scope, selectedUserId, tritonServerUrl, tritonMetricsUrl]);
 
+  /**
+   * 切換單一模型列的展開狀態。
+   * @param {string} modelName
+   */
+  const toggleExpand = useCallback((modelName) => {
+    setExpandedModels((prev) => {
+      const next = new Set(prev);
+      if (next.has(modelName)) {
+        next.delete(modelName);
+      } else {
+        next.add(modelName);
+      }
+      return next;
+    });
+  }, []);
+
+  /**
+   * 呼叫後端刪除指定 Triton 部署模型，並重新整理資料。
+   * @param {string} modelName - 要刪除的 Triton 模型名稱
+   */
+  const handleDeleteModel = useCallback(async (modelName) => {
+    if (!window.confirm(`確定要移除部署模型「${modelName}」嗎？\n此操作不可復原。`)) return;
+    setDeletingModel(modelName);
+    try {
+      await api.callApi("trainingTritonModelDelete", {
+        params: { pk: projectId, model_name: modelName },
+      });
+      await fetchMetrics();
+      setExpandedModels((prev) => {
+        const next = new Set(prev);
+        next.delete(modelName);
+        return next;
+      });
+    } catch (err) {
+      window.alert(`刪除失敗：${err?.message ?? err}`);
+    } finally {
+      setDeletingModel(null);
+    }
+  }, [api, projectId, fetchMetrics]);
+
   useEffect(() => {
     if (scope === "mine" && selectedUserId !== ALL_DEPLOYERS) {
       setSelectedUserId(ALL_DEPLOYERS);
@@ -332,21 +414,25 @@ export function LogsAndMetricsTab() {
             需要先指定專案
           </Typography>
           <Typography variant="body" size="small" className="text-neutral-content-subtle mb-wide">
-            這個頁面是全域頁面，若目前不在專案內，請先輸入要查詢的專案 ID。
+            這個頁面是全域頁面，若目前不在專案內，請先從下拉選單選擇要查詢的專案。
           </Typography>
           <div className={rootClass.elem("project-form").toClassName()}>
             <div className={rootClass.elem("field").toClassName()}>
               <label className={rootClass.elem("field-label").toClassName()}>
-                專案 ID
+                專案
               </label>
-              <input
+              <select
                 className={rootClass.elem("text-input").toClassName()}
                 value={projectId}
-                onChange={(event) => setProjectId(event.target.value.replace(/[^\d]/g, ""))}
-                placeholder="例如 1"
-              />
+                onChange={(event) => setProjectId(event.target.value)}
+                disabled={projectsLoading}
+              >
+                {projectOptions.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
             </div>
-            <Button variant="primary" onClick={fetchMetrics} disabled={!projectId}>
+            <Button variant="primary" onClick={fetchMetrics} disabled={!projectId || projectsLoading}>
               載入監控資料
             </Button>
           </div>
@@ -365,20 +451,30 @@ export function LogsAndMetricsTab() {
   const events = historyData?.events ?? [];
   const serviceBadge = getHealthBadge(health.status);
 
+  /** Triton Prometheus 有無回傳 CPU 指標（nv_cpu_utilization）。 */
+  const tritonHasCpuMetrics = hardware.metrics_available && hardware.cpu > 0;
   const hardwareStats = [
     { label: "GPU 使用率", value: formatValue(hardware.gpu), unit: "%", icon: IconAnalytics, color: "#10b981" },
     {
       label: "VRAM 佔用",
       value: formatValue(hardware.vram_used_gb),
-      unit: `GB / ${formatValue(hardware.vram_total_gb)}`,
+      unit: hardware.vram_total_gb > 0
+        ? `GB / ${formatValue(hardware.vram_total_gb)} GB`
+        : "GB",
       icon: IconTerminal,
       color: "#6366f1",
     },
-    { label: "CPU 使用率", value: formatValue(hardware.cpu), unit: "%", icon: IconCode, color: "#f59e0b" },
+    {
+      label: "CPU 使用率",
+      value: tritonHasCpuMetrics ? formatValue(hardware.cpu) : "—",
+      unit: tritonHasCpuMetrics ? "%" : "",
+      icon: IconCode,
+      color: "#f59e0b",
+    },
     {
       label: "系統記憶體",
-      value: formatValue(hardware.ram),
-      unit: `% (${formatValue(hardware.ram_used_gb)}GB)`,
+      value: tritonHasCpuMetrics ? formatValue(hardware.ram) : "—",
+      unit: tritonHasCpuMetrics ? `% (${formatValue(hardware.ram_used_gb)} GB)` : "",
       icon: IconInfoOutline,
       color: "#3b82f6",
     },
@@ -409,7 +505,7 @@ export function LogsAndMetricsTab() {
           </Typography>
           <div className={rootClass.elem("hero-meta").toClassName()}>
             <span className={rootClass.elem("meta-chip").toClassName()}>
-              專案名稱: {projectId}
+              {selectedProjectTitle || projectId}
             </span>
             <span className={rootClass.elem("meta-chip").toClassName()}>
               檢視範圍: {VIEW_MODES[scope]}{data?.viewer?.username ? ` (${data.viewer.username})` : ""}
@@ -436,14 +532,18 @@ export function LogsAndMetricsTab() {
         <div className={rootClass.elem("toolbar").toClassName()}>
           <div className={rootClass.elem("field").mod({ project: true }).toClassName()}>
             <label className={rootClass.elem("field-label").toClassName()}>
-              專案 ID
+              專案
             </label>
-            <input
+            <select
               className={rootClass.elem("text-input").toClassName()}
               value={projectId}
-              onChange={(event) => setProjectId(event.target.value.replace(/[^\d]/g, ""))}
-              placeholder="例如 1"
-            />
+              onChange={(event) => setProjectId(event.target.value)}
+              disabled={projectsLoading}
+            >
+              {projectOptions.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
           </div>
           <div className={rootClass.elem("field").mod({ project: true }).toClassName()}>
             <label className={rootClass.elem("field-label").toClassName()}>
@@ -503,7 +603,14 @@ export function LogsAndMetricsTab() {
       </div>
 
       <div className={rootClass.elem("overview").toClassName()}>
-        <SectionBlock title="硬體資源監控" description="即時顯示目前 Triton 服務所在主機的資源使用情況。">
+        <SectionBlock
+          title="Triton 伺服器硬體監控"
+          description={
+            health.metrics_available
+              ? "即時顯示目標 Triton 伺服器的 GPU、VRAM、CPU 與記憶體使用量（資料來源：Triton Prometheus Metrics）。"
+              : "Triton Metrics 尚未連線，硬體數據暫不可用。請確認 Triton 伺服器 IP 與 Metrics 埠（8002）是否正確。"
+          }
+        >
           <div className={rootClass.elem("stats-grid").toClassName()}>
             {hardwareStats.map((s) => <StatCard key={s.label} {...s} />)}
           </div>
@@ -516,11 +623,12 @@ export function LogsAndMetricsTab() {
         </SectionBlock>
       </div>
 
-      <SectionBlock title="個別模型使用情況" description="以模型為單位查看部署者、請求數量與目前狀態。">
+      <SectionBlock title="部署模型" description="以模型為單位查看部署者、請求數量與目前狀態；點擊列可展開詳細資訊。">
         <div className={rootClass.elem("table-wrap").toClassName()}>
           <table className={rootClass.elem("table").mod({ compact: true }).toClassName()}>
             <thead>
               <tr>
+                <th style={{ width: 24 }} />
                 <th>模型名稱</th>
                 <th>部署者</th>
                 <th>請求總數</th>
@@ -528,14 +636,33 @@ export function LogsAndMetricsTab() {
                 <th>平均延遲</th>
                 <th>成功 / 失敗</th>
                 <th>狀態</th>
+                <th>操作</th>
               </tr>
             </thead>
             <tbody>
               {modelUsage.length > 0 ? modelUsage.map((m) => {
                 const badge = getHealthBadge(m.status);
+                const isExpanded = expandedModels.has(m.name);
+                const isDeleting = deletingModel === m.name;
 
-                return (
-                  <tr key={m.name}>
+                return [
+                  /* ── 主列 ── */
+                  <tr
+                    key={m.name}
+                    className={rootClass.elem("model-row").mod({ expanded: isExpanded }).toClassName()}
+                    style={{ cursor: "pointer" }}
+                    onClick={() => toggleExpand(m.name)}
+                  >
+                    <td style={{ paddingRight: 0 }}>
+                      <IconChevronRight
+                        size={14}
+                        style={{
+                          transition: "transform 0.2s",
+                          transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
+                          color: "var(--color-neutral-content-subtle)",
+                        }}
+                      />
+                    </td>
                     <td className={rootClass.elem("table-primary").toClassName()}>
                       <div className={rootClass.elem("model-name").toClassName()}>{m.name}</div>
                       <small className={rootClass.elem("model-meta").toClassName()}>
@@ -552,19 +679,68 @@ export function LogsAndMetricsTab() {
                     <td>
                       <span
                         className={rootClass.elem("status-badge").toClassName()}
-                        style={{
-                          background: badge.background,
-                          color: badge.color,
-                        }}
+                        style={{ background: badge.background, color: badge.color }}
                       >
                         {badge.label}
                       </span>
                     </td>
-                  </tr>
-                );
+                    <td onClick={(e) => e.stopPropagation()}>
+                      <Button
+                        size="small"
+                        look="outlined"
+                        variant="negative"
+                        icon={<IconTrash size={14} />}
+                        waiting={isDeleting}
+                        disabled={isDeleting}
+                        onClick={() => handleDeleteModel(m.name)}
+                        title={`移除部署模型 ${m.name}`}
+                      >
+                        移除
+                      </Button>
+                    </td>
+                  </tr>,
+
+                  /* ── 展開詳情列 ── */
+                  isExpanded ? (
+                    <tr key={`${m.name}--detail`} className={rootClass.elem("model-detail-row").toClassName()}>
+                      <td />
+                      <td colSpan={8}>
+                        <div className={rootClass.elem("model-detail").toClassName()}>
+                          <div className={rootClass.elem("model-detail-grid").toClassName()}>
+                            <span className={rootClass.elem("detail-label").toClassName()}>部署時間</span>
+                            <span>{formatDateTime(m.deployed_at)}</span>
+
+                            <span className={rootClass.elem("detail-label").toClassName()}>Run ID</span>
+                            <span className={rootClass.elem("detail-mono").toClassName()}>
+                              {m.run_id ?? "—"}
+                            </span>
+
+                            <span className={rootClass.elem("detail-label").toClassName()}>輸入尺寸</span>
+                            <span>{m.imgsz ? `${m.imgsz} × ${m.imgsz}` : "—"}</span>
+
+                            <span className={rootClass.elem("detail-label").toClassName()}>Triton URL</span>
+                            <span className={rootClass.elem("detail-mono").toClassName()}>
+                              {m.triton_public_base_url ?? m.infer_url ?? "—"}
+                            </span>
+
+                            <span className={rootClass.elem("detail-label").toClassName()}>推論端點</span>
+                            <span className={rootClass.elem("detail-mono").toClassName()}>
+                              {m.infer_url ?? "—"}
+                            </span>
+
+                            <span className={rootClass.elem("detail-label").toClassName()}>模型目錄</span>
+                            <span className={rootClass.elem("detail-mono").toClassName()}>
+                              {m.model_dir ?? "—"}
+                            </span>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  ) : null,
+                ];
               }) : (
                 <tr>
-                  <td colSpan={7} className={rootClass.elem("empty-cell").toClassName()}>
+                  <td colSpan={9} className={rootClass.elem("empty-cell").toClassName()}>
                     目前沒有符合此檢視條件的部署模型。
                   </td>
                 </tr>

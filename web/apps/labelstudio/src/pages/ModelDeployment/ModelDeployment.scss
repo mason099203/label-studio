@@ -888,6 +888,53 @@
     text-align: center;
   }
 
+  /* 模型列：可點擊展開 */
+  &__model-row {
+    user-select: none;
+
+    &:hover td {
+      background: rgba(99, 102, 241, 0.04);
+    }
+
+    &--expanded td {
+      background: rgba(99, 102, 241, 0.06);
+    }
+  }
+
+  /* 展開詳情列 */
+  &__model-detail-row td {
+    background: rgba(248, 250, 252, 0.9) !important;
+    border-bottom: 2px solid rgba(99, 102, 241, 0.12) !important;
+    padding: 0 !important;
+  }
+
+  &__model-detail {
+    padding: 14px 20px 18px;
+    animation: fadeIn 0.18s ease-out;
+  }
+
+  &__model-detail-grid {
+    display: grid;
+    grid-template-columns: 140px 1fr;
+    gap: 8px 16px;
+    align-items: start;
+  }
+
+  &__detail-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #64748b;
+    padding-top: 2px;
+  }
+
+  &__detail-mono {
+    font-family: "Fira Code", "Roboto Mono", monospace;
+    font-size: 12px;
+    color: #0f172a;
+    word-break: break-all;
+    user-select: all;
+  }
+
   &__grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));

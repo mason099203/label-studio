@@ -68,13 +68,6 @@ export const ProjectModelsPage = () => {
     if (u === "http://localhost:18000" || u === "http://127.0.0.1:18000") return "local18000";
     return "custom";
   });
-  /**
-   * Triton 模型儲存庫路徑（覆寫伺服器 TRITON_MODEL_REPOSITORY 環境變數）。
-   * 空字串表示由伺服器環境變數決定。此值不寫入 .env，而是於每次部署時隨請求傳送。
-   */
-  const [deployTritonModelRepo, setDeployTritonModelRepo] = useState(
-    () => readTritonUrlState().tritonModelRepository,
-  );
   const [tritonVerifyLoading, setTritonVerifyLoading] = useState(false);
   const [tritonVerifyResult, setTritonVerifyResult] = useState(null);
 
@@ -119,15 +112,6 @@ export const ProjectModelsPage = () => {
     setDeployTritonServerUrl(normalized);
     setTritonPreset(presetFromUrl(normalized));
     persistTritonUrlFields({ tritonServerUrl: normalized });
-  };
-
-  /**
-   * 變更模型儲存庫路徑並寫入 localStorage（不寫入 .env）。
-   * @param {string} nextPath
-   */
-  const commitDeployTritonModelRepo = (nextPath) => {
-    setDeployTritonModelRepo(nextPath);
-    persistTritonUrlFields({ tritonModelRepository: nextPath });
   };
 
   useEffect(() => {
@@ -178,8 +162,6 @@ export const ProjectModelsPage = () => {
     setDeployingRunId(runId);
     const body = {};
     if (tu) body.triton_url = tu;
-    const repoPath = (deployTritonModelRepo || "").trim();
-    if (repoPath) body.triton_model_repository = repoPath;
     api
       .callApi("trainingRunDeployToTriton", {
         params: { pk: params.id, run_id: runId },
@@ -335,25 +317,6 @@ export const ProjectModelsPage = () => {
           <div className={cn("project-models-page").elem("triton-deploy-hint").toClassName()}>
             選擇預設或手動輸入；部署時會將此前綴寫入模型後設，並供模型測試／儀錶板轉發使用。指定 URL 時會先經後端連線檢查再部署。空值表示由伺服器{' '}
             <code>TRITON_SERVER_URL</code> 決定。
-          </div>
-          <div className={cn("project-models-page").elem("triton-deploy-label").toClassName()} style={{ marginTop: 12 }}>
-            模型儲存庫路徑（<code>TRITON_MODEL_REPOSITORY</code>）
-          </div>
-          <div className={cn("project-models-page").elem("triton-deploy-row").toClassName()}>
-            <input
-              type="text"
-              className={cn("project-models-page").elem("triton-deploy-input").mod({ wide: true }).toClassName()}
-              value={deployTritonModelRepo}
-              onChange={(e) => setDeployTritonModelRepo(e.target.value)}
-              onBlur={() => commitDeployTritonModelRepo(deployTritonModelRepo)}
-              placeholder="例如：D:\triton-server\data\triton_models（空則由伺服器 TRITON_MODEL_REPOSITORY 決定）"
-              aria-label="Triton 模型儲存庫路徑"
-            />
-          </div>
-          <div className={cn("project-models-page").elem("triton-deploy-hint").toClassName()}>
-            指定 Triton 伺服器上模型存放的根目錄路徑。此設定不寫入 <code>.env</code>，
-            而是在每次部署時隨請求傳送至後端；空值表示由伺服器{' '}
-            <code>TRITON_MODEL_REPOSITORY</code> 環境變數決定。
           </div>
         </div>
         <div className={cn("project-models-page").elem("run-list").toClassName()}>
