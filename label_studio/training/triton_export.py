@@ -263,12 +263,19 @@ def export_torchscript_pt_to_triton(
     gpu_ids: Optional[list[int]] = None,
     instance_count: int = 1,
     always_in_memory: bool = True,
+    export_device: Optional[str] = None,
 ) -> dict:
     """
     Export a general TorchScript model (.pt) into Triton's libtorch layout.
 
     若 ``upload_server_url`` 不為空，匯出的 model.pt 與 config.pbtxt 會透過
     Upload Server HTTP API 推送到遠端 Triton 模型倉庫；否則直接複製到本機磁碟。
+
+    **GPU 部署流程**：
+    當 ``instance_kind == "GPU"`` 或 ``export_device == "cuda"`` 且本機 CUDA 可用時，
+    本函式會先以 ``torch.jit.load(..., map_location="cuda")`` 將 TorchScript 載入 GPU，
+    再以 ``torch.jit.save`` 重新儲存為 GPU-on-disk 版本，確保 Triton libtorch backend
+    以 ``KIND_GPU`` 載入時使用 CUDA operator path，而非 fallback 至 CPU 再搬移。
 
     @param {str | Path} best_pt_path        - 訓練產出的 .pt 檔案路徑
     @param {str} model_name                 - Triton 模型名稱
@@ -284,112 +291,200 @@ def export_torchscript_pt_to_triton(
     @param {Optional[list[int]]} gpu_ids   - GPU 裝置 ID（instance_kind=="GPU" 時有效）
     @param {int} instance_count            - 推論實例數（預設 1）
     @param {bool} always_in_memory         - True：加入 model_warmup，常駐記憶體；False：即時載入
+    @param {Optional[str]} export_device   - TorchScript 儲存裝置："cuda" | "cpu" | None；
+                                             None 時若 instance_kind=="GPU" 且 CUDA 可用則自動選 "cuda"
     @returns {dict} 部署結果；包含 ``error`` 鍵時表示失敗
     """
+    import torch as _torch
+
     best_pt_path = Path(best_pt_path)
     if not best_pt_path.exists():
         return {"error": f"TorchScript file not found: {best_pt_path}"}
+
+    # ── GPU 可用性檢查：KIND_GPU 但本機無 CUDA → 自動降級為 KIND_AUTO ──────
+    # Triton 以 KIND_GPU 啟動時會掃描本機 GPU；若容器沒有 GPU 直通
+    # （例如 docker run 未加 --gpus all），Triton 會報
+    # "specifies invalid or unsupported gpu id 0"。
+    # 此處提前偵測並降級，避免部署後模型無法載入。
+    _effective_instance_kind: str = instance_kind.upper()
+    _gpu_warning: Optional[str] = None
+
+    if _effective_instance_kind == "GPU" and not _torch.cuda.is_available():
+        _effective_instance_kind = "AUTO"
+        _gpu_warning = (
+            "instance_kind=GPU 已請求，但本機（Django/Export 主機）未偵測到 CUDA GPU。"
+            " Triton 部署設定已自動降級為 KIND_AUTO，以避免 Triton 啟動時回報"
+            " 'invalid or unsupported gpu id' 錯誤。"
+            " 若 Triton 容器確實擁有 GPU，請確認 Docker 以 --gpus all 啟動，"
+            " 並在部署頁面重新選擇 KIND_GPU。"
+        )
+        logger.warning(
+            "GPU deployment requested but no CUDA available on export host; "
+            "downgrading Triton instance_kind from GPU → AUTO. "
+            "To use GPU: start Triton container with --gpus all."
+        )
+
+    # ── 決定 TorchScript 儲存裝置 ────────────────────────────────────────────
+    # 優先順序：明確指定 export_device > instance_kind 推導 > 保持原樣
+    if export_device:
+        _export_device: Optional[str] = export_device.lower()
+    elif _effective_instance_kind == "GPU" and _torch.cuda.is_available():
+        _export_device = "cuda"
+    else:
+        _export_device = None  # 不重新儲存，直接使用原始 .pt
+
+    # ── 若需要特定裝置，載入 TorchScript 並以目標裝置重新儲存 ──────────────
+    # 此步驟確保 Triton 載入 KIND_GPU 時拿到的是 GPU-on-disk 版本，
+    # CUDA operator path 已被記錄在 TorchScript 圖中。
+    _tmp_pt_path: Optional[Path] = None
+    if _export_device in ("cuda", "cpu"):
+        if _export_device == "cuda" and not _torch.cuda.is_available():
+            logger.warning(
+                "export_device='cuda' requested but CUDA is not available; "
+                "using original .pt (CPU-traced) for Triton deployment."
+            )
+        else:
+            try:
+                logger.info(
+                    "Re-saving TorchScript on device=%s for Triton KIND_%s deployment → %s",
+                    _export_device, _effective_instance_kind, best_pt_path,
+                )
+                _jit_model = _torch.jit.load(
+                    str(best_pt_path), map_location=_export_device
+                )
+                _jit_model = _jit_model.to(_export_device)
+                # 暫存到同目錄，避免跨磁碟 rename 問題
+                _tmp_pt_path = best_pt_path.parent / f"_export_{_export_device}_tmp.pt"
+                _torch.jit.save(_jit_model, str(_tmp_pt_path))
+                best_pt_path = _tmp_pt_path
+                logger.info("TorchScript re-saved on %s → %s", _export_device, best_pt_path)
+            except Exception as _exc:
+                logger.warning(
+                    "Failed to re-save TorchScript on %s: %s; "
+                    "falling back to original .pt",
+                    _export_device, _exc,
+                )
 
     model_name = sanitize_triton_model_name(model_name)
     config_content = _build_triton_pbtxt(
         model_name=model_name,
         imgsz=imgsz,
-        instance_kind=instance_kind,
-        gpu_ids=gpu_ids,
+        instance_kind=_effective_instance_kind,
+        gpu_ids=gpu_ids if _effective_instance_kind == "GPU" else None,
         instance_count=instance_count,
         always_in_memory=always_in_memory,
     )
     infer_base = (public_triton_base_url or get_triton_server_url()).rstrip("/")
 
-    if upload_server_url:
-        # ── 遠端模式：透過 Upload Server HTTP API 上傳 ──────────────────────
-        upload_result = upload_model_to_remote_server(
-            upload_base_url=upload_server_url,
-            model_name=model_name,
-            model_pt_path=best_pt_path,
-            config_content=config_content,
-        )
-        if upload_result.get("error"):
-            return upload_result
+    try:
+        if upload_server_url:
+            # ── 遠端模式：透過 Upload Server HTTP API 上傳 ──────────────────────
+            upload_result = upload_model_to_remote_server(
+                upload_base_url=upload_server_url,
+                model_name=model_name,
+                model_pt_path=best_pt_path,
+                config_content=config_content,
+            )
+            if upload_result.get("error"):
+                return upload_result
 
-        # 後設資料仍寫到本機模型倉庫（供 list_triton_model_deployments 查詢）
+            # 後設資料仍寫到本機模型倉庫（供 list_triton_model_deployments 查詢）
+            repo_root = Path(triton_repo_root) if triton_repo_root else get_triton_model_repository_root()
+            repo_root.mkdir(parents=True, exist_ok=True)
+            model_dir = repo_root / model_name
+            model_dir.mkdir(parents=True, exist_ok=True)
+            metadata_path = model_dir / "deployment_meta.json"
+            metadata = {
+                "model_name": model_name,
+                "project_id": project_id,
+                "run_id": run_id,
+                "imgsz": imgsz,
+                "deployed_at": datetime.now(timezone.utc).isoformat(),
+                "model_type": "torchscript_cnn",
+                "export_device": _export_device or "original",
+                "deployed_by_user_id": deployed_by_user_id,
+                "deployed_by_username": deployed_by_username,
+                "upload_server_url": upload_server_url,
+                "triton_public_base_url": (public_triton_base_url or "").rstrip("/") or None,
+                # 實際寫入 config.pbtxt 的裝置（可能與使用者請求不同）
+                "instance_kind": _effective_instance_kind,
+                "instance_kind_requested": instance_kind,
+                "gpu_ids": gpu_ids if _effective_instance_kind == "GPU" else [],
+                "instance_count": instance_count,
+                "always_in_memory": always_in_memory,
+            }
+            metadata_path.write_text(json.dumps(metadata, ensure_ascii=True, indent=2), encoding="utf-8")
+
+            resp = {
+                "model_name": model_name,
+                "repo_path": str(repo_root),
+                "model_dir": str(model_dir),
+                "metadata_path": str(metadata_path),
+                "infer_url": f"{infer_base}/v2/models/{model_name}/infer",
+                **upload_result,
+            }
+            if _gpu_warning:
+                resp["warning"] = _gpu_warning
+            return resp
+
+        # ── 本機模式：直接複製到磁碟 ─────────────────────────────────────────────
         repo_root = Path(triton_repo_root) if triton_repo_root else get_triton_model_repository_root()
         repo_root.mkdir(parents=True, exist_ok=True)
+
         model_dir = repo_root / model_name
-        model_dir.mkdir(parents=True, exist_ok=True)
+        version_dir = model_dir / "1"
+        version_dir.mkdir(parents=True, exist_ok=True)
+
+        model_pt_path = version_dir / "model.pt"
+        config_path = model_dir / "config.pbtxt"
         metadata_path = model_dir / "deployment_meta.json"
+
+        try:
+            shutil.copy2(best_pt_path, model_pt_path)
+        except Exception as exc:
+            return {"error": f"Failed to copy model: {exc}"}
+
+        config_path.write_text(config_content, encoding="utf-8")
+
         metadata = {
             "model_name": model_name,
             "project_id": project_id,
             "run_id": run_id,
             "imgsz": imgsz,
+            "model_pt_path": str(model_pt_path.resolve()),
             "deployed_at": datetime.now(timezone.utc).isoformat(),
             "model_type": "torchscript_cnn",
+            "export_device": _export_device or "original",
             "deployed_by_user_id": deployed_by_user_id,
             "deployed_by_username": deployed_by_username,
-            "upload_server_url": upload_server_url,
-            "triton_public_base_url": (public_triton_base_url or "").rstrip("/") or None,
-            "instance_kind": instance_kind,
-            "gpu_ids": gpu_ids or [],
+            # 實際寫入 config.pbtxt 的裝置（可能與使用者請求不同）
+            "instance_kind": _effective_instance_kind,
+            "instance_kind_requested": instance_kind,
+            "gpu_ids": gpu_ids if _effective_instance_kind == "GPU" else [],
             "instance_count": instance_count,
             "always_in_memory": always_in_memory,
         }
+        if public_triton_base_url:
+            metadata["triton_public_base_url"] = public_triton_base_url.rstrip("/")
         metadata_path.write_text(json.dumps(metadata, ensure_ascii=True, indent=2), encoding="utf-8")
 
-        return {
+        resp = {
             "model_name": model_name,
             "repo_path": str(repo_root),
             "model_dir": str(model_dir),
             "metadata_path": str(metadata_path),
             "infer_url": f"{infer_base}/v2/models/{model_name}/infer",
-            **upload_result,
         }
-
-    # ── 本機模式：直接複製到磁碟 ─────────────────────────────────────────────
-    repo_root = Path(triton_repo_root) if triton_repo_root else get_triton_model_repository_root()
-    repo_root.mkdir(parents=True, exist_ok=True)
-
-    model_dir = repo_root / model_name
-    version_dir = model_dir / "1"
-    version_dir.mkdir(parents=True, exist_ok=True)
-
-    model_pt_path = version_dir / "model.pt"
-    config_path = model_dir / "config.pbtxt"
-    metadata_path = model_dir / "deployment_meta.json"
-
-    try:
-        shutil.copy2(best_pt_path, model_pt_path)
-    except Exception as exc:
-        return {"error": f"Failed to copy model: {exc}"}
-
-    config_path.write_text(config_content, encoding="utf-8")
-
-    metadata = {
-        "model_name": model_name,
-        "project_id": project_id,
-        "run_id": run_id,
-        "imgsz": imgsz,
-        "model_pt_path": str(model_pt_path.resolve()),
-        "deployed_at": datetime.now(timezone.utc).isoformat(),
-        "model_type": "torchscript_cnn",
-        "deployed_by_user_id": deployed_by_user_id,
-        "deployed_by_username": deployed_by_username,
-        "instance_kind": instance_kind,
-        "gpu_ids": gpu_ids or [],
-        "instance_count": instance_count,
-        "always_in_memory": always_in_memory,
-    }
-    if public_triton_base_url:
-        metadata["triton_public_base_url"] = public_triton_base_url.rstrip("/")
-    metadata_path.write_text(json.dumps(metadata, ensure_ascii=True, indent=2), encoding="utf-8")
-
-    return {
-        "model_name": model_name,
-        "repo_path": str(repo_root),
-        "model_dir": str(model_dir),
-        "metadata_path": str(metadata_path),
-        "infer_url": f"{infer_base}/v2/models/{model_name}/infer",
-    }
+        if _gpu_warning:
+            resp["warning"] = _gpu_warning
+        return resp
+    finally:
+        # 清除 GPU re-save 產生的暫存 .pt，避免佔用磁碟空間
+        if _tmp_pt_path and _tmp_pt_path.exists():
+            try:
+                _tmp_pt_path.unlink()
+            except Exception:
+                pass
 
 
 def export_yolo_pt_to_triton(

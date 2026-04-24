@@ -977,6 +977,7 @@ class ProjectTrainingRunDeployToTritonAPI(APIView):
                 gpu_ids=gpu_ids,
                 instance_count=instance_count,
                 always_in_memory=always_in_memory,
+                export_device=export_device,
             )
         else:
             imgsz = int(payload.get("imgsz", 640))
@@ -1004,15 +1005,17 @@ class ProjectTrainingRunDeployToTritonAPI(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        return Response(
-            {
-                "message": "Model copied to Triton repository.",
-                "triton_repo_root": str(get_triton_model_repository_root()),
-                "triton_server_url": (public_triton_base or get_triton_server_url()).rstrip("/"),
-                **result,
-            },
-            status=status.HTTP_200_OK,
-        )
+        resp_body: dict = {
+            "message": "Model copied to Triton repository.",
+            "triton_repo_root": str(get_triton_model_repository_root()),
+            "triton_server_url": (public_triton_base or get_triton_server_url()).rstrip("/"),
+            **result,
+        }
+        # 若 GPU 不可用而自動降級為 AUTO，警告訊息傳給前端顯示
+        if result.get("warning"):
+            resp_body["warning"] = result["warning"]
+
+        return Response(resp_body, status=status.HTTP_200_OK)
 
 
 class ProjectTrainingTritonModelsAPI(APIView):

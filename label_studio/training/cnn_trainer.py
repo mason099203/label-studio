@@ -187,6 +187,93 @@ class CNNTrainer:
                 correct += (predicted == labels).sum().item()
         return running_loss / len(loader), 100 * correct / total
 
+    @staticmethod
+    def load_torchscript(
+        pt_path: Path,
+        device: Optional[str] = None,
+    ) -> torch.jit.ScriptModule:
+        """
+        以指定裝置載入 TorchScript 模型（``best.pt``）。
+
+        ``torch.jit.load`` 若不指定 ``map_location``，在部分 PyTorch 版本中
+        會回退至 CPU，即使原本在 GPU 上儲存。本方法統一處理 ``map_location``，
+        確保載入後 ``next(model.parameters()).device`` 反映正確裝置。
+
+        @example
+        ```python
+        model = CNNTrainer.load_torchscript(Path("best.pt"), device="cuda")
+        print(next(model.parameters()).device)  # cuda:0
+        ```
+
+        @param {Path} pt_path          - TorchScript .pt 檔案路徑
+        @param {Optional[str]} device  - 目標裝置："cuda" | "cpu" | None（None 時自動偵測 CUDA）
+        @returns {torch.jit.ScriptModule} 位於目標裝置、已設為 eval 模式的 TorchScript 模型
+        """
+        if device:
+            target_device = torch.device(device)
+        elif torch.cuda.is_available():
+            target_device = torch.device("cuda")
+        else:
+            target_device = torch.device("cpu")
+
+        # map_location 確保 GPU-saved .pt 在 CPU-only 環境也能載入，
+        # 反之亦然：CPU-saved .pt 可透過此參數搬移到 GPU。
+        model = torch.jit.load(str(pt_path), map_location=target_device)
+        model = model.to(target_device)
+        model.eval()
+
+        # 驗證實際裝置（僅在有 parameter/buffer 時有效）
+        try:
+            actual = str(next(model.parameters()).device)
+        except StopIteration:
+            actual = str(target_device)
+
+        logger.info(
+            "Loaded TorchScript from %s → device=%s (actual=%s)",
+            pt_path, target_device, actual,
+        )
+        return model
+
+    @staticmethod
+    def load_checkpoint(
+        weights_path: Path,
+        num_classes: int,
+        device: Optional[str] = None,
+    ) -> "CNNClassifier":
+        """
+        從 ``best.pth`` checkpoint 還原 CNN 模型並搬移至目標裝置。
+
+        使用 ``map_location`` 確保在無 GPU 的環境也能正常載入（GPU checkpoint → CPU）。
+
+        @param {Path} weights_path  - checkpoint 路徑（``best.pth``）
+        @param {int} num_classes    - 分類數量（須與訓練時一致）
+        @param {Optional[str]} device - 目標裝置："cuda" | "cpu" | None（None 時自動偵測 CUDA）
+        @returns {CNNClassifier} 已還原權重且位於目標裝置的模型
+        """
+        if device:
+            target_device = torch.device(device)
+        elif torch.cuda.is_available():
+            target_device = torch.device("cuda")
+        else:
+            target_device = torch.device("cpu")
+
+        # map_location 確保 GPU checkpoint 在 CPU-only 環境也能載入
+        ckpt = torch.load(weights_path, map_location=target_device)
+        state_dict = ckpt["model_state_dict"] if isinstance(ckpt, dict) else ckpt
+
+        model = CNNClassifier(num_classes=num_classes, pretrained=False)
+        model.load_state_dict(state_dict)
+        model.to(target_device)
+        model.eval()
+
+        logger.info(
+            "Loaded checkpoint from %s → device=%s (val_acc=%.2f%%)",
+            weights_path,
+            target_device,
+            ckpt.get("val_acc", float("nan")) if isinstance(ckpt, dict) else float("nan"),
+        )
+        return model
+
     def run(self, train_items: List[Dict], val_items: List[Dict]):
         """
         執行完整訓練流程（資料載入 → 訓練 → 驗證 → 匯出最佳模型）。
@@ -195,7 +282,10 @@ class CNNTrainer:
         - ``pin_memory=True``：讓 DataLoader 在 page-locked 記憶體分配資料，加速 CPU→GPU 傳輸。
         - ``non_blocking=True``：讓資料傳輸與 GPU 運算可非同步進行。
         - AMP（混合精度）：訓練時以 FP16 計算降低 GPU 記憶體用量並提升吞吐量。
-        - TorchScript 匯出時先搬回 CPU，確保 Triton 可以 CPU/GPU 兩種 instance_group 皆使用。
+        - 儲存 ``best.pth`` 時明確呼叫 ``model.to(self.device)``，確保 GPU tensor 被持久化；
+          載入時請使用 ``load_checkpoint()`` 並指定 ``map_location`` 以確保跨裝置相容性。
+        - TorchScript 於訓練裝置（CUDA / CPU）上 trace，確保 GPU operator path 被正確記錄，
+          供 Triton libtorch backend 使用；Triton 端的 instance_group 由 config.pbtxt 決定。
 
         @param {List[Dict]} train_items - 訓練集樣本清單
         @param {List[Dict]} val_items   - 驗證集樣本清單
@@ -251,19 +341,60 @@ class CNNTrainer:
             
             if v_acc > best_acc:
                 best_acc = v_acc
+
+                # ── 確保模型位於訓練裝置（CUDA / CPU）後再持久化 ──────────────
+                # 明確呼叫 model.to(self.device) 保證 state_dict 中的 tensor
+                # 與訓練裝置一致（GPU 時為 CUDA tensor），以利 Triton GPU inference。
+                # 載入時請透過 load_checkpoint() 的 map_location 處理跨裝置相容。
+                model.to(self.device)
                 weights_path = self.run_dir / "best.pth"
-                torch.save(model.state_dict(), weights_path)
-                
-                # TorchScript export：在訓練裝置（CUDA / CPU）上 trace，
-                # 以確保 GPU operator path 被正確記錄進 TorchScript。
-                # Triton 載入後的 instance_group 由 config.pbtxt 決定，
-                # libtorch backend 會自行搬移 tensor 至對應裝置。
+                torch.save(
+                    {
+                        "model_state_dict": model.state_dict(),
+                        "device": str(self.device),
+                        "class_names": self.class_names,
+                        "class_to_idx": self.class_to_idx,
+                        "num_classes": len(self.class_names),
+                        "val_acc": v_acc,
+                        "epoch": epoch + 1,
+                    },
+                    weights_path,
+                )
+                logger.info(
+                    "Saved best checkpoint (device=%s, val_acc=%.2f%%) → %s",
+                    self.device, v_acc, weights_path,
+                )
+
+                # ── TorchScript export ────────────────────────────────────────
+                # best.pt     ：在訓練裝置（CUDA / CPU）上 trace，
+                #               GPU trace 確保 CUDA operator path 被記錄；
+                #               Triton libtorch backend 依 config.pbtxt instance_group
+                #               自行搬移 tensor。
+                # best_cpu.pt ：強制搬至 CPU 後再 trace，確保 torch.jit.load 後
+                #               next(model.parameters()).device == cpu，
+                #               供無 GPU 環境或純 Python inference 使用。
                 try:
                     model.eval()
                     model.to(self.device)
-                    example = torch.randn(1, 3, 224, 224).to(self.device)
-                    traced = torch.jit.trace(model, example)
+                    example_dev = torch.randn(1, 3, 224, 224).to(self.device)
+                    traced = torch.jit.trace(model, example_dev)
                     traced.save(self.run_dir / "best.pt")
+                    logger.info(
+                        "Exported TorchScript (device=%s) → %s",
+                        self.device, self.run_dir / "best.pt",
+                    )
+
+                    # CPU 版：確保 torch.jit.load("best_cpu.pt") 直接在 CPU 上
+                    if self.use_cuda:
+                        model_cpu = model.to("cpu")
+                        example_cpu = example_dev.to("cpu")
+                        traced_cpu = torch.jit.trace(model_cpu, example_cpu)
+                        traced_cpu.save(self.run_dir / "best_cpu.pt")
+                        model.to(self.device)  # 還原回 GPU 繼續訓練
+                        logger.info(
+                            "Exported TorchScript (device=cpu) → %s",
+                            self.run_dir / "best_cpu.pt",
+                        )
                 except Exception as e:
                     logger.warning("Failed to export TorchScript: %s", e)
 
