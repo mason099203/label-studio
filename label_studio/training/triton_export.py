@@ -164,10 +164,66 @@ def sanitize_triton_model_name(raw_name: str, fallback: str = "triton_model") ->
     return sanitized or fallback
 
 
-def _build_triton_pbtxt(model_name: str, imgsz: int) -> str:
+def _build_triton_pbtxt(
+    model_name: str,
+    imgsz: int,
+    instance_kind: str = "AUTO",
+    gpu_ids: Optional[list[int]] = None,
+    instance_count: int = 1,
+    always_in_memory: bool = True,
+) -> str:
     """
-    Build the Triton config content used by the current YOLO deployment flow.
+    Build the Triton config.pbtxt content for a model deployment.
+
+    @param {str} model_name         - Triton 模型名稱
+    @param {int} imgsz              - 輸入圖片尺寸（正方形）
+    @param {str} instance_kind      - 推論裝置："GPU" | "CPU" | "AUTO"（預設 AUTO）
+    @param {Optional[list[int]]} gpu_ids - GPU 裝置 ID 清單，僅 instance_kind=="GPU" 時有效
+    @param {int} instance_count     - 要建立的推論實例數量（預設 1）
+    @param {bool} always_in_memory  - True：加入 model_warmup 預熱區塊，確保模型啟動時即載入並常駐記憶體；
+                                      False：不預熱，模型於首次推論請求時才完整初始化（即時載入）
+    @returns {str} 格式化後的 config.pbtxt 字串
     """
+    # ── instance_group（裝置 / 實例數量）──────────────────────────────────
+    _kind_map = {"GPU": "KIND_GPU", "CPU": "KIND_CPU", "AUTO": "KIND_AUTO"}
+    kind_str = _kind_map.get((instance_kind or "AUTO").upper(), "KIND_AUTO")
+
+    gpu_line = ""
+    if kind_str == "KIND_GPU" and gpu_ids:
+        gpu_list_str = ", ".join(str(g) for g in gpu_ids)
+        gpu_line = f"\n    gpus: [{gpu_list_str}]"
+
+    instance_group_block = f"""
+instance_group [
+  {{
+    kind: {kind_str}
+    count: {max(1, instance_count)}{gpu_line}
+  }}
+]"""
+
+    # ── model_warmup（常駐記憶體）────────────────────────────────────────
+    warmup_block = ""
+    if always_in_memory:
+        warmup_block = f"""
+model_warmup [
+  {{
+    name: "warmup"
+    batch_size: 1
+    inputs {{
+      key: "images"
+      value {{
+        dims: 3
+        dims: {imgsz}
+        dims: {imgsz}
+        data_type: TYPE_FP32
+        zero_data: true
+      }}
+    }}
+  }}
+]"""
+
+    output_dims = "[-1, -1]" if "yolo" in model_name.lower() else "[-1]"
+
     return f'''name: "{model_name}"
 platform: "pytorch_libtorch"
 max_batch_size: 1
@@ -184,9 +240,11 @@ output [
   {{
     name: "output0"
     data_type: TYPE_FP32
-    dims: {[-1, -1] if "yolo" in model_name.lower() else "[-1]"}
+    dims: {output_dims}
   }}
 ]
+{instance_group_block}
+{warmup_block}
 '''
 
 
@@ -201,6 +259,10 @@ def export_torchscript_pt_to_triton(
     deployed_by_username: Optional[str] = None,
     public_triton_base_url: Optional[str] = None,
     upload_server_url: Optional[str] = None,
+    instance_kind: str = "AUTO",
+    gpu_ids: Optional[list[int]] = None,
+    instance_count: int = 1,
+    always_in_memory: bool = True,
 ) -> dict:
     """
     Export a general TorchScript model (.pt) into Triton's libtorch layout.
@@ -218,6 +280,10 @@ def export_torchscript_pt_to_triton(
     @param {Optional[str]} deployed_by_username   - 部署者帳號
     @param {Optional[str]} public_triton_base_url - 外部 Triton URL（寫入後設資料）
     @param {Optional[str]} upload_server_url      - Upload Server 基底 URL；非空時走遠端上傳
+    @param {str} instance_kind              - 推論裝置："GPU" | "CPU" | "AUTO"（預設 AUTO）
+    @param {Optional[list[int]]} gpu_ids   - GPU 裝置 ID（instance_kind=="GPU" 時有效）
+    @param {int} instance_count            - 推論實例數（預設 1）
+    @param {bool} always_in_memory         - True：加入 model_warmup，常駐記憶體；False：即時載入
     @returns {dict} 部署結果；包含 ``error`` 鍵時表示失敗
     """
     best_pt_path = Path(best_pt_path)
@@ -225,7 +291,14 @@ def export_torchscript_pt_to_triton(
         return {"error": f"TorchScript file not found: {best_pt_path}"}
 
     model_name = sanitize_triton_model_name(model_name)
-    config_content = _build_triton_pbtxt(model_name=model_name, imgsz=imgsz)
+    config_content = _build_triton_pbtxt(
+        model_name=model_name,
+        imgsz=imgsz,
+        instance_kind=instance_kind,
+        gpu_ids=gpu_ids,
+        instance_count=instance_count,
+        always_in_memory=always_in_memory,
+    )
     infer_base = (public_triton_base_url or get_triton_server_url()).rstrip("/")
 
     if upload_server_url:
@@ -256,6 +329,10 @@ def export_torchscript_pt_to_triton(
             "deployed_by_username": deployed_by_username,
             "upload_server_url": upload_server_url,
             "triton_public_base_url": (public_triton_base_url or "").rstrip("/") or None,
+            "instance_kind": instance_kind,
+            "gpu_ids": gpu_ids or [],
+            "instance_count": instance_count,
+            "always_in_memory": always_in_memory,
         }
         metadata_path.write_text(json.dumps(metadata, ensure_ascii=True, indent=2), encoding="utf-8")
 
@@ -297,6 +374,10 @@ def export_torchscript_pt_to_triton(
         "model_type": "torchscript_cnn",
         "deployed_by_user_id": deployed_by_user_id,
         "deployed_by_username": deployed_by_username,
+        "instance_kind": instance_kind,
+        "gpu_ids": gpu_ids or [],
+        "instance_count": instance_count,
+        "always_in_memory": always_in_memory,
     }
     if public_triton_base_url:
         metadata["triton_public_base_url"] = public_triton_base_url.rstrip("/")
@@ -322,6 +403,11 @@ def export_yolo_pt_to_triton(
     deployed_by_username: Optional[str] = None,
     public_triton_base_url: Optional[str] = None,
     upload_server_url: Optional[str] = None,
+    instance_kind: str = "AUTO",
+    gpu_ids: Optional[list[int]] = None,
+    instance_count: int = 1,
+    always_in_memory: bool = True,
+    export_device: Optional[str] = None,
 ) -> dict:
     """
     Export a trained YOLO checkpoint into Triton's libtorch model layout.
@@ -339,8 +425,15 @@ def export_yolo_pt_to_triton(
     @param {Optional[str]} deployed_by_username   - 部署者帳號
     @param {Optional[str]} public_triton_base_url - 外部 Triton URL（寫入後設資料）
     @param {Optional[str]} upload_server_url      - Upload Server 基底 URL；非空時走遠端上傳
+    @param {str} instance_kind              - 推論裝置："GPU" | "CPU" | "AUTO"（預設 AUTO）
+    @param {Optional[list[int]]} gpu_ids   - GPU 裝置 ID（instance_kind=="GPU" 時有效）
+    @param {int} instance_count            - 推論實例數（預設 1）
+    @param {bool} always_in_memory         - True：加入 model_warmup，常駐記憶體；False：即時載入
+    @param {Optional[str]} export_device   - TorchScript 匯出裝置："cuda" | "cpu" | None（None 時自動偵測 CUDA）
     @returns {dict} 部署結果；包含 ``error`` 鍵時表示失敗
     """
+    import torch as _torch
+
     best_pt_path = Path(best_pt_path)
     if not best_pt_path.exists():
         return {"error": f"best.pt not found: {best_pt_path}"}
@@ -348,15 +441,26 @@ def export_yolo_pt_to_triton(
     model_name = sanitize_triton_model_name(model_name)
     infer_base = (public_triton_base_url or get_triton_server_url()).rstrip("/")
 
+    # 決定 TorchScript export 所用的裝置：優先 CUDA，可由呼叫端覆寫
+    if export_device:
+        _export_device = export_device
+    elif _torch.cuda.is_available():
+        _export_device = "cuda"
+    else:
+        _export_device = "cpu"
+    logger.info("YOLO TorchScript export device: %s", _export_device)
+
     try:
         from ultralytics import YOLO
     except ImportError as exc:
         return {"error": f"Ultralytics not installed: {exc}"}
 
     # ── YOLO → TorchScript 匯出（不論本機/遠端皆需此步驟）─────────────────
+    # device 參數控制 trace 時使用的運算裝置，確保 GPU operator path 被正確記錄
     try:
         model = YOLO(str(best_pt_path))
-        exported = model.export(format="torchscript", imgsz=imgsz)
+        model.to(_export_device)
+        exported = model.export(format="torchscript", imgsz=imgsz, device=_export_device)
         src_torchscript = (
             Path(exported).resolve()
             if exported
@@ -368,7 +472,14 @@ def export_yolo_pt_to_triton(
         logger.exception("Failed to export trained model to TorchScript for Triton")
         return {"error": str(exc)}
 
-    config_content = _build_triton_pbtxt(model_name=model_name, imgsz=imgsz)
+    config_content = _build_triton_pbtxt(
+        model_name=model_name,
+        imgsz=imgsz,
+        instance_kind=instance_kind,
+        gpu_ids=gpu_ids,
+        instance_count=instance_count,
+        always_in_memory=always_in_memory,
+    )
 
     if upload_server_url:
         # ── 遠端模式：透過 Upload Server HTTP API 上傳 ──────────────────────
@@ -399,6 +510,10 @@ def export_yolo_pt_to_triton(
             "deployed_by_username": deployed_by_username,
             "upload_server_url": upload_server_url,
             "triton_public_base_url": (public_triton_base_url or "").rstrip("/") or None,
+            "instance_kind": instance_kind,
+            "gpu_ids": gpu_ids or [],
+            "instance_count": instance_count,
+            "always_in_memory": always_in_memory,
         }
         metadata_path.write_text(json.dumps(metadata, ensure_ascii=True, indent=2), encoding="utf-8")
 
@@ -444,6 +559,10 @@ def export_yolo_pt_to_triton(
         "deployed_at": datetime.now(timezone.utc).isoformat(),
         "deployed_by_user_id": deployed_by_user_id,
         "deployed_by_username": deployed_by_username,
+        "instance_kind": instance_kind,
+        "gpu_ids": gpu_ids or [],
+        "instance_count": instance_count,
+        "always_in_memory": always_in_memory,
     }
     if public_triton_base_url:
         metadata["triton_public_base_url"] = public_triton_base_url.rstrip("/")

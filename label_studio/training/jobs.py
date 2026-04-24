@@ -661,9 +661,21 @@ def cnn_classification_train_job(
     imgsz: int = 224,
     batch: int = 32,
     output_root: str,
+    device: Optional[str] = None,
+    use_amp: bool = True,
 ) -> Dict[str, Any]:
     """
     Train a custom PyTorch CNN classification model.
+
+    @param {int} project_id      - Label Studio 專案 ID
+    @param {str} base_weights    - 基礎權重（目前保留，供未來 fine-tune 使用）
+    @param {str} dataset_config  - dataset_config JSON 路徑
+    @param {int} epochs          - 訓練回合數（預設 50）
+    @param {int} imgsz           - 圖片尺寸（CNN 固定為 224）
+    @param {int} batch           - 每批次樣本數（預設 32）
+    @param {str} output_root     - 輸出根目錄
+    @param {Optional[str]} device - 計算裝置："cuda" | "cpu" | None（None 時自動偵測）
+    @param {bool} use_amp        - 是否啟用 AMP 混合精度訓練（CUDA 裝置才有效，預設 True）
     """
     from .cnn_trainer import CNNTrainer
 
@@ -709,7 +721,9 @@ def cnn_classification_train_job(
         batch_size=batch,
         learning_rate=0.001,
         num_epochs=epochs,
-        job_reporter=_reporter
+        device=device,
+        use_amp=use_amp,
+        job_reporter=_reporter,
     )
 
     # Simple train/val split is usually handled in datasets.py for yolo_classify,

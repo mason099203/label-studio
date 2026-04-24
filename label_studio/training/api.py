@@ -591,6 +591,12 @@ class ProjectTrainingJobsAPI(APIView):
         imgsz = int(payload.get("imgsz", 640))
         batch = int(payload.get("batch", 16))
 
+        # 計算裝置設定：None 表示自動偵測（CUDA 優先），可明確指定 "cuda" 或 "cpu"
+        raw_device = (payload.get("device") or "").strip().lower()
+        train_device: str | None = raw_device if raw_device in ("cuda", "cpu") else None
+        # AMP 混合精度：僅在 CUDA 裝置有效，可由前端關閉
+        use_amp: bool = bool(payload.get("use_amp", True))
+
         if not base_weights:
             return Response({"detail": "base_weights is required"}, status=status.HTTP_400_BAD_REQUEST)
         if not dataset_config:
@@ -629,18 +635,24 @@ class ProjectTrainingJobsAPI(APIView):
             else:
                  return Response({"detail": f"Unknown model type: {training_model}"}, status=400)
 
+            job_kwargs: dict = {
+                "project_id": project.id,
+                "base_weights": base_weights,
+                "dataset_config": str(dataset_config),
+                "epochs": epochs,
+                "imgsz": imgsz,
+                "batch": batch,
+                "output_root": str(output_root),
+            }
+            # CNN 訓練額外支援 device / use_amp 參數
+            if training_model == "cnn_classify":
+                job_kwargs["device"] = train_device
+                job_kwargs["use_amp"] = use_amp
+
             job = queue.enqueue(
                 job_func,
-                kwargs={
-                    "project_id": project.id,
-                    "base_weights": base_weights,
-                    "dataset_config": str(dataset_config),
-                    "epochs": epochs,
-                    "imgsz": imgsz,
-                    "batch": batch,
-                    "output_root": str(output_root),
-                },
-                job_timeout=int(payload.get("job_timeout", 60 * 60 * 6)),  # default 6 hours
+                kwargs=job_kwargs,
+                job_timeout=int(payload.get("job_timeout", 60 * 60 * 6)),
             )
         except Exception as exc:
             return Response(
@@ -908,6 +920,24 @@ class ProjectTrainingRunDeployToTritonAPI(APIView):
         raw_repo = (payload.get("triton_model_repository") or "").strip()
         triton_repo_override = raw_repo if raw_repo else None
 
+        # GPU / 記憶體常駐相關參數
+        instance_kind: str = (payload.get("instance_kind") or "AUTO").strip().upper()
+        if instance_kind not in ("GPU", "CPU", "AUTO"):
+            instance_kind = "AUTO"
+        raw_gpu_ids = payload.get("gpu_ids", [0])
+        if isinstance(raw_gpu_ids, str):
+            gpu_ids = [int(g.strip()) for g in raw_gpu_ids.split(",") if g.strip().isdigit()]
+        else:
+            gpu_ids = [int(g) for g in raw_gpu_ids if str(g).strip().isdigit()]
+        if not gpu_ids:
+            gpu_ids = [0]
+        instance_count = max(1, int(payload.get("instance_count", 1)))
+        always_in_memory = bool(payload.get("always_in_memory", True))
+
+        # TorchScript export 裝置：None 時自動偵測（CUDA 優先），可明確指定 "cuda" / "cpu"
+        raw_export_device = (payload.get("export_device") or "").strip().lower()
+        export_device: str | None = raw_export_device if raw_export_device in ("cuda", "cpu") else None
+
         # 若目標 Triton 為遠端主機，自動推導 Upload Server URL（同主機、port 8003）
         # 遠端時由 Upload Server 透過共享 volume 寫入模型倉庫，本機時直接寫磁碟
         upload_server_url: str | None = None
@@ -943,6 +973,10 @@ class ProjectTrainingRunDeployToTritonAPI(APIView):
                 deployed_by_username=request.user.username,
                 public_triton_base_url=public_triton_base,
                 upload_server_url=upload_server_url,
+                instance_kind=instance_kind,
+                gpu_ids=gpu_ids,
+                instance_count=instance_count,
+                always_in_memory=always_in_memory,
             )
         else:
             imgsz = int(payload.get("imgsz", 640))
@@ -957,6 +991,11 @@ class ProjectTrainingRunDeployToTritonAPI(APIView):
                 deployed_by_username=request.user.username,
                 public_triton_base_url=public_triton_base,
                 upload_server_url=upload_server_url,
+                instance_kind=instance_kind,
+                gpu_ids=gpu_ids,
+                instance_count=instance_count,
+                always_in_memory=always_in_memory,
+                export_device=export_device,
             )
 
         if result.get("error"):

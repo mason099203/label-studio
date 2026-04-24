@@ -76,6 +76,29 @@
     }
   }
 
+  &__triton-deploy-label + &__triton-deploy-row,
+  &__triton-deploy-row + &__triton-deploy-label,
+  &__triton-deploy-hint + &__triton-deploy-label {
+    margin-top: 14px;
+  }
+
+  &__triton-deploy-inline-label {
+    font-size: 13px;
+    color: var(--color-neutral-content-subtle);
+    white-space: nowrap;
+  }
+
+  &__triton-deploy-count-input {
+    width: 64px;
+    padding: 8px 6px;
+    border-radius: 6px;
+    border: 1px solid var(--color-neutral-border-subtler);
+    font-size: 14px;
+    text-align: center;
+    background: var(--color-neutral-surface);
+    color: inherit;
+  }
+
   &__triton-deploy-actions {
     display: flex;
     flex-wrap: wrap;

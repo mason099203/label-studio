@@ -71,6 +71,19 @@ export const ProjectModelsPage = () => {
   const [tritonVerifyLoading, setTritonVerifyLoading] = useState(false);
   const [tritonVerifyResult, setTritonVerifyResult] = useState(null);
 
+  /** 推論裝置種類："GPU" | "CPU" | "AUTO" */
+  const [instanceKind, setInstanceKind] = useState("AUTO");
+  /** GPU 裝置 ID 字串，逗號分隔，例如 "0" 或 "0,1"。僅 instanceKind==="GPU" 時有效 */
+  const [gpuIds, setGpuIds] = useState("0");
+  /** 推論實例數量（Triton instance_group.count） */
+  const [instanceCount, setInstanceCount] = useState(1);
+  /**
+   * 記憶體模式：
+   * - true  → 常駐記憶體（config.pbtxt 加入 model_warmup，Triton 啟動時即預熱並保持載入）
+   * - false → 即時載入（無 model_warmup，模型於首次推論請求時才完整初始化）
+   */
+  const [alwaysInMemory, setAlwaysInMemory] = useState(true);
+
   useEffect(() => {
     if (!params?.id) return;
     api
@@ -162,6 +175,17 @@ export const ProjectModelsPage = () => {
     setDeployingRunId(runId);
     const body = {};
     if (tu) body.triton_url = tu;
+    body.instance_kind = instanceKind;
+    body.instance_count = instanceCount;
+    body.always_in_memory = alwaysInMemory;
+    if (instanceKind === "GPU") {
+      body.gpu_ids = gpuIds
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => /^\d+$/.test(s))
+        .map(Number);
+      if (body.gpu_ids.length === 0) body.gpu_ids = [0];
+    }
     api
       .callApi("trainingRunDeployToTriton", {
         params: { pk: params.id, run_id: runId },
@@ -317,6 +341,79 @@ export const ProjectModelsPage = () => {
           <div className={cn("project-models-page").elem("triton-deploy-hint").toClassName()}>
             選擇預設或手動輸入；部署時會將此前綴寫入模型後設，並供模型測試／儀錶板轉發使用。指定 URL 時會先經後端連線檢查再部署。空值表示由伺服器{' '}
             <code>TRITON_SERVER_URL</code> 決定。
+          </div>
+
+          {/* GPU / 推論裝置設定 */}
+          <div className={cn("project-models-page").elem("triton-deploy-label").toClassName()}>
+            推論裝置（instance_group）
+          </div>
+          <div className={cn("project-models-page").elem("triton-deploy-row").toClassName()}>
+            <select
+              className={cn("project-models-page").elem("triton-deploy-select").toClassName()}
+              aria-label="推論裝置種類"
+              value={instanceKind}
+              onChange={(e) => setInstanceKind(e.target.value)}
+            >
+              <option value="AUTO">自動（KIND_AUTO，Triton 決定）</option>
+              <option value="GPU">GPU（KIND_GPU）</option>
+              <option value="CPU">CPU（KIND_CPU）</option>
+            </select>
+            <label
+              className={cn("project-models-page").elem("triton-deploy-inline-label").toClassName()}
+              htmlFor="triton-instance-count"
+            >
+              實例數
+            </label>
+            <input
+              id="triton-instance-count"
+              type="number"
+              min={1}
+              max={16}
+              className={cn("project-models-page").elem("triton-deploy-count-input").toClassName()}
+              value={instanceCount}
+              onChange={(e) => setInstanceCount(Math.max(1, parseInt(e.target.value, 10) || 1))}
+              aria-label="推論實例數量"
+            />
+          </div>
+          {instanceKind === "GPU" && (
+            <div className={cn("project-models-page").elem("triton-deploy-row").toClassName()}>
+              <label
+                className={cn("project-models-page").elem("triton-deploy-inline-label").toClassName()}
+                htmlFor="triton-gpu-ids"
+              >
+                GPU ID（逗號分隔）
+              </label>
+              <input
+                id="triton-gpu-ids"
+                type="text"
+                className={cn("project-models-page").elem("triton-deploy-input").toClassName()}
+                value={gpuIds}
+                onChange={(e) => setGpuIds(e.target.value)}
+                placeholder="0 或 0,1"
+                aria-label="GPU 裝置 ID，逗號分隔"
+              />
+            </div>
+          )}
+
+          {/* 記憶體常駐模式 */}
+          <div className={cn("project-models-page").elem("triton-deploy-label").toClassName()}>
+            記憶體載入策略
+          </div>
+          <div className={cn("project-models-page").elem("triton-deploy-row").toClassName()}>
+            <select
+              className={cn("project-models-page").elem("triton-deploy-select").toClassName()}
+              aria-label="記憶體載入策略"
+              value={alwaysInMemory ? "persistent" : "lazy"}
+              onChange={(e) => setAlwaysInMemory(e.target.value === "persistent")}
+            >
+              <option value="persistent">常駐記憶體（啟動時預熱，低延遲）</option>
+              <option value="lazy">即時載入（首次推論時初始化，省記憶體）</option>
+            </select>
+          </div>
+          <div className={cn("project-models-page").elem("triton-deploy-hint").toClassName()}>
+            「常駐記憶體」會在 config.pbtxt 中加入{' '}
+            <code>model_warmup</code> 區塊，Triton 啟動後立即預熱模型並保持常駐；
+            「即時載入」則省略預熱，模型於首次推論請求時才完整初始化。
           </div>
         </div>
         <div className={cn("project-models-page").elem("run-list").toClassName()}>
