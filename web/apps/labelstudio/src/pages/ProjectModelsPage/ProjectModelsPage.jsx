@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { IconAnalytics, IconFileDownload, IconWarningCircleFilled } from "@humansignal/icons";
+import { IconAnalytics, IconFileDownload, IconWarningCircleFilled, IconPencil, IconCheck, IconClose } from "@humansignal/icons";
 import { Button } from "@humansignal/ui";
 import { Modal } from "../../components/Modal/Modal";
 import { useAPI } from "../../providers/ApiProvider";
@@ -71,6 +71,11 @@ export const ProjectModelsPage = () => {
   const [tritonVerifyLoading, setTritonVerifyLoading] = useState(false);
   const [tritonVerifyResult, setTritonVerifyResult] = useState(null);
 
+  /** 目前正在編輯名稱的 run_id（null 表示未進入編輯模式） */
+  const [editingRunId, setEditingRunId] = useState(null);
+  /** 編輯中的暫存名稱 */
+  const [editingName, setEditingName] = useState("");
+
   /** 推論裝置種類："GPU" | "CPU" | "AUTO" */
   const [instanceKind, setInstanceKind] = useState("AUTO");
   /** GPU 裝置 ID 字串，逗號分隔，例如 "0" 或 "0,1"。僅 instanceKind==="GPU" 時有效 */
@@ -97,6 +102,54 @@ export const ProjectModelsPage = () => {
 
   const runs = history?.runs ?? [];
   const datasets = history?.datasets ?? [];
+
+  /**
+   * 開始編輯指定 run 的名稱。
+   * @param {React.MouseEvent} e
+   * @param {{ run_id: string, name?: string }} run
+   */
+  function startEditRunName(e, run) {
+    e.stopPropagation();
+    setEditingRunId(run.run_id);
+    setEditingName(run.name || "");
+  }
+
+  /**
+   * 取消編輯，還原為原名稱。
+   * @param {React.MouseEvent} e
+   */
+  function cancelEditRunName(e) {
+    e.stopPropagation();
+    setEditingRunId(null);
+    setEditingName("");
+  }
+
+  /**
+   * 儲存 run 名稱：呼叫 PATCH API 寫入 run_meta.json，並樂觀更新本地 history state。
+   * @param {React.MouseEvent | React.KeyboardEvent} e
+   * @param {string} runId
+   */
+  async function saveRunName(e, runId) {
+    e.stopPropagation();
+    const trimmed = editingName.trim();
+    try {
+      await api.callApi("trainingRunRename", {
+        params: { pk: params.id, run_id: runId },
+        body: { name: trimmed },
+      });
+      setHistory((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          runs: prev.runs.map((r) => (r.run_id === runId ? { ...r, name: trimmed } : r)),
+        };
+      });
+    } catch {
+      /* 失敗時不更動 state，讓舊名稱保留 */
+    }
+    setEditingRunId(null);
+    setEditingName("");
+  }
 
   /**
    * 由網址推斷預設選項（供手動輸入後同步下拉）。
@@ -435,7 +488,7 @@ export const ProjectModelsPage = () => {
                 >
                   <div className={cn("project-models-page").elem("run-summary-main").toClassName()}>
                     <div className={cn("project-models-page").elem("run-summary-title").toClassName()}>
-                      {project?.title ?? `Project ${params.id}`}
+                      {run.name || run.run_id}
                     </div>
                     {/* <div className={cn("project-models-page").elem("run-summary-time").toClassName()}>{trainingTime}</div> */}
                   </div>
@@ -452,8 +505,59 @@ export const ProjectModelsPage = () => {
                 {isExpanded && (
                   <div className={cn("project-models-page").elem("run-content").toClassName()}>
                     <div className={cn("project-models-page").elem("run-top").toClassName()}>
-                      <div>
-                        <div className={cn("project-models-page").elem("run-id").toClassName()}>{run.run_id}</div>
+                      <div className={cn("project-models-page").elem("run-name-row").toClassName()}>
+                        {editingRunId === run.run_id ? (
+                          <div className={cn("project-models-page").elem("run-name-edit").toClassName()}>
+                            <input
+                              className={cn("project-models-page").elem("run-name-input").toClassName()}
+                              type="text"
+                              value={editingName}
+                              placeholder={run.run_id}
+                              autoFocus
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={(e) => setEditingName(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") saveRunName(e, run.run_id);
+                                if (e.key === "Escape") cancelEditRunName(e);
+                              }}
+                            />
+                            <button
+                              type="button"
+                              className={cn("project-models-page").elem("run-name-action").toClassName()}
+                              title="儲存名稱"
+                              onClick={(e) => saveRunName(e, run.run_id)}
+                            >
+                              <IconCheck />
+                            </button>
+                            <button
+                              type="button"
+                              className={cn("project-models-page").elem("run-name-action").toClassName()}
+                              title="取消"
+                              onClick={cancelEditRunName}
+                            >
+                              <IconClose />
+                            </button>
+                          </div>
+                        ) : (
+                          <div className={cn("project-models-page").elem("run-name-display").toClassName()}>
+                            <div className={cn("project-models-page").elem("run-id").toClassName()}>
+                              {run.name || run.run_id}
+                            </div>
+                            <button
+                              type="button"
+                              className={cn("project-models-page").elem("run-name-edit-btn").toClassName()}
+                              title="編輯名稱"
+                              onClick={(e) => startEditRunName(e, run)}
+                            >
+                              <IconPencil />
+                            </button>
+                          </div>
+                        )}
+                        {run.name && (
+                          <div className={cn("project-models-page").elem("run-uuid").toClassName()}>
+                            {run.run_id}
+                          </div>
+                        )}
                       </div>
                       <div className={cn("project-models-page").elem("run-actions").toClassName()}>
                         <a className="no-go" href={absoluteURL(run.best_download_url)} target="_blank" rel="noreferrer">

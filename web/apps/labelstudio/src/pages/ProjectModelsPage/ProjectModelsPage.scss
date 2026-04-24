@@ -372,5 +372,96 @@
     margin-bottom: 16px;
     color: var(--color-negative-content);
   }
+
+  /* ── 模型名稱可編輯區塊 ── */
+
+  &__run-name-row {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  &__run-name-display {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  &__run-name-edit-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px;
+    border: none;
+    background: transparent;
+    border-radius: 4px;
+    color: var(--color-neutral-content-subtle);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s;
+
+    .project-models-page__run-top:hover & {
+      opacity: 1;
+    }
+
+    &:hover {
+      color: var(--color-primary-content);
+      background: var(--color-primary-surface);
+    }
+
+    svg {
+      width: 14px;
+      height: 14px;
+    }
+  }
+
+  &__run-name-edit {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  &__run-name-input {
+    padding: 3px 8px;
+    border: 1px solid var(--color-primary-border);
+    border-radius: 6px;
+    font-size: 13px;
+    background: var(--color-neutral-surface);
+    color: var(--color-neutral-content);
+    outline: none;
+    width: 260px;
+
+    &:focus {
+      border-color: var(--color-primary-content);
+    }
+  }
+
+  &__run-name-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px;
+    border: none;
+    background: transparent;
+    border-radius: 4px;
+    cursor: pointer;
+    color: var(--color-neutral-content);
+
+    &:hover {
+      background: var(--color-neutral-surface-active);
+    }
+
+    svg {
+      width: 14px;
+      height: 14px;
+    }
+  }
+
+  &__run-uuid {
+    font-size: 11px;
+    color: var(--color-neutral-content-subtle);
+    font-family: monospace;
+    margin-top: 1px;
+  }
 }
 

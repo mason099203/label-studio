@@ -1374,8 +1374,9 @@ export function PlaygroundTab() {
             {!modelsLoading &&
               models.map((model) => (
                 <option key={model.model_name} value={model.model_name}>
-                  {model.model_name}
-                  {model.deployed_at ? `（部署於 ${new Date(model.deployed_at).toLocaleString()}）` : ""}
+                  {model.run_name ? model.run_name : model.model_name}
+                  {model.run_name ? `（${model.model_name}）` : ""}
+                  {model.deployed_at ? `　部署於 ${new Date(model.deployed_at).toLocaleString()}` : ""}
                 </option>
               ))}
           </select>
@@ -1405,7 +1406,9 @@ export function PlaygroundTab() {
           </Typography>
           {selectedDeployedModelMeta?.deployed_at ? (
             <Typography variant="body" size="small" className="text-neutral-content-subtle mt-tightest block">
-              此名稱對應已部署模型，部署時間：{new Date(selectedDeployedModelMeta.deployed_at).toLocaleString()}
+              {selectedDeployedModelMeta.run_name
+                ? `「${selectedDeployedModelMeta.run_name}」（${selectedDeployedModelMeta.model_name}），部署時間：${new Date(selectedDeployedModelMeta.deployed_at).toLocaleString()}`
+                : `此名稱對應已部署模型，部署時間：${new Date(selectedDeployedModelMeta.deployed_at).toLocaleString()}`}
             </Typography>
           ) : null}
           {!modelsLoading && projectId.trim() && models.length === 0 ? (

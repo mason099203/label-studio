@@ -815,6 +815,7 @@ class ProjectTrainingHistoryAPI(APIView):
                     {
                         "run_id": d.name,
                         "run_dir": str(d),
+                        "name": run_meta.get("name", ""),
                         "status": run_meta.get("status", "finished" if metrics else "unknown"),
                         "message": run_meta.get("message"),
                         "params": run_meta.get("params"),
@@ -887,6 +888,38 @@ class ProjectTrainingRunDownloadAPI(APIView):
             raise Http404
 
         return FileResponse(open(target, "rb"), as_attachment=True, filename=target.name)
+
+
+class ProjectTrainingRunRenameAPI(APIView):
+    """
+    更新指定訓練 run 的顯示名稱（寫入 run_meta.json 的 name 欄位）。
+    """
+
+    permission_required = ViewClassPermission(PATCH=all_permissions.projects_change)
+
+    def patch(self, request, pk: int, run_id: str, *args, **kwargs):
+        project = _get_project_for_user(request, pk)
+
+        name = (request.data or {}).get("name", "")
+        if not isinstance(name, str):
+            return Response({"detail": "name must be a string"}, status=status.HTTP_400_BAD_REQUEST)
+
+        run_dir = _get_training_output_root() / f"project_{project.id}" / run_id
+        if not run_dir.is_dir():
+            return Response({"detail": "Run not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        run_meta_path = run_dir / "run_meta.json"
+        run_meta: dict = {}
+        if run_meta_path.exists():
+            try:
+                run_meta = json.loads(run_meta_path.read_text(encoding="utf-8"))
+            except Exception:
+                run_meta = {}
+
+        run_meta["name"] = name.strip()
+        run_meta_path.write_text(json.dumps(run_meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        return Response({"run_id": run_id, "name": run_meta["name"]})
 
 
 class ProjectTrainingRunDeployToTritonAPI(APIView):
@@ -1049,6 +1082,20 @@ class ProjectTrainingTritonModelsAPI(APIView):
             mn = item.get("model_name")
             if mn:
                 item["infer_url"] = f"{triton_base}/v2/models/{mn}/infer"
+
+            # 嘗試從訓練 run_meta.json 讀取使用者自訂的顯示名稱
+            run_id = item.get("run_id")
+            item_project_id = item.get("project_id", project.id)
+            run_name = ""
+            if run_id:
+                run_meta_path = _get_training_output_root() / f"project_{item_project_id}" / run_id / "run_meta.json"
+                if run_meta_path.exists():
+                    try:
+                        run_meta_data = json.loads(run_meta_path.read_text(encoding="utf-8"))
+                        run_name = run_meta_data.get("name", "")
+                    except Exception:
+                        run_name = ""
+            item["run_name"] = run_name
 
         return Response(
             {

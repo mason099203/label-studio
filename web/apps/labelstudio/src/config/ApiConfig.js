@@ -85,6 +85,7 @@ export const API_CONFIG = {
     trainingJobDownload: "/projects/:pk/training/jobs/:job_id/download",
     trainingPrepareDataset: "POST:/projects/:pk/training/datasets/prepare/",
     trainingHistory: "/projects/:pk/training/history/",
+    trainingRunRename: "PATCH:/projects/:pk/training/runs/:run_id/rename/",
     trainingRunDeployToTriton: "POST:/projects/:pk/training/runs/:run_id/deploy-to-triton",
     trainingTritonModels: "/projects/:pk/training/triton/models/",
     trainingTritonModelDelete: "DELETE:/projects/:pk/training/triton/models/:model_name/",

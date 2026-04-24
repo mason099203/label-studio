@@ -82,6 +82,11 @@ _api_urlpatterns = [
         name='project-training-run-download',
     ),
     path(
+        '<int:pk>/training/runs/<str:run_id>/rename/',
+        training_api.ProjectTrainingRunRenameAPI.as_view(),
+        name='project-training-run-rename',
+    ),
+    path(
         '<int:pk>/training/runs/<str:run_id>/deploy-to-triton',
         training_api.ProjectTrainingRunDeployToTritonAPI.as_view(),
         name='project-training-run-deploy-to-triton',
