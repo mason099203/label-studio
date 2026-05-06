@@ -530,6 +530,8 @@ class ModelDeploymentListAPI(generics.ListCreateAPIView):
                     'id': d.id,
                     'api_key': d.api_key,
                     'is_enabled': d.is_enabled,
+                    'instance_group_count': d.instance_group_count,
+                    'model_version': d.model_version,
                     'created_at': d.created_at,
                     'updated_at': d.updated_at,
                 }
@@ -543,6 +545,20 @@ class ModelDeploymentListAPI(generics.ListCreateAPIView):
                 {'detail': 'ml_backend_id is required'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        # instance_group_count 範圍限制 1–10，預設為 1
+        instance_group_count = int(request.data.get('instance_group_count', 1))
+        if not (1 <= instance_group_count <= 10):
+            return Response(
+                {'detail': 'instance_group_count must be between 1 and 10'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        # model_version 為 Triton 版本子目錄編號，最小值 1
+        model_version = int(request.data.get('model_version', 1))
+        if model_version < 1:
+            return Response(
+                {'detail': 'model_version must be >= 1'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         ml_backend = generics.get_object_or_404(MLBackend, pk=ml_backend_id)
         self.check_object_permissions(request, ml_backend)
         if getattr(ml_backend, 'model_deployment', None):
@@ -550,7 +566,11 @@ class ModelDeploymentListAPI(generics.ListCreateAPIView):
                 {'detail': 'This ML backend is already deployed.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        deployment = ModelDeployment.objects.create(ml_backend=ml_backend)
+        deployment = ModelDeployment.objects.create(
+            ml_backend=ml_backend,
+            instance_group_count=instance_group_count,
+            model_version=model_version,
+        )
         serializer = ModelDeploymentSerializer(deployment)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
@@ -564,6 +584,9 @@ class ModelDeploymentDetailAPI(generics.RetrieveUpdateDestroyAPIView):
         DELETE=all_permissions.projects_change,
     )
 
+    # 調整這些欄位時會觸發自動版本遞增（不含 is_enabled 開關與 model_version 本身）
+    _VERSION_BUMP_FIELDS = {'instance_group_count'}
+
     def get_queryset(self):
         projects = Project.objects.for_user(self.request.user)
         return ModelDeployment.objects.filter(ml_backend__project__in=projects).select_related('ml_backend__project')
@@ -576,8 +599,29 @@ class ModelDeploymentDetailAPI(generics.RetrieveUpdateDestroyAPIView):
             import secrets
             serializer.instance.api_key = secrets.token_urlsafe(32)
             serializer.instance.save(update_fields=['api_key', 'updated_at'])
-        else:
-            serializer.save()
+            return
+
+        # 若請求未明確指定 model_version，且有設定欄位實際改變，自動遞增版本
+        explicit_version = 'model_version' in self.request.data
+        if not explicit_version:
+            instance = serializer.instance
+            config_changed = any(
+                field in self.request.data
+                and str(self.request.data[field]) != str(getattr(instance, field))
+                for field in self._VERSION_BUMP_FIELDS
+            )
+            if config_changed:
+                next_version = instance.model_version + 1
+                logger.info(
+                    'ModelDeployment %d: config changed, auto-bumping model_version %d -> %d',
+                    instance.pk,
+                    instance.model_version,
+                    next_version,
+                )
+                serializer.save(model_version=next_version)
+                return
+
+        serializer.save()
 
 
 class ModelDeploymentPredictByKeyAPI(APIView):

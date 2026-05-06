@@ -115,6 +115,110 @@
     margin-top: 4px;
   }
 
+  /* ---- instance_group count 步進器 ---- */
+  &__instance-stepper-wrap {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  &__instance-stepper {
+    display: inline-flex;
+    align-items: center;
+    gap: 0;
+    border: 1px solid rgba(99, 102, 241, 0.35);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  &__stepper-btn {
+    width: 30px;
+    height: 30px;
+    border: none;
+    background: rgba(99, 102, 241, 0.07);
+    color: #6366f1;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    transition: background 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+
+    &:hover:not(:disabled) {
+      background: rgba(99, 102, 241, 0.18);
+    }
+
+    &:disabled {
+      opacity: 0.35;
+      cursor: default;
+    }
+  }
+
+  &__stepper-value {
+    min-width: 32px;
+    text-align: center;
+    font-weight: 700;
+    font-size: 14px;
+    color: #1e293b;
+    background: #fff;
+    padding: 0 4px;
+    height: 30px;
+    line-height: 30px;
+    border-left: 1px solid rgba(99, 102, 241, 0.2);
+    border-right: 1px solid rgba(99, 102, 241, 0.2);
+  }
+  /* ---- end instance_group count 步進器 ---- */
+
+  /* ---- 已部署卡片：設定差異提示與版本顯示 ---- */
+  &__field--dirty {
+    border-color: rgba(249, 115, 22, 0.5);
+    background: rgba(255, 237, 213, 0.4);
+  }
+
+  &__diff-badge {
+    display: inline-block;
+    margin-left: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #c2410c;
+    background: rgba(249, 115, 22, 0.12);
+    border-radius: 4px;
+    padding: 0 5px;
+    vertical-align: middle;
+  }
+
+  &__version-display {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 2px;
+  }
+
+  &__version-badge {
+    display: inline-block;
+    font-size: 13px;
+    font-weight: 700;
+    color: #4f46e5;
+    background: rgba(99, 102, 241, 0.1);
+    border: 1px solid rgba(99, 102, 241, 0.25);
+    border-radius: 6px;
+    padding: 2px 10px;
+    letter-spacing: 0.3px;
+  }
+
+  &__version-arrow {
+    font-size: 12px;
+    color: #c2410c;
+    font-style: italic;
+
+    strong {
+      color: #9a3412;
+    }
+  }
+  /* ---- end 已部署卡片設定差異提示 ---- */
+
   &__actions {
     margin-top: 20px;
     padding-top: 16px;
@@ -965,6 +1069,83 @@
     grid-template-columns: 140px 1fr;
     gap: 8px 16px;
     align-items: start;
+  }
+
+  /* 版本管理區塊 */
+  &__version-manager {
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px solid rgba(99, 102, 241, 0.1);
+  }
+
+  &__version-manager-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #334155;
+    margin-bottom: 10px;
+  }
+
+  &__version-manager-hint {
+    font-size: 12px;
+    font-weight: 400;
+    color: #64748b;
+    margin-left: 6px;
+  }
+
+  &__version-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  &__version-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 10px;
+    background: rgba(241, 245, 249, 0.7);
+    border: 1px solid rgba(99, 102, 241, 0.1);
+    border-radius: 6px;
+  }
+
+  &__version-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 40px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: "Fira Code", "Roboto Mono", monospace;
+    background: #e2e8f0;
+    color: #475569;
+
+    &--latest {
+      background: rgba(99, 102, 241, 0.12);
+      color: #4f46e5;
+    }
+  }
+
+  &__version-latest-tag {
+    font-size: 10px;
+    font-weight: 500;
+    padding: 1px 4px;
+    background: rgba(99, 102, 241, 0.15);
+    border-radius: 3px;
+    color: #4f46e5;
+  }
+
+  &__version-infer-url {
+    flex: 1;
+    font-family: "Fira Code", "Roboto Mono", monospace;
+    font-size: 11px;
+    color: #475569;
+    word-break: break-all;
+    user-select: all;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   &__detail-label {

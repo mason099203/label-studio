@@ -369,6 +369,11 @@ export function LogsAndMetricsTab() {
   const [expandedModels, setExpandedModels] = useState(new Set());
   /** @type {[string | null, Function]} 正在刪除中的模型名稱 */
   const [deletingModel, setDeletingModel] = useState(null);
+  /**
+   * 正在刪除中的版本鍵，格式為 `${modelName}::${version}`。
+   * @type {[Set<string>, Function]}
+   */
+  const [deletingVersionKeys, setDeletingVersionKeys] = useState(new Set());
   /** 剛複製成功的列 rowKey，短暫顯示「已複製」反饋後自動清除。 */
   const [copiedKey, setCopiedKey] = useState(null);
 
@@ -642,6 +647,50 @@ export function LogsAndMetricsTab() {
       window.alert(`刪除失敗：${err?.message ?? err}`);
     } finally {
       setDeletingModel(null);
+    }
+  }, [api, projectId, fetchMetrics]);
+
+  /**
+   * 刪除指定模型的單一版本目錄。
+   * 刪除後重新整理指標資料；若模型所有版本都刪光則同時清除展開狀態。
+   *
+   * @param {string} modelName  - Triton 模型名稱
+   * @param {number} version    - 要刪除的版本號
+   * @param {string} rowKey     - 該模型列的唯一鍵（用於清除展開狀態）
+   */
+  const handleDeleteVersion = useCallback(async (modelName, version, rowKey) => {
+    if (!window.confirm(
+      `確定要刪除模型「${modelName}」的版本 ${version} 嗎？\n此操作不可復原，Triton 將無法再載入此版本。`
+    )) return;
+
+    const vKey = `${modelName}::${version}`;
+    setDeletingVersionKeys((prev) => new Set([...prev, vKey]));
+    try {
+      // 使用與 handleDeleteModelFromServer 相同的呼叫模式（不用 errorFilter，以 try/catch 捕捉錯誤）
+      const res = await api.callApi("trainingTritonVersionDelete", {
+        params: { pk: projectId, model_name: modelName, version },
+      });
+      if (res?.detail) {
+        window.alert(`刪除失敗：${res.detail}`);
+        return;
+      }
+      // 若整個模型都已移除，清除展開狀態
+      if (res?.model_removed) {
+        setExpandedModels((prev) => {
+          const next = new Set(prev);
+          next.delete(rowKey);
+          return next;
+        });
+      }
+      await fetchMetrics();
+    } catch (err) {
+      window.alert(`刪除版本失敗：${err?.message ?? err}`);
+    } finally {
+      setDeletingVersionKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(vKey);
+        return next;
+      });
     }
   }, [api, projectId, fetchMetrics]);
 
@@ -1061,6 +1110,51 @@ export function LogsAndMetricsTab() {
                             <span>{row.imgsz ? `${row.imgsz} × ${row.imgsz}` : "—"}</span>
 
                           </div>
+
+                          {/* ── 版本管理區塊 ── */}
+                          {Array.isArray(row.available_versions) && row.available_versions.length > 0 && (
+                            <div className={rootClass.elem("version-manager").toClassName()}>
+                              <div className={rootClass.elem("version-manager-title").toClassName()}>
+                                版本管理
+                                <span className={rootClass.elem("version-manager-hint").toClassName()}>
+                                  （共 {row.available_versions.length} 個版本，最新：v{row.latest_version}）
+                                </span>
+                              </div>
+                              <div className={rootClass.elem("version-list").toClassName()}>
+                                {row.available_versions.map((ver) => {
+                                  const vKey = `${row.name}::${ver}`;
+                                  const isLatest = ver === row.latest_version;
+                                  const isDeleting = deletingVersionKeys.has(vKey);
+                                  return (
+                                    <div key={ver} className={rootClass.elem("version-item").toClassName()}>
+                                      <span className={rootClass.elem("version-badge").mod({ latest: isLatest }).toClassName()}>
+                                        v{ver}
+                                        {isLatest && <span className={rootClass.elem("version-latest-tag").toClassName()}>最新</span>}
+                                      </span>
+                                      <span className={rootClass.elem("version-infer-url").toClassName()}>
+                                        {row._serverUrl
+                                          ? `${row._serverUrl}/v2/models/${row.name}/versions/${ver}/infer`
+                                          : `…/v2/models/${row.name}/versions/${ver}/infer`
+                                        }
+                                      </span>
+                                      <Button
+                                        size="small"
+                                        look="outlined"
+                                        variant="negative"
+                                        icon={<IconTrash size={12} />}
+                                        waiting={isDeleting}
+                                        disabled={isDeleting}
+                                        onClick={() => handleDeleteVersion(row.name, ver, row._rowKey)}
+                                        title={`刪除版本 ${ver}`}
+                                      >
+                                        刪除版本
+                                      </Button>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </td>
                     </tr>

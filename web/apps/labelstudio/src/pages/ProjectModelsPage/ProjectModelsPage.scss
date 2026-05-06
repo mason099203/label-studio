@@ -463,5 +463,105 @@
     font-family: monospace;
     margin-top: 1px;
   }
+
+  /* 自動遞增版本 */
+  &__triton-auto-version-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    color: var(--color-neutral-content);
+    user-select: none;
+  }
+
+  &__triton-auto-version-checkbox {
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+    accent-color: var(--color-primary-content);
+  }
+
+  &__triton-last-version-hint {
+    font-size: 12px;
+    color: var(--color-neutral-content-subtle);
+    margin-top: 4px;
+    padding: 4px 8px;
+    background: rgba(var(--color-primary-content-rgb, 0 89 200), 0.05);
+    border-left: 2px solid var(--color-primary-content);
+    border-radius: 0 4px 4px 0;
+
+    strong {
+      color: var(--color-primary-content);
+    }
+  }
+
+  /* 自訂 config.pbtxt 區塊 */
+  &__triton-deploy-pbtxt-toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+  }
+
+  &__triton-deploy-pbtxt-toggle {
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    color: var(--color-primary-content);
+    font-size: 13px;
+    font-weight: 500;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+
+  &__triton-deploy-pbtxt-reset {
+    background: none;
+    border: 1px solid var(--color-neutral-border);
+    border-radius: 4px;
+    padding: 2px 8px;
+    cursor: pointer;
+    color: var(--color-neutral-content-subtle);
+    font-size: 12px;
+
+    &:hover {
+      background: var(--color-neutral-surface-active);
+      color: var(--color-neutral-content);
+    }
+  }
+
+  &__triton-deploy-pbtxt-area-wrap {
+    margin-top: 8px;
+  }
+
+  &__triton-deploy-pbtxt-hint {
+    font-size: 12px;
+    color: var(--color-neutral-content-subtle);
+    margin: 0 0 6px;
+  }
+
+  &__triton-deploy-pbtxt-textarea {
+    width: 100%;
+    min-height: 320px;
+    padding: 10px 12px;
+    border: 1px solid var(--color-neutral-border);
+    border-radius: 6px;
+    background: var(--color-neutral-surface);
+    color: var(--color-neutral-content);
+    font-family: "Consolas", "Monaco", "Courier New", monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    resize: vertical;
+    outline: none;
+    box-sizing: border-box;
+
+    &:focus {
+      border-color: var(--color-primary-content);
+      box-shadow: 0 0 0 2px rgba(var(--color-primary-content-rgb, 0 89 200), 0.12);
+    }
+  }
 }
 

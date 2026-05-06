@@ -484,6 +484,9 @@ class ModelDeployment(models.Model):
     """
     使用者訓練好的模型部署：將 ML Backend 對外提供 API，需以對應的 API Key 呼叫。
     啟用後可透過 /api/deployments/predict/ 搭配 X-API-Key 使用。
+
+    instance_group_count 對應 Triton config.pbtxt 的 instance_group[].count，
+    控制每個 GPU 上並行運行的模型實例數量（1–10）。
     """
 
     ml_backend = models.OneToOneField(
@@ -502,6 +505,14 @@ class ModelDeployment(models.Model):
         _('is_enabled'),
         default=True,
         help_text='是否啟用此部署；停用後無法以 API Key 呼叫',
+    )
+    instance_group_count = models.PositiveSmallIntegerField(
+        default=1,
+        help_text='Triton instance_group count：每個 GPU 並行模型實例數量（1–10）',
+    )
+    model_version = models.PositiveSmallIntegerField(
+        default=1,
+        help_text='Triton 模型版本號，對應倉庫目錄下的版本子目錄（例如 1/ 2/ 3/），預設為 1',
     )
     created_at = models.DateTimeField(_('created at'), auto_now_add=True)
     updated_at = models.DateTimeField(_('updated at'), auto_now=True)

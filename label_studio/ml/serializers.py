@@ -129,6 +129,17 @@ class ModelDeploymentSerializer(serializers.ModelSerializer):
     project_title = serializers.CharField(source='ml_backend.project.title', read_only=True)
     ml_backend_title = serializers.CharField(source='ml_backend.title', read_only=True)
     ml_backend_state = serializers.CharField(source='ml_backend.state', read_only=True)
+    instance_group_count = serializers.IntegerField(
+        min_value=1,
+        max_value=10,
+        default=1,
+        help_text='Triton instance_group count（1–10），不需修改 pbtxt 即可調整 GPU 並行實例數',
+    )
+    model_version = serializers.IntegerField(
+        min_value=1,
+        default=1,
+        help_text='Triton 模型版本號，對應倉庫中的版本子目錄（1/ 2/ 3/...）',
+    )
 
     class Meta:
         model = ModelDeployment
@@ -140,6 +151,8 @@ class ModelDeploymentSerializer(serializers.ModelSerializer):
             'ml_backend_state',
             'api_key',
             'is_enabled',
+            'instance_group_count',
+            'model_version',
             'created_at',
             'updated_at',
         ]

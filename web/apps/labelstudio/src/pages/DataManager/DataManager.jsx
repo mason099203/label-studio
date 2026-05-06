@@ -22,7 +22,7 @@ const loadDependencies = () => [import("@humansignal/datamanager"), import("@hum
 
 const initializeDataManager = async (root, props, params) => {
   if (!window.LabelStudio) throw Error("Label Studio Frontend doesn't exist on the page");
-  if (!root && root.dataset.dmInitialized) return;
+  if (!root || root.dataset.dmInitialized) return;
 
   root.dataset.dmInitialized = true;
 
@@ -93,6 +93,9 @@ export const DataManagerPage = ({ ...props }) => {
         project,
         autoAnnotation: isDefined(interactiveBacked),
       })));
+
+    // initializeDataManager 在 root 為 null 或已初始化時回傳 undefined，需提早返回避免 .on() NPE
+    if (!dataManager) return;
 
     Object.assign(window, { dataManager });
 

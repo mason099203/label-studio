@@ -100,12 +100,13 @@ def upload_model_to_remote_server(
     model_pt_path: Path,
     config_content: str,
     timeout: float = 60.0,
+    version: int = 1,
 ) -> dict:
     """
     透過 Upload Server REST API 將模型檔案與設定檔上傳到遠端 Triton 模型倉庫。
 
     上傳路徑（對應 upload_server.py 端點）：
-    - ``POST {upload_base_url}/upload/model?model_name={model_name}&version=1``
+    - ``POST {upload_base_url}/upload/model?model_name={model_name}&version={version}``
     - ``POST {upload_base_url}/upload/config?model_name={model_name}``
 
     @param {str} upload_base_url - Upload Server 基底 URL，例如 ``http://10.214.57.20:8003``
@@ -113,6 +114,7 @@ def upload_model_to_remote_server(
     @param {Path} model_pt_path  - 本機已匯出的 model.pt 路徑
     @param {str} config_content  - config.pbtxt 文字內容
     @param {float} timeout       - HTTP 逾時秒數（預設 60）
+    @param {int} version         - Triton 版本號，對應倉庫中的版本子目錄（1/ 2/ ...），預設為 1
     @returns {dict} 上傳結果；包含 ``error`` 鍵時表示失敗
     """
     base = upload_base_url.rstrip("/")
@@ -122,7 +124,7 @@ def upload_model_to_remote_server(
         with model_pt_path.open("rb") as f:
             resp = requests.post(
                 f"{base}/upload/model",
-                params={"model_name": model_name, "version": 1},
+                params={"model_name": model_name, "version": version},
                 files={"file": (model_pt_path.name, f, "application/octet-stream")},
                 timeout=timeout,
             )
@@ -264,6 +266,8 @@ def export_torchscript_pt_to_triton(
     instance_count: int = 1,
     always_in_memory: bool = True,
     export_device: Optional[str] = None,
+    target_version: int = 1,
+    custom_pbtxt: Optional[str] = None,
 ) -> dict:
     """
     Export a general TorchScript model (.pt) into Triton's libtorch layout.
@@ -293,6 +297,9 @@ def export_torchscript_pt_to_triton(
     @param {bool} always_in_memory         - True：加入 model_warmup，常駐記憶體；False：即時載入
     @param {Optional[str]} export_device   - TorchScript 儲存裝置："cuda" | "cpu" | None；
                                              None 時若 instance_kind=="GPU" 且 CUDA 可用則自動選 "cuda"
+    @param {int} target_version            - 寫入 Triton 倉庫的版本號（對應版本子目錄 1/ 2/ ...），預設為 1
+    @param {Optional[str]} custom_pbtxt   - 自訂 config.pbtxt 內容；非 None 時直接使用，
+                                            跳過 _build_triton_pbtxt() 自動生成
     @returns {dict} 部署結果；包含 ``error`` 鍵時表示失敗
     """
     import torch as _torch
@@ -300,6 +307,8 @@ def export_torchscript_pt_to_triton(
     best_pt_path = Path(best_pt_path)
     if not best_pt_path.exists():
         return {"error": f"TorchScript file not found: {best_pt_path}"}
+
+    target_version = max(1, int(target_version))
 
     # ── GPU 可用性檢查：KIND_GPU 但本機無 CUDA → 自動降級為 KIND_AUTO ──────
     # Triton 以 KIND_GPU 啟動時會掃描本機 GPU；若容器沒有 GPU 直通
@@ -366,14 +375,19 @@ def export_torchscript_pt_to_triton(
                 )
 
     model_name = sanitize_triton_model_name(model_name)
-    config_content = _build_triton_pbtxt(
-        model_name=model_name,
-        imgsz=imgsz,
-        instance_kind=_effective_instance_kind,
-        gpu_ids=gpu_ids if _effective_instance_kind == "GPU" else None,
-        instance_count=instance_count,
-        always_in_memory=always_in_memory,
-    )
+    # 若呼叫端傳入 custom_pbtxt，直接使用；否則自動生成
+    if custom_pbtxt and custom_pbtxt.strip():
+        config_content = custom_pbtxt.strip()
+        logger.info("Using custom config.pbtxt for model '%s'", model_name)
+    else:
+        config_content = _build_triton_pbtxt(
+            model_name=model_name,
+            imgsz=imgsz,
+            instance_kind=_effective_instance_kind,
+            gpu_ids=gpu_ids if _effective_instance_kind == "GPU" else None,
+            instance_count=instance_count,
+            always_in_memory=always_in_memory,
+        )
     infer_base = (public_triton_base_url or get_triton_server_url()).rstrip("/")
 
     try:
@@ -384,6 +398,7 @@ def export_torchscript_pt_to_triton(
                 model_name=model_name,
                 model_pt_path=best_pt_path,
                 config_content=config_content,
+                version=target_version,
             )
             if upload_result.get("error"):
                 return upload_result
@@ -419,6 +434,8 @@ def export_torchscript_pt_to_triton(
                     metadata_path, _new_server_url, _deployed_at,
                     upload_server_url=upload_server_url,
                 ),
+                # 追蹤已部署的版本號（遠端模式本機無版本子目錄，靠此欄位供 auto_version 使用）
+                "deployed_versions": _merge_deployed_versions(metadata_path, target_version),
             }
             metadata_path.write_text(json.dumps(metadata, ensure_ascii=True, indent=2), encoding="utf-8")
 
@@ -439,7 +456,7 @@ def export_torchscript_pt_to_triton(
         repo_root.mkdir(parents=True, exist_ok=True)
 
         model_dir = repo_root / model_name
-        version_dir = model_dir / "1"
+        version_dir = model_dir / str(target_version)
         version_dir.mkdir(parents=True, exist_ok=True)
 
         model_pt_path = version_dir / "model.pt"
@@ -476,6 +493,8 @@ def export_torchscript_pt_to_triton(
             "triton_servers": _merge_triton_servers(
                 metadata_path, _new_server_url, _deployed_at, upload_server_url=None,
             ),
+            # 追蹤已部署的版本號（與本機版本子目錄互補，確保 auto_version 正確計算）
+            "deployed_versions": _merge_deployed_versions(metadata_path, target_version),
         }
         if _new_server_url:
             metadata["triton_public_base_url"] = _new_server_url
@@ -516,6 +535,8 @@ def export_yolo_pt_to_triton(
     instance_count: int = 1,
     always_in_memory: bool = True,
     export_device: Optional[str] = None,
+    target_version: int = 1,
+    custom_pbtxt: Optional[str] = None,
 ) -> dict:
     """
     Export a trained YOLO checkpoint into Triton's libtorch model layout.
@@ -538,6 +559,9 @@ def export_yolo_pt_to_triton(
     @param {int} instance_count            - 推論實例數（預設 1）
     @param {bool} always_in_memory         - True：加入 model_warmup，常駐記憶體；False：即時載入
     @param {Optional[str]} export_device   - TorchScript 匯出裝置："cuda" | "cpu" | None（None 時自動偵測 CUDA）
+    @param {int} target_version            - 寫入 Triton 倉庫的版本號（對應版本子目錄 1/ 2/ ...），預設為 1
+    @param {Optional[str]} custom_pbtxt   - 自訂 config.pbtxt 內容；非 None 時直接使用，
+                                            跳過 _build_triton_pbtxt() 自動生成
     @returns {dict} 部署結果；包含 ``error`` 鍵時表示失敗
     """
     import torch as _torch
@@ -545,6 +569,8 @@ def export_yolo_pt_to_triton(
     best_pt_path = Path(best_pt_path)
     if not best_pt_path.exists():
         return {"error": f"best.pt not found: {best_pt_path}"}
+
+    target_version = max(1, int(target_version))
 
     model_name = sanitize_triton_model_name(model_name)
     infer_base = (public_triton_base_url or get_triton_server_url()).rstrip("/")
@@ -580,14 +606,19 @@ def export_yolo_pt_to_triton(
         logger.exception("Failed to export trained model to TorchScript for Triton")
         return {"error": str(exc)}
 
-    config_content = _build_triton_pbtxt(
-        model_name=model_name,
-        imgsz=imgsz,
-        instance_kind=instance_kind,
-        gpu_ids=gpu_ids,
-        instance_count=instance_count,
-        always_in_memory=always_in_memory,
-    )
+    # 若呼叫端傳入 custom_pbtxt，直接使用；否則自動生成
+    if custom_pbtxt and custom_pbtxt.strip():
+        config_content = custom_pbtxt.strip()
+        logger.info("Using custom config.pbtxt for model '%s'", model_name)
+    else:
+        config_content = _build_triton_pbtxt(
+            model_name=model_name,
+            imgsz=imgsz,
+            instance_kind=instance_kind,
+            gpu_ids=gpu_ids,
+            instance_count=instance_count,
+            always_in_memory=always_in_memory,
+        )
 
     if upload_server_url:
         # ── 遠端模式：透過 Upload Server HTTP API 上傳 ──────────────────────
@@ -596,6 +627,7 @@ def export_yolo_pt_to_triton(
             model_name=model_name,
             model_pt_path=src_torchscript,
             config_content=config_content,
+            version=target_version,
         )
         if upload_result.get("error"):
             return upload_result
@@ -629,6 +661,8 @@ def export_yolo_pt_to_triton(
                 metadata_path, _new_server_url, _deployed_at,
                 upload_server_url=upload_server_url,
             ),
+            # 追蹤已部署的版本號（遠端模式本機無版本子目錄，靠此欄位供 auto_version 使用）
+            "deployed_versions": _merge_deployed_versions(metadata_path, target_version),
         }
         metadata_path.write_text(json.dumps(metadata, ensure_ascii=True, indent=2), encoding="utf-8")
 
@@ -646,7 +680,7 @@ def export_yolo_pt_to_triton(
     repo_root.mkdir(parents=True, exist_ok=True)
 
     model_dir = repo_root / model_name
-    version_dir = model_dir / "1"
+    version_dir = model_dir / str(target_version)
     version_dir.mkdir(parents=True, exist_ok=True)
     model_pt_path = version_dir / "model.pt"
     config_path = model_dir / "config.pbtxt"
@@ -684,6 +718,8 @@ def export_yolo_pt_to_triton(
         "triton_servers": _merge_triton_servers(
             metadata_path, _new_server_url, _deployed_at, upload_server_url=None,
         ),
+        # 追蹤已部署的版本號（與本機版本子目錄互補，確保 auto_version 正確計算）
+        "deployed_versions": _merge_deployed_versions(metadata_path, target_version),
     }
     if _new_server_url:
         metadata["triton_public_base_url"] = _new_server_url
@@ -700,6 +736,28 @@ def export_yolo_pt_to_triton(
         "metadata_path": str(metadata_path),
         "infer_url": f"{infer_base}/v2/models/{model_name}/infer",
     }
+
+
+def _merge_deployed_versions(metadata_path: Path, new_version: int) -> list[int]:
+    """
+    讀取現有 ``deployment_meta.json`` 中的 ``deployed_versions`` 陣列，
+    加入 ``new_version`` 後去重排序並回傳。
+
+    遠端部署（Upload Server）模式下本機不建立版本子目錄，
+    靠此函式在 metadata 中追蹤已部署的版本號，供 auto_version 計算使用。
+
+    @param {Path} metadata_path - deployment_meta.json 的路徑（可能尚不存在）
+    @param {int} new_version    - 本次部署的版本號
+    @returns {list[int]} 排序後的已部署版本號清單
+    """
+    existing: list[int] = []
+    if metadata_path.exists():
+        try:
+            meta = json.loads(metadata_path.read_text(encoding="utf-8"))
+            existing = [int(v) for v in meta.get("deployed_versions", []) if str(v).isdigit()]
+        except Exception:
+            pass
+    return sorted(set(existing) | {new_version})
 
 
 def _merge_triton_servers(
@@ -766,6 +824,8 @@ def list_triton_model_deployments(
 ) -> list[dict]:
     """
     List Triton deployments discovered from repository metadata files.
+    同時掃描模型目錄下所有數字版本子目錄（1/ 2/ 3/ ...），
+    並於回傳結果中附帶 ``available_versions`` 清單（僅含實際存在的目錄）。
     """
     repo_root = get_triton_model_repository_root()
     if not repo_root.exists():
@@ -791,14 +851,32 @@ def list_triton_model_deployments(
 
         model_name = metadata.get("model_name")
         model_dir = metadata_path.parent
-        version_dir = model_dir / "1"
         public = (metadata.get("triton_public_base_url") or "").strip().rstrip("/")
         infer_base = public or get_triton_server_url().rstrip("/")
+
+        # 掃描本機版本子目錄（本機部署）
+        _local_versions: list[int] = [
+            int(d.name)
+            for d in model_dir.iterdir()
+            if d.is_dir() and d.name.isdigit()
+        ]
+        # 合併 metadata 中的 deployed_versions（遠端部署本機無子目錄，靠此欄位追蹤）
+        _meta_versions: list[int] = [
+            int(v) for v in metadata.get("deployed_versions", [])
+            if str(v).isdigit()
+        ]
+        available_versions: list[int] = sorted(set(_local_versions) | set(_meta_versions))
+        # 相容舊版：至少確保 version_dir 指向最新已存在版本（或版本 1）
+        latest_version = available_versions[-1] if available_versions else 1
+        version_dir = model_dir / str(latest_version)
+
         items.append(
             {
                 **metadata,
                 "model_dir": str(model_dir),
                 "version_dir": str(version_dir),
+                "latest_version": latest_version,
+                "available_versions": available_versions,
                 "exists": version_dir.exists(),
                 "infer_url": f"{infer_base}/v2/models/{model_name}/infer",
             }

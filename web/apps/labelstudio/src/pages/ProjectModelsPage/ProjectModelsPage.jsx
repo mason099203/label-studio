@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { IconAnalytics, IconFileDownload, IconWarningCircleFilled, IconPencil, IconCheck, IconClose } from "@humansignal/icons";
+import { IconAnalytics, IconFileDownload, IconWarningCircleFilled, IconPencil, IconCheck, IconClose, IconTrash } from "@humansignal/icons";
 import { Button } from "@humansignal/ui";
 import { Modal } from "../../components/Modal/Modal";
 import { useAPI } from "../../providers/ApiProvider";
@@ -56,6 +56,8 @@ export const ProjectModelsPage = () => {
   const [selectedChart, setSelectedChart] = useState(null);
   const [deployingRunId, setDeployingRunId] = useState(null);
   const [deployError, setDeployError] = useState(null);
+  /** @type {[string|null, Function]} 正在刪除中的 run_id */
+  const [deletingRunId, setDeletingRunId] = useState(null);
   /**
    * 部署目標 Triton HTTP 基底（與模型測試／儀錶板共用 localStorage）。
    * 空字串表示後端使用 TRITON_SERVER_URL 環境變數。
@@ -88,6 +90,76 @@ export const ProjectModelsPage = () => {
    * - false → 即時載入（無 model_warmup，模型於首次推論請求時才完整初始化）
    */
   const [alwaysInMemory, setAlwaysInMemory] = useState(true);
+  /**
+   * 部署目標 Triton 版本號（對應模型倉庫中的版本子目錄 1/ 2/ 3/...）。
+   * 同一模型名稱的多次訓練可透過遞增此值寫入新版本，原版本保留不覆蓋。
+   */
+  const [targetVersion, setTargetVersion] = useState(1);
+  /**
+   * 自動遞增版本：true 時部署前由後端查詢現有最新版本並 +1，
+   * 不需要使用者手動維護版本號。
+   */
+  const [autoVersion, setAutoVersion] = useState(true);
+  /**
+   * 上次成功部署的版本號，部署成功後由後端回傳並顯示於 UI。
+   * @type {[number | null, Function]}
+   */
+  const [lastDeployedVersion, setLastDeployedVersion] = useState(null);
+  /** 是否展開自訂 config.pbtxt 編輯區 */
+  const [showCustomPbtxt, setShowCustomPbtxt] = useState(false);
+  /** 自訂 config.pbtxt 內容；空字串表示使用自動生成 */
+  const [customPbtxt, setCustomPbtxt] = useState("");
+
+  /**
+   * 根據當前部署設定，在前端生成 config.pbtxt 預覽文字（與後端 _build_triton_pbtxt 邏輯一致）。
+   * 用於「自訂 config.pbtxt」區塊的初始填入值。
+   * @param {string} [modelName] - Triton 模型名稱（預覽用途可用佔位符）
+   * @returns {string} config.pbtxt 內容字串
+   */
+  function generatePbtxtPreview(modelName = "<model_name>") {
+    const kindMap = { GPU: "KIND_GPU", CPU: "KIND_CPU", AUTO: "KIND_AUTO" };
+    const kindStr = kindMap[instanceKind] || "KIND_AUTO";
+    const gpuLine =
+      kindStr === "KIND_GPU"
+        ? `\n    gpus: [${gpuIds
+            .split(",")
+            .map((s) => s.trim())
+            .filter((s) => /^\d+$/.test(s))
+            .join(", ")}]`
+        : "";
+    const count = Math.max(1, instanceCount);
+    const imgsz = instanceKind === "AUTO" ? 640 : 640;
+    const instanceGroupBlock = `instance_group [\n  {\n    kind: ${kindStr}\n    count: ${count}${gpuLine}\n  }\n]`;
+    const warmupBlock = alwaysInMemory
+      ? `model_warmup [\n  {\n    name: "warmup"\n    batch_size: 1\n    inputs {\n      key: "images"\n      value {\n        dims: 3\n        dims: ${imgsz}\n        dims: ${imgsz}\n        data_type: TYPE_FP32\n        zero_data: true\n      }\n    }\n  }\n]`
+      : "";
+    return [
+      `name: "${modelName}"`,
+      `platform: "pytorch_libtorch"`,
+      `max_batch_size: 1`,
+      ``,
+      `input [`,
+      `  {`,
+      `    name: "images"`,
+      `    data_type: TYPE_FP32`,
+      `    dims: [3, ${imgsz}, ${imgsz}]`,
+      `  }`,
+      `]`,
+      ``,
+      `output [`,
+      `  {`,
+      `    name: "output0"`,
+      `    data_type: TYPE_FP32`,
+      `    dims: [-1, -1]`,
+      `  }`,
+      `]`,
+      ``,
+      instanceGroupBlock,
+      warmupBlock ? `\n${warmupBlock}` : "",
+    ]
+      .filter((line) => line !== undefined)
+      .join("\n");
+  }
 
   useEffect(() => {
     if (!params?.id) return;
@@ -205,6 +277,43 @@ export const ProjectModelsPage = () => {
     }
   };
 
+  /**
+   * 刪除指定訓練紀錄（呼叫後端 DELETE API 移除整個 run 目錄）。
+   * 刪除成功後樂觀更新本地 history state，不重新請求整份清單。
+   * @param {React.MouseEvent} e
+   * @param {string} runId
+   * @param {string} runName - 顯示用名稱（用於確認對話框）
+   */
+  const handleDeleteRun = async (e, runId, runName) => {
+    e.stopPropagation();
+    if (!params?.id || !runId) return;
+
+    const label = runName || runId;
+    if (!window.confirm(`確定要刪除訓練紀錄「${label}」嗎？\n此操作將移除所有相關檔案（模型、圖表、紀錄），且不可復原。`)) return;
+
+    setDeletingRunId(runId);
+    try {
+      const res = await api.callApi("trainingRunDelete", {
+        params: { pk: params.id, run_id: runId },
+        errorFilter: () => true,
+      });
+      if (res?.detail && !res?.deleted) {
+        window.alert(`刪除失敗：${res.detail}`);
+        return;
+      }
+      // 樂觀移除本地清單，不重送整份 history
+      setHistory((prev) => {
+        if (!prev) return prev;
+        return { ...prev, runs: prev.runs.filter((r) => r.run_id !== runId) };
+      });
+      if (expandedRunId === runId) setExpandedRunId(null);
+    } catch (err) {
+      window.alert(`刪除失敗：${err?.message || "未知錯誤"}`);
+    } finally {
+      setDeletingRunId(null);
+    }
+  };
+
   const handleDeployToTriton = async (runId) => {
     if (!params?.id || !runId) return;
     setDeployError(null);
@@ -231,6 +340,16 @@ export const ProjectModelsPage = () => {
     body.instance_kind = instanceKind;
     body.instance_count = instanceCount;
     body.always_in_memory = alwaysInMemory;
+    if (autoVersion) {
+      // 自動遞增模式：後端查詢現有最新版本 +1，不傳 target_version
+      body.auto_version = true;
+    } else {
+      body.target_version = Math.max(1, targetVersion);
+    }
+    // 若有自訂 pbtxt 則傳送，後端將直接使用，跳過自動生成
+    if (showCustomPbtxt && customPbtxt.trim()) {
+      body.custom_pbtxt = customPbtxt.trim();
+    }
     if (instanceKind === "GPU") {
       body.gpu_ids = gpuIds
         .split(",")
@@ -251,11 +370,17 @@ export const ProjectModelsPage = () => {
           setDeployError(res?.detail || res?.error || "部署至 Triton 失敗");
           return;
         }
+        // 記錄實際寫入的版本號並更新版本輸入框
+        const deployedVer = res.deployed_version ?? null;
+        if (deployedVer) {
+          setLastDeployedVersion(deployedVer);
+          if (!autoVersion) setTargetVersion(deployedVer);
+        }
         saveTritonPlaygroundState(params.id, res.model_name);
-        // 簡單提示成功與模型名稱
+        const verLabel = deployedVer ? `（版本 ${deployedVer}）` : "";
         if (res.model_name) {
           // eslint-disable-next-line no-alert
-          window.alert(`已部署至 Triton：${res.model_name}\n可前往 Playground 直接測試。`);
+          window.alert(`已部署至 Triton：${res.model_name} ${verLabel}\n可前往 Playground 直接測試。`);
         } else {
           // eslint-disable-next-line no-alert
           window.alert("已部署至 Triton。");
@@ -463,11 +588,100 @@ export const ProjectModelsPage = () => {
               <option value="lazy">即時載入（首次推論時初始化，省記憶體）</option>
             </select>
           </div>
-          <div className={cn("project-models-page").elem("triton-deploy-hint").toClassName()}>
-            「常駐記憶體」會在 config.pbtxt 中加入{' '}
-            <code>model_warmup</code> 區塊，Triton 啟動後立即預熱模型並保持常駐；
-            「即時載入」則省略預熱，模型於首次推論請求時才完整初始化。
+
+
+          {/* Triton 版本號 */}
+          <div className={cn("project-models-page").elem("triton-deploy-label").toClassName()}>
+            模型版本號（Triton version）
           </div>
+          <div className={cn("project-models-page").elem("triton-deploy-row").toClassName()}>
+            {/* 自動遞增開關 */}
+            <label
+              className={cn("project-models-page").elem("triton-auto-version-label").toClassName()}
+              htmlFor="triton-auto-version"
+            >
+              <input
+                id="triton-auto-version"
+                type="checkbox"
+                checked={autoVersion}
+                onChange={(e) => setAutoVersion(e.target.checked)}
+                className={cn("project-models-page").elem("triton-auto-version-checkbox").toClassName()}
+              />
+              自動遞增版本
+            </label>
+            {!autoVersion && (
+              <>
+                <label
+                  className={cn("project-models-page").elem("triton-deploy-inline-label").toClassName()}
+                  htmlFor="triton-target-version"
+                >
+                  指定版本
+                </label>
+                <input
+                  id="triton-target-version"
+                  type="number"
+                  min={1}
+                  className={cn("project-models-page").elem("triton-deploy-count-input").toClassName()}
+                  value={targetVersion}
+                  onChange={(e) => setTargetVersion(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                  aria-label="部署目標版本號"
+                />
+              </>
+            )}
+          </div>
+          {lastDeployedVersion && (
+            <div className={cn("project-models-page").elem("triton-last-version-hint").toClassName()}>
+              上次部署版本：<strong>v{lastDeployedVersion}</strong>
+              {autoVersion && (
+                <span>，下次將自動寫入 v{lastDeployedVersion + 1}</span>
+              )}
+            </div>
+          )}
+
+          {/* 自訂 config.pbtxt */}
+          <div className={cn("project-models-page").elem("triton-deploy-pbtxt-toggle-row").toClassName()}>
+            <button
+              type="button"
+              className={cn("project-models-page").elem("triton-deploy-pbtxt-toggle").toClassName()}
+              onClick={() => {
+                const next = !showCustomPbtxt;
+                setShowCustomPbtxt(next);
+                // 展開時若內容為空，自動填入當前設定的預覽
+                if (next && !customPbtxt.trim()) {
+                  setCustomPbtxt(generatePbtxtPreview());
+                }
+              }}
+            >
+              {showCustomPbtxt ? "▼ 隱藏自訂 config.pbtxt" : "▶ 自訂 config.pbtxt（進階）"}
+            </button>
+            {showCustomPbtxt && (
+              <button
+                type="button"
+                className={cn("project-models-page").elem("triton-deploy-pbtxt-reset").toClassName()}
+                onClick={() => setCustomPbtxt(generatePbtxtPreview())}
+                title="根據當前設定重新生成預覽"
+              >
+                ↺ 重設為自動生成
+              </button>
+            )}
+          </div>
+          {showCustomPbtxt && (
+            <div className={cn("project-models-page").elem("triton-deploy-pbtxt-area-wrap").toClassName()}>
+              <p className={cn("project-models-page").elem("triton-deploy-pbtxt-hint").toClassName()}>
+                直接編輯以下 config.pbtxt 後再部署；留空則使用上方設定自動生成。
+              </p>
+              <textarea
+                className={cn("project-models-page").elem("triton-deploy-pbtxt-textarea").toClassName()}
+                value={customPbtxt}
+                onChange={(e) => setCustomPbtxt(e.target.value)}
+                rows={20}
+                spellCheck={false}
+                aria-label="自訂 config.pbtxt 內容"
+                placeholder={generatePbtxtPreview()}
+              />
+            </div>
+          )}
+
         </div>
         <div className={cn("project-models-page").elem("run-list").toClassName()}>
           {runs.length === 0 && (
@@ -580,6 +794,18 @@ export const ProjectModelsPage = () => {
                             {deployingRunId === run.run_id ? "部署中…" : "部署模型"}
                           </Button>
                         )}
+                        <Button
+                          look="outlined"
+                          size="small"
+                          variant="negative"
+                          icon={<IconTrash size={14} />}
+                          onClick={(e) => handleDeleteRun(e, run.run_id, run.name || run.run_id)}
+                          disabled={deletingRunId === run.run_id}
+                          aria-label="刪除此訓練紀錄"
+                          title="刪除此訓練紀錄（不可復原）"
+                        >
+                          {deletingRunId === run.run_id ? "刪除中…" : "刪除"}
+                        </Button>
                       </div>
                     </div>
 

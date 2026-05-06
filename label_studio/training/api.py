@@ -1001,6 +1001,38 @@ class ProjectTrainingRunRenameAPI(APIView):
         return Response({"run_id": run_id, "name": run_meta["name"]})
 
 
+class ProjectTrainingRunDeleteAPI(APIView):
+    """
+    刪除指定訓練 run 的完整目錄（包含 artifacts、run_meta.json 等所有檔案）。
+    操作不可復原，刪除前請確認使用者已知悉。
+    """
+
+    permission_required = ViewClassPermission(DELETE=all_permissions.projects_change)
+
+    def delete(self, request, pk: int, run_id: str, *args, **kwargs):
+        import shutil
+
+        project = _get_project_for_user(request, pk)
+
+        # run_id 只允許 UUID 格式，防止路徑穿越攻擊
+        import re
+        if not re.fullmatch(r'[0-9a-f\-]{8,64}', run_id):
+            return Response({'detail': 'Invalid run_id'}, status=status.HTTP_400_BAD_REQUEST)
+
+        run_dir = _get_training_output_root() / f'project_{project.id}' / run_id
+        if not run_dir.is_dir():
+            return Response({'detail': 'Run not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            shutil.rmtree(run_dir)
+            logger.info('Deleted training run directory: %s (project=%d)', run_dir, project.id)
+        except Exception as exc:
+            logger.exception('Failed to delete training run %s', run_id)
+            return Response({'detail': f'刪除失敗：{exc}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        return Response({'run_id': run_id, 'deleted': True}, status=status.HTTP_200_OK)
+
+
 class ProjectTrainingRunDeployToTritonAPI(APIView):
     """
     Copy a training run's best.pt into Triton model repository and write config files.
@@ -1050,6 +1082,45 @@ class ProjectTrainingRunDeployToTritonAPI(APIView):
         raw_export_device = (payload.get("export_device") or "").strip().lower()
         export_device: str | None = raw_export_device if raw_export_device in ("cuda", "cpu") else None
 
+        # 目標 Triton 版本號：對應倉庫中的版本子目錄（1/ 2/ ...）
+        # auto_version=true 時自動計算現有最新版本 + 1；否則使用前端傳入值（預設 1）
+        auto_version: bool = bool(payload.get("auto_version", False))
+        if auto_version:
+            from .triton_export import get_triton_model_repository_root
+            # 優先使用本次請求指定的倉庫根目錄，與 export 函式保持一致
+            _repo = Path(triton_repo_override) if triton_repo_override else get_triton_model_repository_root()
+            _model_dir = _repo / model_name
+            _all_versions: list[int] = []
+            if _model_dir.exists():
+                # 來源 1：metadata 中的 deployed_versions（遠端部署無本機子目錄，靠此欄位追蹤）
+                _meta_path = _model_dir / "deployment_meta.json"
+                if _meta_path.exists():
+                    try:
+                        _meta = json.loads(_meta_path.read_text(encoding="utf-8"))
+                        _all_versions = [
+                            int(v) for v in _meta.get("deployed_versions", [])
+                            if str(v).isdigit()
+                        ]
+                    except Exception:
+                        pass
+                # 來源 2：本機版本子目錄（本機部署；取聯集確保不遺漏）
+                _local = [
+                    int(d.name)
+                    for d in _model_dir.iterdir()
+                    if d.is_dir() and d.name.isdigit()
+                ]
+                _all_versions = sorted(set(_all_versions) | set(_local))
+            target_version = (_all_versions[-1] + 1) if _all_versions else 1
+            logger.info(
+                "auto_version: model=%s existing=%s → target_version=%d",
+                model_name, _all_versions, target_version,
+            )
+        else:
+            target_version = max(1, int(payload.get("target_version", 1)))
+
+        # 自訂 config.pbtxt：若提供則直接使用，跳過自動生成
+        custom_pbtxt: str | None = (payload.get("custom_pbtxt") or "").strip() or None
+
         # 若目標 Triton 為遠端主機，自動推導 Upload Server URL（同主機、port 8003）
         # 遠端時由 Upload Server 透過共享 volume 寫入模型倉庫，本機時直接寫磁碟
         upload_server_url: str | None = None
@@ -1090,6 +1161,8 @@ class ProjectTrainingRunDeployToTritonAPI(APIView):
                 instance_count=instance_count,
                 always_in_memory=always_in_memory,
                 export_device=export_device,
+                target_version=target_version,
+                custom_pbtxt=custom_pbtxt,
             )
         else:
             imgsz = int(payload.get("imgsz", 640))
@@ -1109,6 +1182,8 @@ class ProjectTrainingRunDeployToTritonAPI(APIView):
                 instance_count=instance_count,
                 always_in_memory=always_in_memory,
                 export_device=export_device,
+                target_version=target_version,
+                custom_pbtxt=custom_pbtxt,
             )
 
         if result.get("error"):
@@ -1121,6 +1196,8 @@ class ProjectTrainingRunDeployToTritonAPI(APIView):
             "message": "Model copied to Triton repository.",
             "triton_repo_root": str(get_triton_model_repository_root()),
             "triton_server_url": (public_triton_base or get_triton_server_url()).rstrip("/"),
+            # 回傳實際寫入的版本號，讓前端可更新顯示（auto_version 模式下特別有用）
+            "deployed_version": target_version,
             **result,
         }
         # 若 GPU 不可用而自動降級為 AUTO，警告訊息傳給前端顯示
@@ -1575,6 +1652,188 @@ class ProjectTrainingTritonModelDeleteAPI(APIView):
             {
                 "deleted": sanitized,
                 "remote_warning": "; ".join(remote_errors) if remote_errors else None,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class ProjectTrainingTritonVersionDeleteAPI(APIView):
+    """
+    刪除 Triton 模型倉庫中的單一版本子目錄。
+
+    **DELETE** ``/projects/:pk/training/triton/models/:model_name/versions/:version/``
+
+    - 僅移除指定版本目錄（例如 ``model_name/2/``），保留其他版本與 config.pbtxt。
+    - 若 metadata 記錄了 upload_server_url，同時呼叫 Upload Server 刪除遠端版本目錄。
+    - 若刪除後已無任何版本目錄（模型為空），同時移除整個模型目錄。
+    """
+
+    permission_required = ViewClassPermission(DELETE=all_permissions.projects_change)
+
+    @staticmethod
+    def _call_upload_server_delete_version(
+        upload_server_url: str, model_name: str, version: int
+    ) -> "str | None":
+        """
+        呼叫 Upload Server 刪除遠端單一版本目錄。
+
+        Upload Server 若不支援此端點（404/405）則忽略錯誤，僅記錄警告。
+        超時時間縮短為 3 秒，避免長時間阻斷 API 回應。
+
+        @param {str} upload_server_url - Upload Server 基底 URL
+        @param {str} model_name        - 模型名稱
+        @param {int} version           - 要刪除的版本號
+        @returns {str | None} 錯誤訊息，None 表示成功或不需要處理
+        """
+        url = upload_server_url.strip().rstrip("/")
+        if not url:
+            return None
+        try:
+            import requests as _req
+            # Upload Server 端點為 DELETE /models/{model_name}/{version}（無 "versions" 路徑段）
+            resp = _req.delete(
+                f"{url}/models/{model_name}/{version}",
+                timeout=3,  # 短超時，避免阻斷主流程
+            )
+            # 404 表示版本不存在（已刪除），視同成功；405 表示端點不支援
+            if not resp.ok and resp.status_code not in (404, 405):
+                msg = f"Upload Server ({url}) 回應 {resp.status_code}：{resp.text[:200]}"
+                logger.warning("Remote version delete warning: %s", msg)
+                return msg
+        except Exception as exc:
+            # 連線失敗或超時均僅警告，不阻斷本機 metadata 更新
+            logger.warning(
+                "Failed to delete remote version %s/%s via %s: %s",
+                model_name, version, url, exc,
+            )
+            return str(exc)
+        return None
+
+    def delete(self, request, pk: int, model_name: str, version: int, *args, **kwargs):
+        """
+        刪除指定模型的指定版本。
+
+        支援本機模式（刪除版本子目錄）與遠端模式（呼叫 Upload Server）。
+        兩種模式均透過 metadata 的 ``deployed_versions`` 追蹤版本，
+        確保版本管理在無本機子目錄時仍能正確運作。
+
+        @param {int} pk         - 專案 ID
+        @param {str} model_name - Triton 模型名稱
+        @param {int} version    - 版本號
+        """
+        import shutil
+
+        _get_project_for_user(request, pk)
+
+        from .triton_export import get_triton_model_repository_root, sanitize_triton_model_name
+
+        sanitized = sanitize_triton_model_name(model_name)
+        if not sanitized:
+            return Response({"detail": "無效的 model_name"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if version < 1:
+            return Response({"detail": "版本號必須 >= 1"}, status=status.HTTP_400_BAD_REQUEST)
+
+        repo_root = get_triton_model_repository_root()
+        model_dir = repo_root / sanitized
+
+        if not model_dir.exists():
+            return Response(
+                {"detail": f"模型 '{sanitized}' 不存在"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # 讀取 metadata（取得 upload_server_url 與 deployed_versions）
+        meta_path = model_dir / "deployment_meta.json"
+        metadata: Dict[str, Any] = {}
+        if meta_path.exists():
+            try:
+                metadata = json.loads(meta_path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+
+        # 判斷版本是否存在（本機子目錄 OR metadata 記錄；兩者皆無時仍嘗試刪除遠端）
+        version_dir = model_dir / str(version)
+        meta_versions: list[int] = [
+            int(v) for v in metadata.get("deployed_versions", []) if str(v).isdigit()
+        ]
+        try:
+            local_versions: list[int] = [
+                int(d.name) for d in model_dir.iterdir() if d.is_dir() and d.name.isdigit()
+            ]
+        except Exception:
+            local_versions = []
+        all_known_versions = sorted(set(meta_versions) | set(local_versions))
+
+        # 若本機子目錄不存在且 metadata 也沒有記錄，仍嘗試呼叫遠端 Upload Server 刪除
+        # （舊版 metadata 可能未含 deployed_versions，但遠端可能確實存在此版本）
+        version_exists_locally = version_dir.exists()
+        version_in_meta = version in all_known_versions
+        upload_url = (metadata.get("upload_server_url") or "").strip()
+
+        if not version_exists_locally and not version_in_meta and not upload_url:
+            return Response(
+                {"detail": f"模型 '{sanitized}' 的版本 {version} 不存在"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # ── 刪除本機版本目錄（若存在）────────────────────────────────────────
+        if version_exists_locally:
+            try:
+                shutil.rmtree(version_dir)
+                logger.info(
+                    "Deleted local version directory: %s (project=%d, version=%d)",
+                    version_dir, pk, version,
+                )
+            except Exception as exc:
+                logger.exception("Failed to delete version dir %s", version_dir)
+                return Response(
+                    {"detail": f"刪除版本目錄失敗：{exc}"},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+
+        # ── 呼叫 Upload Server 刪除遠端版本（忽略錯誤，不阻斷回應） ──────────
+        remote_warning: "str | None" = None
+        if upload_url:
+            remote_warning = self._call_upload_server_delete_version(upload_url, sanitized, version)
+
+        # ── 更新 metadata 的 deployed_versions（移除已刪除版本） ──────────────
+        remaining_meta_versions: list[int] = sorted(v for v in meta_versions if v != version)
+        remaining_local_versions: list[int] = sorted(
+            int(d.name) for d in model_dir.iterdir() if d.is_dir() and d.name.isdigit()
+        ) if model_dir.exists() else []
+        remaining_versions = sorted(set(remaining_meta_versions) | set(remaining_local_versions))
+
+        model_removed = False
+        if not remaining_versions:
+            # 所有版本都刪完，清除整個模型目錄
+            try:
+                shutil.rmtree(model_dir)
+                model_removed = True
+                logger.info(
+                    "All versions removed; deleted model directory: %s (project=%d)",
+                    model_dir, pk,
+                )
+            except Exception as exc:
+                logger.warning("Failed to remove empty model dir %s: %s", model_dir, exc)
+        else:
+            # 還有剩餘版本，更新 metadata 記錄
+            if meta_path.exists():
+                try:
+                    metadata["deployed_versions"] = remaining_versions
+                    meta_path.write_text(
+                        json.dumps(metadata, ensure_ascii=True, indent=2), encoding="utf-8"
+                    )
+                except Exception as exc:
+                    logger.warning("Failed to update deployed_versions in metadata: %s", exc)
+
+        return Response(
+            {
+                "deleted_model": sanitized,
+                "deleted_version": version,
+                "remaining_versions": remaining_versions,
+                "model_removed": model_removed,
+                "remote_warning": remote_warning,
             },
             status=status.HTTP_200_OK,
         )

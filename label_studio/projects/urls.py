@@ -87,6 +87,11 @@ _api_urlpatterns = [
         name='project-training-run-rename',
     ),
     path(
+        '<int:pk>/training/runs/<str:run_id>/delete/',
+        training_api.ProjectTrainingRunDeleteAPI.as_view(),
+        name='project-training-run-delete',
+    ),
+    path(
         '<int:pk>/training/runs/<str:run_id>/deploy-to-triton',
         training_api.ProjectTrainingRunDeployToTritonAPI.as_view(),
         name='project-training-run-deploy-to-triton',
@@ -100,6 +105,24 @@ _api_urlpatterns = [
         '<int:pk>/training/triton/models/<str:model_name>/',
         training_api.ProjectTrainingTritonModelDeleteAPI.as_view(),
         name='project-training-triton-model-delete',
+    ),
+    # 無斜線版本：前端 API client 會自動去除末尾斜線（index.ts replace(/\/+$/g, "")），
+    # 導致 Django APPEND_SLASH 301 redirect，瀏覽器跟隨時將 DELETE→GET 造成 405。
+    # 同時保留兩種格式以確保路由正確匹配。
+    path(
+        '<int:pk>/training/triton/models/<str:model_name>',
+        training_api.ProjectTrainingTritonModelDeleteAPI.as_view(),
+        name='project-training-triton-model-delete-noslash',
+    ),
+    path(
+        '<int:pk>/training/triton/models/<str:model_name>/versions/<int:version>/',
+        training_api.ProjectTrainingTritonVersionDeleteAPI.as_view(),
+        name='project-training-triton-version-delete',
+    ),
+    path(
+        '<int:pk>/training/triton/models/<str:model_name>/versions/<int:version>',
+        training_api.ProjectTrainingTritonVersionDeleteAPI.as_view(),
+        name='project-training-triton-version-delete-noslash',
     ),
     path(
         '<int:pk>/training/triton/health/',
