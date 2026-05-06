@@ -812,7 +812,8 @@
     border-collapse: collapse;
 
     &--compact {
-      min-width: 760px;
+      min-width: 940px;
+      table-layout: fixed;
     }
 
     thead tr {
@@ -857,8 +858,54 @@
     color: #0f172a;
   }
 
+  &__model-name-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+
   &__model-meta {
     color: #64748b;
+  }
+
+  /* 複製按鈕：平時透明，滑鼠移入所在 tr 時顯示 */
+  &__copy-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--color-neutral-content-subtle, #94a3b8);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s, background 0.15s, color 0.15s;
+    flex-shrink: 0;
+
+    /* 滑鼠移入所在列時顯示 */
+    tr:hover & {
+      opacity: 1;
+    }
+
+    &:hover {
+      background: rgba(99, 102, 241, 0.1);
+      color: #6366f1;
+    }
+
+    /* 複製成功狀態 */
+    &--copied {
+      opacity: 1;
+      color: #16a34a;
+    }
+  }
+
+  &__copy-check {
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
   }
 
   &__status-badge {
@@ -933,6 +980,233 @@
     color: #0f172a;
     word-break: break-all;
     user-select: all;
+  }
+
+  /* 主列：多 IP badge 容器 */
+  &__server-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  /* 單一 IP chip（主列與詳情列共用） */
+  &__server-badge-ip {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(99, 102, 241, 0.1);
+    color: #3730a3;
+    font-family: "Fira Code", "Roboto Mono", monospace;
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+    user-select: all;
+  }
+
+  /* 詳情列：伺服器清單容器 */
+  &__server-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  /* 詳情列：單筆伺服器行 */
+  &__server-list-item {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  /* 詳情列：伺服器部署時間 */
+  &__server-list-date {
+    font-size: 11px;
+    color: #64748b;
+  }
+
+  /* ── 手動新增監控伺服器表單 ─────────────────────────────────────── */
+
+  /** 表單容器：輸入列 + 錯誤訊息 + tag 列表 */
+  &__manual-server-form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 16px;
+    padding: 14px 16px;
+    border-radius: 10px;
+    background: rgba(248, 250, 252, 0.7);
+    border: 1px dashed rgba(148, 163, 184, 0.35);
+  }
+
+  /** 輸入列：文字框 + 按鈕 */
+  &__manual-server-input-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+
+    /* 讓 text-input 佔滿剩餘寬度 */
+    .logs-metrics-tab__text-input {
+      flex: 1;
+      min-width: 0;
+    }
+  }
+
+  /** 驗證錯誤訊息 */
+  &__manual-server-error {
+    font-size: 12px;
+    color: var(--color-negative-content, #991b1b);
+    padding-left: 2px;
+  }
+
+  /** 已新增伺服器的 tag 容器 */
+  &__manual-server-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  /** 單筆手動伺服器 tag */
+  &__manual-server-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    border-radius: 8px;
+    background: rgba(99, 102, 241, 0.06);
+    border: 1px solid rgba(99, 102, 241, 0.2);
+  }
+
+  /** tag 內 URL 文字（縮短顯示） */
+  &__manual-server-url {
+    font-size: 11px;
+    color: #475569;
+    font-family: "Fira Code", "Roboto Mono", monospace;
+    max-width: 240px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /** 移除按鈕 */
+  &__manual-server-remove {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: #94a3b8;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+    flex-shrink: 0;
+
+    &:hover {
+      background: rgba(239, 68, 68, 0.1);
+      color: #dc2626;
+    }
+  }
+
+  /** 手動新增標籤（顯示在伺服器面板標頭） */
+  &__manual-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    background: rgba(245, 158, 11, 0.12);
+    color: #92400e;
+    border: 1px solid rgba(245, 158, 11, 0.28);
+    letter-spacing: 0.01em;
+  }
+
+  /* ── 多伺服器效能面板區域 ───────────────────────────────────────── */
+
+  /** 容器：條列式排列各台伺服器 */
+  &__server-panels {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  /** 單台伺服器面板卡片 */
+  &__server-panel {
+    border: 1px solid rgba(99, 102, 241, 0.18);
+    border-radius: 12px;
+    padding: 16px 20px;
+    background: rgba(248, 250, 255, 0.7);
+
+    &:hover {
+      border-color: rgba(99, 102, 241, 0.32);
+    }
+  }
+
+  /** 面板標題行：IP + 狀態 badge + meta chips */
+  &__server-panel-header {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+
+  /** 分組標籤（硬體資源 / 推論效能） */
+  &__server-panel-group-label {
+    font-size: 11px;
+    font-weight: 700;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin: 10px 0 6px;
+  }
+
+  /** 面板載入中佔位 */
+  &__server-panel-loading {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 0;
+    color: #64748b;
+    font-size: 13px;
+  }
+
+  /* ── 輪詢更新指示器 ──────────────────────────────────────────────── */
+
+  /** 指示器容器：小圓點 + 文字 */
+  &__refresh-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(99, 102, 241, 0.08);
+    color: #6366f1;
+    font-size: 12px;
+    font-weight: 500;
+    user-select: none;
+  }
+
+  /** 旋轉小圓點 */
+  &__refresh-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    border: 2px solid rgba(99, 102, 241, 0.25);
+    border-top-color: #6366f1;
+    animation: lmt-spin 0.7s linear infinite;
+    flex-shrink: 0;
+  }
+
+  &__refresh-label {
+    line-height: 1;
+  }
+
+  @keyframes lmt-spin {
+    to { transform: rotate(360deg); }
   }
 
   &__grid {

@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 from pathlib import Path
 import json
 import re
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 import requests
 
 logger = logging.getLogger(__name__)
@@ -211,9 +212,75 @@ def _sum_metric_samples(
     return total
 
 
+def _get_vram_fallback() -> Tuple[float, float]:
+    """
+    當 Triton Prometheus 未提供 GPU 記憶體指標時的回退方案。
+    優先嘗試 pynvml（零 subprocess 開銷），其次呼叫 nvidia-smi。
+    僅在 Django 與 GPU 同機部署時有效。
+
+    :returns: (used_bytes, total_bytes)；無法取得則回傳 (0.0, 0.0)。
+    """
+    # ── 優先方案：pynvml（需安裝 pynvml 或 nvidia-ml-py）────────────────
+    try:
+        import pynvml  # type: ignore[import-untyped]
+
+        pynvml.nvmlInit()
+        count = pynvml.nvmlDeviceGetCount()
+        used_total = 0.0
+        mem_total = 0.0
+        for i in range(count):
+            handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+            info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+            used_total += info.used
+            mem_total += info.total
+        pynvml.nvmlShutdown()
+        return used_total, mem_total
+    except Exception:
+        pass
+
+    # ── 回退方案：nvidia-smi（輸出單位 MiB）─────────────────────────────
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=memory.used,memory.total",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        if result.returncode == 0:
+            used_mib = 0.0
+            total_mib = 0.0
+            for line in result.stdout.strip().splitlines():
+                parts = line.split(",")
+                if len(parts) == 2:
+                    used_mib += float(parts[0].strip())
+                    total_mib += float(parts[1].strip())
+            # nvidia-smi 回傳 MiB，轉換為 bytes
+            return used_mib * 1024 * 1024, total_mib * 1024 * 1024
+    except Exception:
+        pass
+
+    return 0.0, 0.0
+
+
 def _compute_counter_rate(cache_key: str, counter_value: float) -> float:
     """
-    Compute a best-effort per-second rate from a cumulative counter.
+    Compute a best-effort per-second rate from a cumulative Prometheus counter.
+
+    Guards against two common spike scenarios:
+
+    1. **No previous cache** (first ever measurement) — stores current value as
+       baseline and returns 0.0 so the next interval produces a meaningful rate.
+
+    2. **Previous cached value was 0, current is non-zero** — this happens when
+       the metrics endpoint was unreachable on the last poll (returned empty /
+       unparsed, so success_count fell back to 0).  On the next successful poll
+       the full historical cumulative count would be treated as a single delta,
+       producing an astronomically high rate (e.g. 2 M req/s).
+       We silently re-baseline instead of reporting a misleading spike.
     """
 
     now = time.monotonic()
@@ -224,9 +291,21 @@ def _compute_counter_rate(cache_key: str, counter_value: float) -> float:
         return 0.0
 
     delta_time = now - cached["ts"]
-    delta_value = counter_value - cached["value"]
+    old_value = cached["value"]
+    delta_value = counter_value - old_value
 
-    if delta_time <= 0 or delta_value < 0:
+    # Too short an interval — guard against micro-spikes from rapid calls.
+    if delta_time < 0.1:
+        return 0.0
+
+    # Counter reset or out-of-order sample.
+    if delta_value < 0:
+        return 0.0
+
+    # Baseline transition: previous measurement was 0 (metrics may have been
+    # unreachable or counter not yet started), so the full historical cumulative
+    # count would inflate the rate.  Re-baseline silently.
+    if old_value == 0 and counter_value > 0:
         return 0.0
 
     return round(delta_value / delta_time, 2)
@@ -1349,17 +1428,46 @@ class ProjectTrainingModelUploadAPI(APIView):
 
 class ProjectTrainingTritonModelDeleteAPI(APIView):
     """
-    刪除指定的 Triton 部署模型：
+    刪除指定的 Triton 部署模型。
+
+    **完整刪除（不帶 triton_url）**：
     - 移除本機模型倉庫目錄（含 deployment_meta.json、config.pbtxt、版本目錄）
     - 若 metadata 記錄了 upload_server_url，同時呼叫 Upload Server 刪除遠端檔案
+
+    **單台伺服器刪除（帶 triton_url query 參數）**：
+    - 從 triton_servers 陣列中移除指定伺服器記錄
+    - 若該伺服器有對應的 upload_server_url，呼叫其 Upload Server 刪除遠端檔案
+    - 若移除後 triton_servers 為空，才刪除整個本機目錄（模型完全移除）
+    - 否則只更新 deployment_meta.json，其餘伺服器的部署不受影響
     """
 
     permission_required = ViewClassPermission(DELETE=all_permissions.projects_change)
 
+    @staticmethod
+    def _call_upload_server_delete(upload_server_url: str, model_name: str) -> "str | None":
+        """
+        呼叫 Upload Server 刪除遠端模型目錄。
+        :returns: 錯誤訊息字串，或 None（成功）。
+        """
+        url = upload_server_url.strip().rstrip("/")
+        if not url:
+            return None
+        try:
+            import requests as _req
+            resp = _req.delete(f"{url}/models/{model_name}", timeout=10)
+            if not resp.ok and resp.status_code != 404:
+                msg = f"Upload Server ({url}) 回應 {resp.status_code}：{resp.text[:200]}"
+                logger.warning("Remote delete warning for %s: %s", model_name, msg)
+                return msg
+        except Exception as exc:
+            logger.warning("Failed to delete remote model %s via %s: %s", model_name, url, exc)
+            return str(exc)
+        return None
+
     def delete(self, request, pk: int, model_name: str, *args, **kwargs):
         import shutil
 
-        project = _get_project_for_user(request, pk)
+        _get_project_for_user(request, pk)
 
         sanitized = sanitize_triton_model_name(model_name)
         if not sanitized:
@@ -1370,7 +1478,10 @@ class ProjectTrainingTritonModelDeleteAPI(APIView):
         repo_root = get_triton_model_repository_root()
         model_dir = repo_root / sanitized
 
-        # 讀取 metadata（取得 upload_server_url 以便刪除遠端）
+        if not model_dir.exists():
+            return Response({"detail": f"模型 '{sanitized}' 不存在"}, status=status.HTTP_404_NOT_FOUND)
+
+        # 讀取 metadata
         metadata: Dict[str, Any] = {}
         meta_path = model_dir / "deployment_meta.json"
         if meta_path.exists():
@@ -1379,26 +1490,77 @@ class ProjectTrainingTritonModelDeleteAPI(APIView):
             except Exception:
                 pass
 
-        # 確認部署存在
-        if not model_dir.exists():
-            return Response({"detail": f"模型 '{sanitized}' 不存在"}, status=status.HTTP_404_NOT_FOUND)
+        # ── 單台伺服器刪除模式 ──────────────────────────────────────────────
+        triton_url_param = (request.query_params.get("triton_url") or "").strip().rstrip("/")
+        if triton_url_param:
+            servers: list = metadata.get("triton_servers") or []
+            # 找出符合的伺服器記錄
+            matched = next(
+                (s for s in servers if (s.get("url") or "").rstrip("/") == triton_url_param),
+                None,
+            )
+            # 呼叫對應 Upload Server 刪除遠端模型
+            remote_error: "str | None" = None
+            if matched:
+                per_server_upload = (matched.get("upload_server_url") or "").strip()
+                if per_server_upload:
+                    remote_error = self._call_upload_server_delete(per_server_upload, sanitized)
 
-        # 刪除遠端 Upload Server（若有記錄）
-        upload_server_url = (metadata.get("upload_server_url") or "").strip().rstrip("/")
-        remote_error: str | None = None
-        if upload_server_url:
-            try:
-                import requests as _req
-                resp = _req.delete(
-                    f"{upload_server_url}/models/{sanitized}",
-                    timeout=10,
+            # 移除該伺服器記錄
+            updated_servers = [s for s in servers if (s.get("url") or "").rstrip("/") != triton_url_param]
+
+            if not updated_servers:
+                # 最後一台：刪除整個目錄
+                try:
+                    shutil.rmtree(model_dir)
+                except Exception as exc:
+                    return Response(
+                        {"detail": f"刪除本機模型目錄失敗：{exc}"},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    )
+                return Response(
+                    {"deleted": sanitized, "deleted_server": triton_url_param, "remote_warning": remote_error},
+                    status=status.HTTP_200_OK,
                 )
-                if not resp.ok and resp.status_code != 404:
-                    remote_error = f"Upload Server 回應 {resp.status_code}：{resp.text[:200]}"
-                    logger.warning("Remote delete warning for %s: %s", sanitized, remote_error)
+
+            # 還有其他伺服器：只更新 metadata
+            metadata["triton_servers"] = updated_servers
+            # 更新 triton_public_base_url 指向最後一筆剩餘伺服器
+            remaining_url = (updated_servers[-1].get("url") or "").strip()
+            metadata["triton_public_base_url"] = remaining_url or None
+            try:
+                meta_path.write_text(json.dumps(metadata, ensure_ascii=True, indent=2), encoding="utf-8")
             except Exception as exc:
-                remote_error = str(exc)
-                logger.warning("Failed to delete remote model %s: %s", sanitized, exc)
+                return Response(
+                    {"detail": f"更新 metadata 失敗：{exc}"},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+            return Response(
+                {
+                    "deleted_server": triton_url_param,
+                    "remaining_servers": [s.get("url") for s in updated_servers],
+                    "remote_warning": remote_error,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        # ── 完整刪除模式（不帶 triton_url） ───────────────────────────────────
+        # 刪除所有已記錄之 Upload Server 遠端模型
+        servers_all = metadata.get("triton_servers") or []
+        remote_errors = []
+        for s in servers_all:
+            upload_url = (s.get("upload_server_url") or "").strip()
+            if upload_url:
+                err = self._call_upload_server_delete(upload_url, sanitized)
+                if err:
+                    remote_errors.append(err)
+        # 向後相容：若 triton_servers 中無 upload_server_url，檢查頂層 upload_server_url
+        if not servers_all:
+            upload_server_url = (metadata.get("upload_server_url") or "").strip().rstrip("/")
+            if upload_server_url:
+                err = self._call_upload_server_delete(upload_server_url, sanitized)
+                if err:
+                    remote_errors.append(err)
 
         # 刪除本機目錄
         try:
@@ -1412,7 +1574,7 @@ class ProjectTrainingTritonModelDeleteAPI(APIView):
         return Response(
             {
                 "deleted": sanitized,
-                "remote_warning": remote_error,
+                "remote_warning": "; ".join(remote_errors) if remote_errors else None,
             },
             status=status.HTTP_200_OK,
         )
@@ -1451,17 +1613,33 @@ class ProjectTrainingMetricsAPI(APIView):
         # ── GPU 指標（來自 Triton Prometheus）────────────────────────────────
         gpu_util_samples = [_safe_float(sample.get("value")) for sample in parsed_metrics.get("nv_gpu_utilization", [])]
         gpu_usage = round(sum(gpu_util_samples) / len(gpu_util_samples), 2) if gpu_util_samples else 0.0
-        vram_used = _sum_metric_samples(parsed_metrics, "nv_gpu_memory_used_bytes") / (1024**3)
-        vram_total = _sum_metric_samples(parsed_metrics, "nv_gpu_memory_total_bytes") / (1024**3)
+        # nv_gpu_memory_used_bytes / nv_gpu_memory_total_bytes — 單位 bytes
+        _vram_used_bytes = _sum_metric_samples(parsed_metrics, "nv_gpu_memory_used_bytes")
+        _vram_total_bytes = _sum_metric_samples(parsed_metrics, "nv_gpu_memory_total_bytes")
+        # 若 Triton Prometheus 未回報 VRAM（部分版本不輸出此指標），
+        # 退而使用 pynvml 或 nvidia-smi 直讀本機 GPU 記憶體。
+        # 僅在 Django 與 Triton 同機時有效；遠端部署時仍顯示 —。
+        if _vram_total_bytes == 0:
+            _vram_used_bytes, _vram_total_bytes = _get_vram_fallback()
+        vram_used = _vram_used_bytes / (1024 ** 3)
+        vram_total = _vram_total_bytes / (1024 ** 3)
 
         # ── CPU / RAM 指標（來自 Triton Prometheus，nv_cpu_* 系列）──────────
         # nv_cpu_utilization 為 0.0～1.0 的比率；乘以 100 轉為百分比
         cpu_util_samples = [_safe_float(s.get("value")) for s in parsed_metrics.get("nv_cpu_utilization", [])]
         cpu_usage = round((sum(cpu_util_samples) / len(cpu_util_samples)) * 100, 2) if cpu_util_samples else 0.0
-        # nv_cpu_used_memory / nv_cpu_available_memory 單位為 bytes
-        ram_used_bytes = _sum_metric_samples(parsed_metrics, "nv_cpu_used_memory")
+        # 系統記憶體：不同 Triton 版本使用不同 metric 名稱，嘗試兩種命名慣例
+        # 舊版（r22 以前）：nv_cpu_used_memory / nv_cpu_available_memory（bytes）
+        # 新版（r24+）：nv_cpu_memory_used_bytes / nv_cpu_memory_total_bytes（bytes）
+        ram_used_bytes = (
+            _sum_metric_samples(parsed_metrics, "nv_cpu_used_memory")
+            or _sum_metric_samples(parsed_metrics, "nv_cpu_memory_used_bytes")
+        )
         ram_avail_bytes = _sum_metric_samples(parsed_metrics, "nv_cpu_available_memory")
-        ram_total_bytes = ram_used_bytes + ram_avail_bytes
+        ram_total_bytes = (
+            _sum_metric_samples(parsed_metrics, "nv_cpu_memory_total_bytes")
+            or (ram_used_bytes + ram_avail_bytes)
+        )
         ram_usage = round((ram_used_bytes / ram_total_bytes) * 100, 2) if ram_total_bytes > 0 else 0.0
         ram_used_gb = round(ram_used_bytes / (1024 ** 3), 2)
         usage_stats = _build_model_usage_stats(
@@ -1496,6 +1674,9 @@ class ProjectTrainingMetricsAPI(APIView):
                 "gpu": gpu_usage,
                 "vram_used_gb": round(vram_used, 2),
                 "vram_total_gb": round(vram_total, 2),
+                # 各指標來源是否實際取得（False 時前端顯示 —）
+                "vram_available": _vram_total_bytes > 0,
+                "ram_mem_available": ram_total_bytes > 0,
                 # 標示資料來源：所有指標均從 Triton Prometheus 取得，
                 # 若 Metrics 未連線則各值為 0。
                 "source": "triton_prometheus",

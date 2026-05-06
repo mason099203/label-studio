@@ -1,18 +1,16 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { Typography, Button, buttonVariant, Spinner } from "@humansignal/ui";
-import { IconExternal, IconTerminal, IconCode, IconInfoOutline, IconAnalytics, IconTrash, IconChevronRight } from "@humansignal/icons";
+import { IconExternal, IconTerminal, IconCode, IconInfoOutline, IconAnalytics, IconTrash, IconChevronRight, IconCopy } from "@humansignal/icons";
 import { ToggleItems } from "../../components";
 import { Select } from "../../components/Form";
 import { cn } from "../../utils/bem";
 import { MONITORING_ENDPOINTS } from "./config";
 import {
-  readTritonUrlState,
-  persistTritonUrlFields,
-  verifyTritonConnection,
   TRITON_PLAYGROUND_STATE_KEY,
   extractHostFromUrl,
-  buildTritonBaseUrl,
   buildTritonMetricsUrl,
+  readManualMonitorServers,
+  persistManualMonitorServers,
 } from "./tritonUrlState";
 import { useAPI } from "../../providers/ApiProvider";
 import { useProject } from "../../providers/ProjectProvider";
@@ -147,6 +145,147 @@ function buildDeployerOptions(deployers = []) {
 }
 
 /**
+ * 從 models 陣列中提取所有唯一的 Triton 伺服器清單（含各台上的模型名稱）。
+ * 優先使用 triton_servers 陣列；若無則退回 triton_public_base_url 單一值。
+ * @param {Array<{name?: string, triton_servers?: Array<{url:string}>, triton_public_base_url?: string}>} models
+ * @returns {Array<{url: string, ip: string, models: string[]}>}
+ */
+function extractServersFromModels(models) {
+  /** @type {Map<string, {url: string, ip: string, models: string[]}>} */
+  const map = new Map();
+
+  for (const m of (models || [])) {
+    const serverList = Array.isArray(m.triton_servers) && m.triton_servers.length > 0
+      ? m.triton_servers
+      : m.triton_public_base_url
+        ? [{ url: m.triton_public_base_url }]
+        : [];
+
+    for (const s of serverList) {
+      const url = (s.url || "").trim().replace(/\/+$/, "");
+      if (!url) continue;
+      if (!map.has(url)) {
+        map.set(url, { url, ip: extractHostFromUrl(url), models: [] });
+      }
+      if (m.name) map.get(url).models.push(m.name);
+    }
+  }
+
+  return Array.from(map.values());
+}
+
+/**
+ * 單台 Triton 伺服器的即時效能面板。
+ * @param {{
+ *   ip: string,
+ *   models: string[],
+ *   metricsData: Object | null,
+ *   isManual?: boolean,
+ * }} props
+ */
+function ServerPerformancePanel({ ip, models, metricsData, isManual = false }) {
+  const health = metricsData?.health ?? {};
+  const hardware = metricsData?.hardware ?? {};
+  const inference = metricsData?.inference ?? {};
+  const badge = getHealthBadge(metricsData ? (health.status ?? "Offline") : null);
+  const isLoading = !metricsData;
+  const hasError = metricsData?.error;
+  const tritonHasCpuMetrics = hardware.metrics_available && hardware.cpu > 0;
+  // 以後端旗標判斷 VRAM / RAM 指標是否實際可用，避免顯示 0 GB / 0%
+  const tritonHasVramMetrics = hardware.metrics_available && (hardware.vram_available === true || hardware.vram_total_gb > 0);
+  const tritonHasRamMetrics = hardware.metrics_available && (hardware.ram_mem_available === true || hardware.ram_used_gb > 0);
+
+  const hardwareStats = [
+    { label: "GPU 使用率", value: formatValue(hardware.gpu), unit: "%", icon: IconAnalytics, color: "#10b981" },
+    {
+      label: "VRAM 佔用",
+      value: tritonHasVramMetrics ? formatValue(hardware.vram_used_gb) : "—",
+      unit: tritonHasVramMetrics
+        ? (hardware.vram_total_gb > 0 ? `GB / ${formatValue(hardware.vram_total_gb)} GB` : "GB")
+        : "",
+      icon: IconTerminal,
+      color: "#6366f1",
+    },
+    {
+      label: "CPU 使用率",
+      value: tritonHasCpuMetrics ? formatValue(hardware.cpu) : "—",
+      unit: tritonHasCpuMetrics ? "%" : "",
+      icon: IconCode,
+      color: "#f59e0b",
+    },
+    {
+      label: "系統記憶體",
+      value: tritonHasRamMetrics ? formatValue(hardware.ram) : "—",
+      unit: tritonHasRamMetrics ? `% (${formatValue(hardware.ram_used_gb)} GB)` : "",
+      icon: IconInfoOutline,
+      color: "#3b82f6",
+    },
+  ];
+
+  const perfStats = [
+    { label: "平均延遲", value: formatValue(inference.latency), unit: "ms", icon: IconAnalytics },
+    { label: "每秒請求", value: formatValue(inference.rps), unit: "req/s", icon: IconExternal },
+    { label: "成功率", value: formatValue(inference.success_rate), unit: "%", icon: IconAnalytics },
+    {
+      label: "啟用模型數",
+      value: formatValue(inference.active_models ?? 0, 0),
+      unit: `/ ${formatValue(inference.total_models ?? 0, 0)}`,
+      icon: IconCode,
+      color: "#10b981",
+    },
+  ];
+
+  const rootClass = cn("logs-metrics-tab");
+
+  return (
+    <div className={rootClass.elem("server-panel").toClassName()}>
+      <div className={rootClass.elem("server-panel-header").toClassName()}>
+        <span className={rootClass.elem("server-badge-ip").toClassName()}>{ip}</span>
+        <span
+          className={rootClass.elem("service-badge").toClassName()}
+          style={{ background: badge.background, color: badge.color }}
+        >
+          {isLoading ? "載入中…" : badge.label}
+        </span>
+        <span className={rootClass.elem("meta-chip").toClassName()}>
+          {isLoading ? "—" : health.metrics_available ? "Metrics 已連線" : "Metrics 未連線"}
+        </span>
+        {isManual && (
+          <span className={rootClass.elem("manual-badge").toClassName()}>手動新增</span>
+        )}
+        {models.length > 0 && (
+          <span className={rootClass.elem("meta-chip").toClassName()} title={models.join(", ")}>
+            模型：{models.length <= 3 ? models.join(", ") : `${models.slice(0, 3).join(", ")} …+${models.length - 3}`}
+          </span>
+        )}
+        {hasError && (
+          <span style={{ color: "var(--color-negative-content, #991b1b)", fontSize: 12 }}>
+            連線失敗：{hasError}
+          </span>
+        )}
+      </div>
+      {isLoading ? (
+        <div className={rootClass.elem("server-panel-loading").toClassName()}>
+          <Spinner size={20} />
+          <span>正在查詢伺服器指標…</span>
+        </div>
+      ) : (
+        <>
+          <div className={rootClass.elem("server-panel-group-label").toClassName()}>硬體資源</div>
+          <div className={rootClass.elem("stats-grid").toClassName()}>
+            {hardwareStats.map((s) => <StatCard key={s.label} {...s} />)}
+          </div>
+          <div className={rootClass.elem("server-panel-group-label").toClassName()}>推論效能</div>
+          <div className={rootClass.elem("stats-grid").toClassName()}>
+            {perfStats.map((s) => <StatCard key={s.label} {...s} />)}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
  * 格式化 ISO 時間字串。
  * @param {string | null | undefined} value
  * @returns {string}
@@ -207,18 +346,21 @@ export function LogsAndMetricsTab() {
    */
   const [projects, setProjects] = useState([]);
   const [projectsLoading, setProjectsLoading] = useState(false);
-  /** Triton 伺服器主機 IP（如 `192.168.1.10`）；port 18000/8002 固定。空值表示使用伺服器 TRITON_SERVER_URL。 */
-  const [tritonServerHost, setTritonServerHost] = useState(
-    () => extractHostFromUrl(readTritonUrlState().tritonServerUrl),
-  );
-  /** 後端查詢 Triton 健康與轉發之完整 HTTP URL（固定埠 18000）；由 tritonServerHost 自動組成。 */
-  const tritonServerUrl = useMemo(() => buildTritonBaseUrl(tritonServerHost), [tritonServerHost]);
-  /** Prometheus Metrics 完整 URL（固定埠 8002）；由 tritonServerHost 自動組成。 */
-  const tritonMetricsUrl = useMemo(() => buildTritonMetricsUrl(tritonServerHost), [tritonServerHost]);
-  const [tritonVerifyLoading, setTritonVerifyLoading] = useState(false);
-  const [tritonVerifyResult, setTritonVerifyResult] = useState(null);
+  /**
+   * 從部署 metadata 自動偵測到的 Triton 伺服器清單。
+   * 每項包含 { url, ip, models[] }，無需使用者手動輸入 IP。
+   * @type {[Array<{url:string, ip:string, models:string[]}>, Function]}
+   */
+  const [autoServers, setAutoServers] = useState([]);
+  /**
+   * 各 Triton 伺服器的即時指標快取（serverUrl → metrics 回應物件）。
+   * @type {[Map<string, Object>, Function]}
+   */
+  const [serverMetricsMap, setServerMetricsMap] = useState(new Map());
   const [iframeUrl, setIframeUrl] = useState(null);
   const [loading, setLoading] = useState(true);
+  /** 輪詢更新時（資料已存在的背景刷新）顯示小型載入指示器。 */
+  const [refreshing, setRefreshing] = useState(false);
   const [data, setData] = useState(null);
   const [historyData, setHistoryData] = useState(null);
   const [scope, setScope] = useState("mine");
@@ -227,6 +369,18 @@ export function LogsAndMetricsTab() {
   const [expandedModels, setExpandedModels] = useState(new Set());
   /** @type {[string | null, Function]} 正在刪除中的模型名稱 */
   const [deletingModel, setDeletingModel] = useState(null);
+  /** 剛複製成功的列 rowKey，短暫顯示「已複製」反饋後自動清除。 */
+  const [copiedKey, setCopiedKey] = useState(null);
+
+  /**
+   * 使用者手動新增的 Triton 監控伺服器清單，從 localStorage 初始化。
+   * @type {[Array<{ url: string }>, Function]}
+   */
+  const [manualServers, setManualServers] = useState(() => readManualMonitorServers());
+  /** 新增伺服器表單：使用者輸入的 URL 文字 */
+  const [newServerUrl, setNewServerUrl] = useState("");
+  /** 新增伺服器表單：驗證錯誤訊息 */
+  const [addServerError, setAddServerError] = useState("");
 
   /** 元件掛載時拉取所有專案，供名稱下拉篩選使用。 */
   useEffect(() => {
@@ -251,14 +405,6 @@ export function LogsAndMetricsTab() {
     persistProjectId(projectId);
   }, [projectId]);
 
-  useEffect(() => {
-    persistTritonUrlFields({ tritonServerUrl, tritonMetricsUrl });
-  }, [tritonServerUrl, tritonMetricsUrl]);
-
-  useEffect(() => {
-    setTritonVerifyResult(null);
-  }, [tritonServerUrl]);
-
   /**
    * 由 projectId 查找對應的專案名稱。
    * @type {string}
@@ -279,34 +425,38 @@ export function LogsAndMetricsTab() {
   ], [projects]);
 
   /**
-   * 驗證目前 Triton 基底是否可由後端連線（與載入監控資料相同之權限）。
+   * 自動偵測伺服器與手動新增伺服器合併後的完整清單（去重）。
+   * 自動偵測的伺服器優先（相同 URL 時保留自動版本）。
+   * @type {Array<{ url: string, ip: string, models: string[], _manual?: boolean }>}
    */
-  const handleVerifyTriton = useCallback(async () => {
-    if (!projectId.trim()) {
-      setTritonVerifyResult({ level: "error", text: "請先選擇專案。" });
-      return;
+  const allServers = useMemo(() => {
+    const map = new Map(autoServers.map((s) => [s.url, s]));
+    for (const ms of manualServers) {
+      const u = (ms.url || "").trim().replace(/\/+$/, "");
+      if (u && !map.has(u)) {
+        map.set(u, { url: u, ip: extractHostFromUrl(u), models: [], _manual: true });
+      }
     }
-    setTritonVerifyResult(null);
-    setTritonVerifyLoading(true);
-    try {
-      const r = await verifyTritonConnection(api, projectId, tritonServerUrl);
-      setTritonVerifyResult({ level: r.level, text: r.message });
-    } finally {
-      setTritonVerifyLoading(false);
-    }
-  }, [api, projectId, tritonServerUrl]);
+    return Array.from(map.values());
+  }, [autoServers, manualServers]);
 
+  /**
+   * 監控與分析入口，依所有已知伺服器（自動 + 手動）動態加入各台 Triton Metrics 連結。
+   */
   const monitoringEndpoints = useMemo(() => {
-    const metricsUrl = tritonMetricsUrl.trim() || defaultMetricsUrlFromTritonBase(tritonServerUrl);
-    return [
-      ...MONITORING_ENDPOINTS,
-      {
-        name: "Triton Metrics",
-        url: metricsUrl,
-        description: "Triton 推論指標（Prometheus）",
-      },
-    ];
-  }, [tritonServerUrl, tritonMetricsUrl]);
+    const endpoints = [...MONITORING_ENDPOINTS];
+    for (const { url, ip } of allServers) {
+      const metricsUrl = buildTritonMetricsUrl(extractHostFromUrl(url));
+      if (metricsUrl) {
+        endpoints.push({
+          name: `Triton Metrics (${ip})`,
+          url: metricsUrl,
+          description: `${ip} 的 Triton 推論指標（Prometheus）`,
+        });
+      }
+    }
+    return endpoints;
+  }, [allServers]);
 
   const fetchMetrics = useCallback(async () => {
     if (!projectId) {
@@ -315,64 +465,177 @@ export function LogsAndMetricsTab() {
       setHistoryData(null);
       return;
     }
+    // 資料已存在時進入「背景刷新」模式，顯示小型指示器而非全頁 Spinner
+    setRefreshing(true);
     try {
       const params = buildMetricsParams({ pk: projectId, scope, selectedUserId });
-      const tritonParams = {};
-      const tu = tritonServerUrl.trim();
-      if (tu) tritonParams.triton_url = tu;
-      const tm = tritonMetricsUrl.trim();
-      if (tm) tritonParams.triton_metrics_url = tm;
-      const merged = { ...params, ...tritonParams };
+
+      // ── Step 1：取得模型清單（含 triton_servers）、推論事件與快照 ──────────
       const [metricsRes, metricsHistoryRes] = await Promise.all([
-        api.callApi("trainingMetrics", { params: merged }),
+        // 不帶 triton_url，由伺服器預設值提供 health check（取部署 metadata 為主）
+        api.callApi("trainingMetrics", { params }),
         api.callApi("trainingMetricsHistory", {
-          params: {
-            ...merged,
-            event_limit: 12,
-            snapshot_limit: 12,
-          },
+          params: { ...params, event_limit: 12, snapshot_limit: 12 },
         }),
       ]);
       setData(metricsRes);
       setHistoryData(metricsHistoryRes);
+
+      // ── Step 2：從模型 triton_servers 欄位提取唯一伺服器清單 ──────────────
+      const allModels = metricsRes?.models ?? [];
+      const servers = extractServersFromModels(allModels);
+      setAutoServers(servers);
+
+      // ── Step 3：合併自動偵測 + 手動新增伺服器，對所有台平行查詢即時 Metrics ──
+      // 使用 Map 去重：相同 URL 的自動偵測版本優先保留
+      const serverMap = new Map(servers.map((s) => [s.url, s]));
+      for (const ms of manualServers) {
+        const u = (ms.url || "").trim().replace(/\/+$/, "");
+        if (u && !serverMap.has(u)) {
+          serverMap.set(u, { url: u, ip: extractHostFromUrl(u), models: [] });
+        }
+      }
+      const allServersToQuery = Array.from(serverMap.values());
+
+      if (allServersToQuery.length > 0) {
+        // 先將所有伺服器標記為「載入中」（null 表示載入中，讓 panel 顯示 spinner）
+        setServerMetricsMap((prev) => {
+          const next = new Map(prev);
+          for (const { url } of allServersToQuery) {
+            if (!next.has(url)) next.set(url, null);
+          }
+          return next;
+        });
+
+        const serverResults = await Promise.all(
+          allServersToQuery.map(async ({ url }) => {
+            const metricsUrl = buildTritonMetricsUrl(extractHostFromUrl(url));
+            try {
+              const r = await api.callApi("trainingMetrics", {
+                params: {
+                  ...params,
+                  triton_url: url,
+                  ...(metricsUrl ? { triton_metrics_url: metricsUrl } : {}),
+                },
+              });
+              return { url, result: r, error: null };
+            } catch (err) {
+              return { url, result: null, error: err?.message ?? String(err) };
+            }
+          }),
+        );
+
+        setServerMetricsMap(
+          new Map(serverResults.map(({ url, result, error }) => [
+            url,
+            { ...(result ?? {}), error },
+          ])),
+        );
+      } else {
+        setServerMetricsMap(new Map());
+      }
     } catch (e) {
       console.error("Failed to fetch metrics", e);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  }, [api, projectId, scope, selectedUserId, tritonServerUrl, tritonMetricsUrl]);
+  }, [api, projectId, scope, selectedUserId, manualServers]);
 
   /**
-   * 切換單一模型列的展開狀態。
-   * @param {string} modelName
+   * 新增手動監控伺服器。
+   * 驗證 URL 格式、防止重複，並寫入 localStorage。
    */
-  const toggleExpand = useCallback((modelName) => {
+  const handleAddServer = useCallback(() => {
+    const raw = newServerUrl.trim();
+    if (!raw) return;
+
+    if (!/^https?:\/\//i.test(raw)) {
+      setAddServerError("請輸入完整的 URL（需以 http:// 或 https:// 開頭）");
+      return;
+    }
+
+    // 正規化：若未指定 port 則補上 Triton 預設推論埠 18000
+    let normalized = raw.replace(/\/+$/, "");
+    try {
+      const parsed = new URL(raw);
+      if (!parsed.port) {
+        parsed.port = "18000";
+      }
+      normalized = parsed.origin;
+    } catch (_) {
+      setAddServerError("URL 格式無效，請確認主機與埠號");
+      return;
+    }
+
+    if (manualServers.some((s) => s.url === normalized)) {
+      setAddServerError("此伺服器已在監控清單中");
+      return;
+    }
+
+    const updated = [...manualServers, { url: normalized }];
+    setManualServers(updated);
+    persistManualMonitorServers(updated);
+    setNewServerUrl("");
+    setAddServerError("");
+  }, [newServerUrl, manualServers]);
+
+  /**
+   * 移除手動監控伺服器。
+   * @param {string} url - 要移除的伺服器 URL
+   */
+  const handleRemoveServer = useCallback((url) => {
+    const updated = manualServers.filter((s) => s.url !== url);
+    setManualServers(updated);
+    persistManualMonitorServers(updated);
+    // 同步清除 serverMetricsMap 中已移除伺服器的快取
+    setServerMetricsMap((prev) => {
+      const next = new Map(prev);
+      next.delete(url);
+      return next;
+    });
+  }, [manualServers]);
+
+  /**
+   * 切換單一列（模型 × 伺服器）的展開狀態。
+   * @param {string} rowKey - 格式為 `${modelName}::${serverUrl}`
+   */
+  const toggleExpand = useCallback((rowKey) => {
     setExpandedModels((prev) => {
       const next = new Set(prev);
-      if (next.has(modelName)) {
-        next.delete(modelName);
+      if (next.has(rowKey)) {
+        next.delete(rowKey);
       } else {
-        next.add(modelName);
+        next.add(rowKey);
       }
       return next;
     });
   }, []);
 
   /**
-   * 呼叫後端刪除指定 Triton 部署模型，並重新整理資料。
-   * @param {string} modelName - 要刪除的 Triton 模型名稱
+   * 從指定伺服器移除已部署模型。
+   * - 帶 triton_url：只從該台伺服器移除（其他伺服器不受影響）
+   * - 不帶 triton_url：完整刪除（向後相容）
+   * @param {string} modelName   - Triton 模型名稱
+   * @param {string} serverUrl   - 目標 Triton 基底 URL（空字串表示刪除全部）
+   * @param {string} rowKey      - 當前列唯一鍵，用於清除展開狀態
    */
-  const handleDeleteModel = useCallback(async (modelName) => {
-    if (!window.confirm(`確定要移除部署模型「${modelName}」嗎？\n此操作不可復原。`)) return;
-    setDeletingModel(modelName);
+  const handleDeleteModelFromServer = useCallback(async (modelName, serverUrl, rowKey) => {
+    const serverIp = serverUrl ? extractHostFromUrl(serverUrl) : "";
+    const confirmMsg = serverUrl
+      ? `確定要從伺服器 [${serverIp}] 移除部署模型「${modelName}」嗎？\n其餘伺服器的部署不受影響，此操作不可復原。`
+      : `確定要完整移除部署模型「${modelName}」嗎？\n此操作不可復原。`;
+    if (!window.confirm(confirmMsg)) return;
+
+    setDeletingModel(rowKey);
     try {
-      await api.callApi("trainingTritonModelDelete", {
-        params: { pk: projectId, model_name: modelName },
-      });
+      const params = { pk: projectId, model_name: modelName };
+      if (serverUrl) params.triton_url = serverUrl;
+      await api.callApi("trainingTritonModelDelete", { params });
       await fetchMetrics();
       setExpandedModels((prev) => {
         const next = new Set(prev);
-        next.delete(modelName);
+        next.delete(rowKey);
         return next;
       });
     } catch (err) {
@@ -441,57 +704,64 @@ export function LogsAndMetricsTab() {
     );
   }
 
-  const health = data?.health ?? {};
-  const hardware = data?.hardware ?? {};
-  const inference = data?.inference ?? {};
   const modelUsage = data?.models ?? [];
   const deployerOptions = buildDeployerOptions(data?.filters?.deployers);
   const selectedUser = data?.filters?.selected_user;
   const snapshots = historyData?.snapshots ?? [];
   const events = historyData?.events ?? [];
-  const serviceBadge = getHealthBadge(health.status);
 
-  /** Triton Prometheus 有無回傳 CPU 指標（nv_cpu_utilization）。 */
-  const tritonHasCpuMetrics = hardware.metrics_available && hardware.cpu > 0;
-  const hardwareStats = [
-    { label: "GPU 使用率", value: formatValue(hardware.gpu), unit: "%", icon: IconAnalytics, color: "#10b981" },
-    {
-      label: "VRAM 佔用",
-      value: formatValue(hardware.vram_used_gb),
-      unit: hardware.vram_total_gb > 0
-        ? `GB / ${formatValue(hardware.vram_total_gb)} GB`
-        : "GB",
-      icon: IconTerminal,
-      color: "#6366f1",
-    },
-    {
-      label: "CPU 使用率",
-      value: tritonHasCpuMetrics ? formatValue(hardware.cpu) : "—",
-      unit: tritonHasCpuMetrics ? "%" : "",
-      icon: IconCode,
-      color: "#f59e0b",
-    },
-    {
-      label: "系統記憶體",
-      value: tritonHasCpuMetrics ? formatValue(hardware.ram) : "—",
-      unit: tritonHasCpuMetrics ? `% (${formatValue(hardware.ram_used_gb)} GB)` : "",
-      icon: IconInfoOutline,
-      color: "#3b82f6",
-    },
-  ];
+  /**
+   * 將 modelUsage 展開為「模型 × 伺服器」資料列陣列。
+   * 每筆 model 若有多台 triton_servers，就產生多列（各列可獨立刪除）。
+   * 指標優先從對應伺服器的 serverMetricsMap 取得；若未命中則沿用 data.models 的彙總值。
+   *
+   * @type {Array<{
+   *   _rowKey: string,
+   *   _serverUrl: string,
+   *   _serverIp: string | null,
+   *   _serverDeployedAt: string,
+   *   name: string,
+   *   deployed_by_username: string,
+   *   request_count: number,
+   *   rps: number,
+   *   latency_ms: number,
+   *   success_count: number,
+   *   error_count: number,
+   *   status: string,
+   * }>}
+   */
+  const tableRows = modelUsage.flatMap((m) => {
+    const serverList = Array.isArray(m.triton_servers) && m.triton_servers.length > 0
+      ? m.triton_servers
+      : [{ url: m.triton_public_base_url ?? "", deployed_at: m.deployed_at ?? "" }];
 
-  const perfStats = [
-    { label: "平均延遲", value: formatValue(inference.latency), unit: "ms", icon: IconAnalytics },
-    { label: "每秒請求", value: formatValue(inference.rps), unit: "req/s", icon: IconExternal },
-    { label: "成功率", value: formatValue(inference.success_rate), unit: "%", icon: IconAnalytics },
-    {
-      label: "啟用模型數",
-      value: formatValue(inference.active_models ?? 0, 0),
-      unit: `/ ${formatValue(inference.total_models ?? 0, 0)}`,
-      icon: IconCode,
-      color: "#10b981",
-    },
-  ];
+    return serverList.map((s) => {
+      const serverUrl = (s.url || "").trim().replace(/\/+$/, "");
+      const serverIp = serverUrl ? extractHostFromUrl(serverUrl) : null;
+      const rowKey = `${m.name}::${serverUrl}`;
+
+      // 從對應伺服器的 metrics 取得單台效能數據
+      const srvData = serverUrl ? serverMetricsMap.get(serverUrl) : null;
+      const srvModel = srvData?.models?.find((sm) => sm.name === m.name);
+
+      return {
+        ...m,
+        // 用每台伺服器的 metrics 覆蓋，若無則使用彙總值（僅單台時準確）
+        request_count: srvModel?.request_count ?? (serverList.length === 1 ? m.request_count : 0),
+        rps: srvModel?.rps ?? (serverList.length === 1 ? m.rps : 0),
+        latency_ms: srvModel?.latency_ms ?? (serverList.length === 1 ? m.latency_ms : 0),
+        success_count: srvModel?.success_count ?? (serverList.length === 1 ? m.success_count : 0),
+        error_count: srvModel?.error_count ?? (serverList.length === 1 ? m.error_count : 0),
+        status: srvModel?.status ?? (serverUrl ? "—" : m.status),
+        // 列識別
+        _rowKey: rowKey,
+        _serverUrl: serverUrl,
+        _serverIp: serverIp,
+        _serverDeployedAt: s.deployed_at ?? m.deployed_at ?? "",
+        _uploadServerUrl: s.upload_server_url ?? "",
+      };
+    });
+  });
 
   return (
     <section className={rootClass.toClassName()}>
@@ -515,17 +785,8 @@ export function LogsAndMetricsTab() {
                 部署者: {selectedUser.username}
               </span>
             ) : null}
-            <span
-              className={rootClass.elem("service-badge").toClassName()}
-              style={{
-                background: serviceBadge.background,
-                color: serviceBadge.color,
-              }}
-            >
-              Triton {serviceBadge.label}
-            </span>
             <span className={rootClass.elem("meta-chip").toClassName()}>
-              {health.metrics_available ? "Metrics 已連線" : "Metrics 未連線"}
+              已偵測伺服器: {autoServers.length} 台
             </span>
           </div>
         </div>
@@ -533,7 +794,14 @@ export function LogsAndMetricsTab() {
           <div className={rootClass.elem("field").mod({ project: true }).toClassName()}>
             <label className={rootClass.elem("field-label").toClassName()}>
               專案
+            {refreshing && data ? (
+            <span className={rootClass.elem("refresh-indicator").toClassName()} title="資料更新中…">
+              <span className={rootClass.elem("refresh-dot").toClassName()} />
+              <span className={rootClass.elem("refresh-label").toClassName()}>更新中</span>
+            </span>
+          ) : null}
             </label>
+
             <select
               className={rootClass.elem("text-input").toClassName()}
               value={projectId}
@@ -545,48 +813,11 @@ export function LogsAndMetricsTab() {
               ))}
             </select>
           </div>
-          <div className={rootClass.elem("field").mod({ project: true }).toClassName()}>
-            <label className={rootClass.elem("field-label").toClassName()}>
-              Triton 伺服器 IP
-            </label>
-            <input
-              className={rootClass.elem("text-input").toClassName()}
-              value={tritonServerHost}
-              onChange={(event) => setTritonServerHost(event.target.value.trim())}
-              placeholder="192.168.1.10（空＝伺服器預設）"
-              type="text"
-              title={tritonServerHost.trim() ? `HTTP: ${tritonServerUrl}  Metrics: ${tritonMetricsUrl}` : ""}
-            />
-          </div>
-          <Button variant="neutral" look="outlined" onClick={fetchMetrics} disabled={!projectId}>
+          <Button variant="neutral" look="outlined" onClick={fetchMetrics} disabled={!projectId || refreshing}>
             重新載入
           </Button>
-          <Button
-            variant="neutral"
-            look="outlined"
-            type="button"
-            onClick={handleVerifyTriton}
-            disabled={!projectId || tritonVerifyLoading}
-          >
-            {tritonVerifyLoading ? "驗證中…" : "驗證 Triton"}
-          </Button>
-          {tritonVerifyResult ? (
-            <Typography
-              variant="body"
-              size="small"
-              style={{
-                maxWidth: 360,
-                color:
-                  tritonVerifyResult.level === "success"
-                    ? "var(--color-positive-content, #166534)"
-                    : tritonVerifyResult.level === "warning"
-                      ? "var(--color-warning-content, #92400e)"
-                      : "var(--color-negative-content, #991b1b)",
-              }}
-            >
-              {tritonVerifyResult.text}
-            </Typography>
-          ) : null}
+          {/* 輪詢更新時顯示小型旋轉指示器（初次全頁載入不顯示，由 Spinner 處理） */}
+
           <div className={rootClass.elem("filters").toClassName()}>
             <ToggleItems items={VIEW_MODES} active={scope} onSelect={setScope} />
             <div className={rootClass.elem("select-wrap").toClassName()}>
@@ -602,56 +833,117 @@ export function LogsAndMetricsTab() {
         </div>
       </div>
 
-      <div className={rootClass.elem("overview").toClassName()}>
-        <SectionBlock
-          title="Triton 伺服器硬體監控"
-          description={
-            health.metrics_available
-              ? "即時顯示目標 Triton 伺服器的 GPU、VRAM、CPU 與記憶體使用量（資料來源：Triton Prometheus Metrics）。"
-              : "Triton Metrics 尚未連線，硬體數據暫不可用。請確認 Triton 伺服器 IP 與 Metrics 埠（8002）是否正確。"
-          }
-        >
-          <div className={rootClass.elem("stats-grid").toClassName()}>
-            {hardwareStats.map((s) => <StatCard key={s.label} {...s} />)}
+      <SectionBlock
+        title={`Triton 伺服器效能監控${allServers.length > 0 ? `（${autoServers.length} 自動 + ${manualServers.length} 手動，共 ${allServers.length} 台）` : ""}`}
+        description="每 5 秒自動更新。硬體指標（GPU / VRAM / CPU / RAM）需 Triton Prometheus Metrics（埠 8002）可存取。可手動新增任意 Triton 伺服器以納入監控。"
+      >
+        {/* ── 手動新增伺服器表單 ──────────────────────────────────────────────── */}
+        <div className={rootClass.elem("manual-server-form").toClassName()}>
+          <div className={rootClass.elem("manual-server-input-row").toClassName()}>
+            <input
+              type="text"
+              className={rootClass.elem("text-input").toClassName()}
+              placeholder="http://10.214.57.20:18000"
+              value={newServerUrl}
+              onChange={(e) => { setNewServerUrl(e.target.value); setAddServerError(""); }}
+              onKeyDown={(e) => { if (e.key === "Enter") handleAddServer(); }}
+            />
+            <Button
+              variant="primary"
+              look="outlined"
+              onClick={handleAddServer}
+              disabled={!newServerUrl.trim()}
+            >
+              新增監控
+            </Button>
           </div>
-        </SectionBlock>
+          {addServerError && (
+            <div className={rootClass.elem("manual-server-error").toClassName()}>
+              {addServerError}
+            </div>
+          )}
+          {/* 已新增的手動伺服器 tag 列表 */}
+          {manualServers.length > 0 && (
+            <div className={rootClass.elem("manual-server-list").toClassName()}>
+              {manualServers.map((s) => (
+                <span key={s.url} className={rootClass.elem("manual-server-item").toClassName()}>
+                  <span className={rootClass.elem("server-badge-ip").toClassName()}>
+                    {extractHostFromUrl(s.url)}
+                  </span>
+                  <span className={rootClass.elem("manual-server-url").toClassName()}>{s.url}</span>
+                  <button
+                    type="button"
+                    className={rootClass.elem("manual-server-remove").toClassName()}
+                    onClick={() => handleRemoveServer(s.url)}
+                    title={`移除 ${s.url}`}
+                  >
+                    <IconTrash size={12} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
 
-        <SectionBlock title="推論效能指標" description="摘要展示目前模型服務的延遲、吞吐與成功率。">
-          <div className={rootClass.elem("stats-grid").toClassName()}>
-            {perfStats.map((s) => <StatCard key={s.label} {...s} />)}
+        {/* ── 伺服器效能面板 ──────────────────────────────────────────────────── */}
+        {allServers.length === 0 ? (
+          <div className={rootClass.elem("empty-cell").toClassName()} style={{ padding: "28px 0", textAlign: "center" }}>
+            尚未偵測到 Triton 伺服器；請輸入 Triton 位址或先完成模型部署
           </div>
-        </SectionBlock>
-      </div>
+        ) : (
+          <div className={rootClass.elem("server-panels").toClassName()}>
+            {allServers.map(({ url, ip, models: serverModels, _manual }) => (
+              <ServerPerformancePanel
+                key={url}
+                ip={ip}
+                models={serverModels}
+                isManual={Boolean(_manual)}
+                metricsData={serverMetricsMap.has(url) ? serverMetricsMap.get(url) : null}
+              />
+            ))}
+          </div>
+        )}
+      </SectionBlock>
 
-      <SectionBlock title="部署模型" description="以模型為單位查看部署者、請求數量與目前狀態；點擊列可展開詳細資訊。">
+      <SectionBlock title="部署模型" description="每列對應一個模型部署至單台 Triton 伺服器；點擊列可展開詳情，每列可獨立移除。">
         <div className={rootClass.elem("table-wrap").toClassName()}>
           <table className={rootClass.elem("table").mod({ compact: true }).toClassName()}>
             <thead>
               <tr>
-                <th style={{ width: 24 }} />
-                <th>模型名稱</th>
-                <th>部署者</th>
-                <th>請求總數</th>
-                <th>RPS</th>
-                <th>平均延遲</th>
-                <th>成功 / 失敗</th>
-                <th>狀態</th>
-                <th>操作</th>
+                {/* 展開箭頭 */}
+                <th style={{ width: 28 }} />
+                {/* 模型名稱：最寬，含副標題 */}
+                <th style={{ width: 170 }}>模型名稱</th>
+                {/* 部署者 */}
+                <th style={{ width: 96 }}>部署者</th>
+                {/* Triton 伺服器 IP badge */}
+                <th style={{ width: 148 }}>Triton 伺服器</th>
+                {/* 數字欄：右對齊 */}
+                <th style={{ width: 80, textAlign: "right" }}>請求總數</th>
+                <th style={{ width: 76, textAlign: "right" }}>RPS (req/s)</th>
+                <th style={{ width: 92, textAlign: "right" }}>平均延遲 (ms)</th>
+                <th style={{ width: 104, textAlign: "right" }}>成功 / 失敗</th>
+                {/* 狀態 badge：置中 */}
+                <th style={{ width: 82, textAlign: "center" }}>狀態</th>
+                {/* 操作按鈕：置中 */}
+                <th style={{ width: 72, textAlign: "center" }}>操作</th>
               </tr>
             </thead>
             <tbody>
-              {modelUsage.length > 0 ? modelUsage.map((m) => {
-                const badge = getHealthBadge(m.status);
-                const isExpanded = expandedModels.has(m.name);
-                const isDeleting = deletingModel === m.name;
+              {tableRows.length > 0 ? tableRows.map((row) => {
+                const badge = getHealthBadge(row.status);
+                const isExpanded = expandedModels.has(row._rowKey);
+                const isDeleting = deletingModel === row._rowKey;
+                /** 該模型共部署於幾台伺服器（用於顯示提示） */
+                const totalServers = (Array.isArray(row.triton_servers) ? row.triton_servers : []).length || 1;
 
                 return [
-                  /* ── 主列 ── */
+                  /* ── 主列：(模型, 伺服器) 一列 ── */
                   <tr
-                    key={m.name}
+                    key={row._rowKey}
                     className={rootClass.elem("model-row").mod({ expanded: isExpanded }).toClassName()}
                     style={{ cursor: "pointer" }}
-                    onClick={() => toggleExpand(m.name)}
+                    onClick={() => toggleExpand(row._rowKey)}
                   >
                     <td style={{ paddingRight: 0 }}>
                       <IconChevronRight
@@ -664,19 +956,46 @@ export function LogsAndMetricsTab() {
                       />
                     </td>
                     <td className={rootClass.elem("table-primary").toClassName()}>
-                      <div className={rootClass.elem("model-name").toClassName()}>{m.name}</div>
+                      <div className={rootClass.elem("model-name-row").toClassName()}>
+                        <span className={rootClass.elem("model-name").toClassName()}>{row.name}</span>
+                        {/* 複製模型名稱按鈕：滑鼠移入列時顯示 */}
+                        <button
+                          type="button"
+                          className={rootClass.elem("copy-btn").mod({ copied: copiedKey === row._rowKey }).toClassName()}
+                          title={copiedKey === row._rowKey ? "已複製！" : `複製「${row.name}」`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigator.clipboard.writeText(row.name).then(() => {
+                              setCopiedKey(row._rowKey);
+                              setTimeout(() => setCopiedKey(null), 1500);
+                            });
+                          }}
+                        >
+                          {copiedKey === row._rowKey
+                            ? <span className={rootClass.elem("copy-check").toClassName()}>✓</span>
+                            : <IconCopy size={12} />
+                          }
+                        </button>
+                      </div>
                       <small className={rootClass.elem("model-meta").toClassName()}>
-                        {m.owned_by_current_user ? "目前使用者部署" : "其他成員部署"}
+                        {row.owned_by_current_user ? "目前使用者部署" : "其他成員部署"}
+                        {totalServers > 1 ? ` · 共 ${totalServers} 台伺服器` : ""}
                       </small>
                     </td>
-                    <td>{m.deployed_by_username ?? "未記錄"}</td>
-                    <td>{formatValue(m.request_count, 0)}</td>
-                    <td>{formatValue(m.rps)} <small>req/s</small></td>
-                    <td>{formatValue(m.latency_ms)} <small>ms</small></td>
+                    <td>{row.deployed_by_username ?? "未記錄"}</td>
                     <td>
-                      {formatValue(m.success_count, 0)} / {formatValue(m.error_count, 0)}
+                      {row._serverIp
+                        ? <span className={rootClass.elem("server-badge-ip").toClassName()} title={row._serverUrl}>{row._serverIp}</span>
+                        : <span style={{ color: "var(--color-neutral-content-subtle)" }}>—</span>
+                      }
                     </td>
-                    <td>
+                    <td style={{ textAlign: "right" }}>{formatValue(row.request_count, 0)}</td>
+                    <td style={{ textAlign: "right" }}>{formatValue(row.rps, 1)}</td>
+                    <td style={{ textAlign: "right" }}>{formatValue(row.latency_ms, 1)}</td>
+                    <td style={{ textAlign: "right" }}>
+                      {formatValue(row.success_count, 0)} / {formatValue(row.error_count, 0)}
+                    </td>
+                    <td style={{ textAlign: "center" }}>
                       <span
                         className={rootClass.elem("status-badge").toClassName()}
                         style={{ background: badge.background, color: badge.color }}
@@ -684,7 +1003,7 @@ export function LogsAndMetricsTab() {
                         {badge.label}
                       </span>
                     </td>
-                    <td onClick={(e) => e.stopPropagation()}>
+                    <td style={{ textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
                       <Button
                         size="small"
                         look="outlined"
@@ -692,46 +1011,55 @@ export function LogsAndMetricsTab() {
                         icon={<IconTrash size={14} />}
                         waiting={isDeleting}
                         disabled={isDeleting}
-                        onClick={() => handleDeleteModel(m.name)}
-                        title={`移除部署模型 ${m.name}`}
+                        onClick={() => handleDeleteModelFromServer(row.name, row._serverUrl, row._rowKey)}
+                        title={row._serverUrl
+                          ? `從 ${row._serverIp} 移除模型 ${row.name}`
+                          : `完整移除模型 ${row.name}`
+                        }
                       >
                         移除
                       </Button>
                     </td>
                   </tr>,
 
-                  /* ── 展開詳情列 ── */
+                  /* ── 展開詳情列（單台伺服器詳情） ── */
                   isExpanded ? (
-                    <tr key={`${m.name}--detail`} className={rootClass.elem("model-detail-row").toClassName()}>
+                    <tr key={`${row._rowKey}--detail`} className={rootClass.elem("model-detail-row").toClassName()}>
                       <td />
-                      <td colSpan={8}>
+                      <td colSpan={9}>
                         <div className={rootClass.elem("model-detail").toClassName()}>
                           <div className={rootClass.elem("model-detail-grid").toClassName()}>
-                            <span className={rootClass.elem("detail-label").toClassName()}>部署時間</span>
-                            <span>{formatDateTime(m.deployed_at)}</span>
+                            <span className={rootClass.elem("detail-label").toClassName()}>部署至此台時間</span>
+                            <span>{formatDateTime(row._serverDeployedAt || row.deployed_at)}</span>
 
-                            <span className={rootClass.elem("detail-label").toClassName()}>Run ID</span>
-                            <span className={rootClass.elem("detail-mono").toClassName()}>
-                              {m.run_id ?? "—"}
-                            </span>
-
-                            <span className={rootClass.elem("detail-label").toClassName()}>輸入尺寸</span>
-                            <span>{m.imgsz ? `${m.imgsz} × ${m.imgsz}` : "—"}</span>
-
-                            <span className={rootClass.elem("detail-label").toClassName()}>Triton URL</span>
-                            <span className={rootClass.elem("detail-mono").toClassName()}>
-                              {m.triton_public_base_url ?? m.infer_url ?? "—"}
+                            <span className={rootClass.elem("detail-label").toClassName()}>Triton 伺服器</span>
+                            <span>
+                              {row._serverIp ? (
+                                <span className={rootClass.elem("server-list-item").toClassName()}>
+                                  <span className={rootClass.elem("server-badge-ip").toClassName()}>{row._serverIp}</span>
+                                  <span className={rootClass.elem("detail-mono").toClassName()}>{row._serverUrl}</span>
+                                </span>
+                              ) : (
+                                <span className={rootClass.elem("detail-mono").toClassName()}>—</span>
+                              )}
                             </span>
 
                             <span className={rootClass.elem("detail-label").toClassName()}>推論端點</span>
                             <span className={rootClass.elem("detail-mono").toClassName()}>
-                              {m.infer_url ?? "—"}
+                              {row._serverUrl
+                                ? `${row._serverUrl}/v2/models/${row.name}/infer`
+                                : (row.infer_url ?? "—")
+                              }
                             </span>
 
-                            <span className={rootClass.elem("detail-label").toClassName()}>模型目錄</span>
+                            <span className={rootClass.elem("detail-label").toClassName()}>Run ID</span>
                             <span className={rootClass.elem("detail-mono").toClassName()}>
-                              {m.model_dir ?? "—"}
+                              {row.run_id ?? "—"}
                             </span>
+
+                            <span className={rootClass.elem("detail-label").toClassName()}>輸入尺寸</span>
+                            <span>{row.imgsz ? `${row.imgsz} × ${row.imgsz}` : "—"}</span>
+
                           </div>
                         </div>
                       </td>
@@ -740,7 +1068,7 @@ export function LogsAndMetricsTab() {
                 ];
               }) : (
                 <tr>
-                  <td colSpan={9} className={rootClass.elem("empty-cell").toClassName()}>
+                  <td colSpan={10} className={rootClass.elem("empty-cell").toClassName()}>
                     目前沒有符合此檢視條件的部署模型。
                   </td>
                 </tr>

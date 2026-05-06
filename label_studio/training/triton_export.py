@@ -394,24 +394,31 @@ def export_torchscript_pt_to_triton(
             model_dir = repo_root / model_name
             model_dir.mkdir(parents=True, exist_ok=True)
             metadata_path = model_dir / "deployment_meta.json"
+            _deployed_at = datetime.now(timezone.utc).isoformat()
+            _new_server_url = (public_triton_base_url or "").rstrip("/") or None
             metadata = {
                 "model_name": model_name,
                 "project_id": project_id,
                 "run_id": run_id,
                 "imgsz": imgsz,
-                "deployed_at": datetime.now(timezone.utc).isoformat(),
+                "deployed_at": _deployed_at,
                 "model_type": "torchscript_cnn",
                 "export_device": _export_device or "original",
                 "deployed_by_user_id": deployed_by_user_id,
                 "deployed_by_username": deployed_by_username,
                 "upload_server_url": upload_server_url,
-                "triton_public_base_url": (public_triton_base_url or "").rstrip("/") or None,
+                "triton_public_base_url": _new_server_url,
                 # 實際寫入 config.pbtxt 的裝置（可能與使用者請求不同）
                 "instance_kind": _effective_instance_kind,
                 "instance_kind_requested": instance_kind,
                 "gpu_ids": gpu_ids if _effective_instance_kind == "GPU" else [],
                 "instance_count": instance_count,
                 "always_in_memory": always_in_memory,
+                # 累積多台 Triton 伺服器記錄（同 URL 去重；遷移舊格式自動合併）
+                "triton_servers": _merge_triton_servers(
+                    metadata_path, _new_server_url, _deployed_at,
+                    upload_server_url=upload_server_url,
+                ),
             }
             metadata_path.write_text(json.dumps(metadata, ensure_ascii=True, indent=2), encoding="utf-8")
 
@@ -446,13 +453,15 @@ def export_torchscript_pt_to_triton(
 
         config_path.write_text(config_content, encoding="utf-8")
 
+        _deployed_at = datetime.now(timezone.utc).isoformat()
+        _new_server_url = public_triton_base_url.rstrip("/") if public_triton_base_url else None
         metadata = {
             "model_name": model_name,
             "project_id": project_id,
             "run_id": run_id,
             "imgsz": imgsz,
             "model_pt_path": str(model_pt_path.resolve()),
-            "deployed_at": datetime.now(timezone.utc).isoformat(),
+            "deployed_at": _deployed_at,
             "model_type": "torchscript_cnn",
             "export_device": _export_device or "original",
             "deployed_by_user_id": deployed_by_user_id,
@@ -463,9 +472,13 @@ def export_torchscript_pt_to_triton(
             "gpu_ids": gpu_ids if _effective_instance_kind == "GPU" else [],
             "instance_count": instance_count,
             "always_in_memory": always_in_memory,
+            # 累積多台 Triton 伺服器記錄（同 URL 去重；遷移舊格式自動合併；本機模式無 upload_server_url）
+            "triton_servers": _merge_triton_servers(
+                metadata_path, _new_server_url, _deployed_at, upload_server_url=None,
+            ),
         }
-        if public_triton_base_url:
-            metadata["triton_public_base_url"] = public_triton_base_url.rstrip("/")
+        if _new_server_url:
+            metadata["triton_public_base_url"] = _new_server_url
         metadata_path.write_text(json.dumps(metadata, ensure_ascii=True, indent=2), encoding="utf-8")
 
         resp = {
@@ -593,6 +606,8 @@ def export_yolo_pt_to_triton(
         model_dir = repo_root / model_name
         model_dir.mkdir(parents=True, exist_ok=True)
         metadata_path = model_dir / "deployment_meta.json"
+        _deployed_at = datetime.now(timezone.utc).isoformat()
+        _new_server_url = (public_triton_base_url or "").rstrip("/") or None
         metadata = {
             "model_name": model_name,
             "project_id": project_id,
@@ -600,15 +615,20 @@ def export_yolo_pt_to_triton(
             "imgsz": imgsz,
             "source_pt_path": str(best_pt_path.resolve()),
             "exported_torchscript_path": str(src_torchscript.resolve()),
-            "deployed_at": datetime.now(timezone.utc).isoformat(),
+            "deployed_at": _deployed_at,
             "deployed_by_user_id": deployed_by_user_id,
             "deployed_by_username": deployed_by_username,
             "upload_server_url": upload_server_url,
-            "triton_public_base_url": (public_triton_base_url or "").rstrip("/") or None,
+            "triton_public_base_url": _new_server_url,
             "instance_kind": instance_kind,
             "gpu_ids": gpu_ids or [],
             "instance_count": instance_count,
             "always_in_memory": always_in_memory,
+            # 累積多台 Triton 伺服器記錄（同 URL 去重；遷移舊格式自動合併）
+            "triton_servers": _merge_triton_servers(
+                metadata_path, _new_server_url, _deployed_at,
+                upload_server_url=upload_server_url,
+            ),
         }
         metadata_path.write_text(json.dumps(metadata, ensure_ascii=True, indent=2), encoding="utf-8")
 
@@ -641,6 +661,8 @@ def export_yolo_pt_to_triton(
     config_path.write_text(config_content, encoding="utf-8")
     legacy_bptxt_path.write_text(config_content, encoding="utf-8")
 
+    _deployed_at = datetime.now(timezone.utc).isoformat()
+    _new_server_url = public_triton_base_url.rstrip("/") if public_triton_base_url else None
     metadata = {
         "model_name": model_name,
         "project_id": project_id,
@@ -651,16 +673,20 @@ def export_yolo_pt_to_triton(
         "model_pt_path": str(model_pt_path.resolve()),
         "config_path": str(config_path.resolve()),
         "legacy_bptxt_path": str(legacy_bptxt_path.resolve()),
-        "deployed_at": datetime.now(timezone.utc).isoformat(),
+        "deployed_at": _deployed_at,
         "deployed_by_user_id": deployed_by_user_id,
         "deployed_by_username": deployed_by_username,
         "instance_kind": instance_kind,
         "gpu_ids": gpu_ids or [],
         "instance_count": instance_count,
         "always_in_memory": always_in_memory,
+        # 累積多台 Triton 伺服器記錄（同 URL 去重；遷移舊格式自動合併；本機模式無 upload_server_url）
+        "triton_servers": _merge_triton_servers(
+            metadata_path, _new_server_url, _deployed_at, upload_server_url=None,
+        ),
     }
-    if public_triton_base_url:
-        metadata["triton_public_base_url"] = public_triton_base_url.rstrip("/")
+    if _new_server_url:
+        metadata["triton_public_base_url"] = _new_server_url
     metadata_path.write_text(json.dumps(metadata, ensure_ascii=True, indent=2), encoding="utf-8")
 
     return {
@@ -674,6 +700,64 @@ def export_yolo_pt_to_triton(
         "metadata_path": str(metadata_path),
         "infer_url": f"{infer_base}/v2/models/{model_name}/infer",
     }
+
+
+def _merge_triton_servers(
+    metadata_path: Path,
+    new_server_url: Optional[str],
+    deployed_at: str,
+    upload_server_url: Optional[str] = None,
+) -> list:
+    """
+    讀取現有 ``deployment_meta.json`` 中的 ``triton_servers`` 陣列，將新伺服器合併後回傳。
+
+    - 以正規化後的 URL 進行去重（同 URL 視為同一台伺服器，更新部署時間）。
+    - 自動遷移舊格式：若現有檔案只有 ``triton_public_base_url`` 而無 ``triton_servers``，
+      先將舊值轉為清單的第一筆再追加。
+    - ``upload_server_url`` 記錄於每筆伺服器項目，供單台刪除時呼叫對應的 Upload Server。
+
+    :param metadata_path: ``deployment_meta.json`` 的 Path（可能尚不存在）。
+    :param new_server_url: 新部署目標 Triton 基底 URL，例如 ``http://10.214.57.66:18000``。
+    :param deployed_at: 本次部署的 ISO 8601 時間字串。
+    :param upload_server_url: 對應的 Upload Server URL（遠端部署時傳入，本機部署為 None）。
+    :returns: 更新後的 triton_servers 清單，每項格式為::
+
+        {
+            "url": str,                # Triton HTTP 基底 URL
+            "deployed_at": str,        # ISO 8601
+            "upload_server_url": str   # Upload Server URL（可為空字串）
+        }
+    """
+    servers: list = []
+    if metadata_path.exists():
+        try:
+            existing = json.loads(metadata_path.read_text(encoding="utf-8"))
+            existing_servers = existing.get("triton_servers")
+            if existing_servers and isinstance(existing_servers, list):
+                servers = list(existing_servers)
+            else:
+                # 遷移舊格式：triton_public_base_url 單一字串 → 清單第一項
+                legacy_url = (existing.get("triton_public_base_url") or "").strip().rstrip("/")
+                if legacy_url:
+                    servers = [{
+                        "url": legacy_url,
+                        "deployed_at": existing.get("deployed_at", ""),
+                        "upload_server_url": existing.get("upload_server_url") or "",
+                    }]
+        except Exception:
+            servers = []
+
+    new_url_norm = (new_server_url or "").strip().rstrip("/")
+    if new_url_norm:
+        # 去重：移除相同 URL 的舊紀錄，再附加最新記錄
+        servers = [s for s in servers if (s.get("url") or "").rstrip("/") != new_url_norm]
+        servers.append({
+            "url": new_url_norm,
+            "deployed_at": deployed_at,
+            "upload_server_url": (upload_server_url or "").strip().rstrip("/"),
+        })
+
+    return servers
 
 
 def list_triton_model_deployments(
