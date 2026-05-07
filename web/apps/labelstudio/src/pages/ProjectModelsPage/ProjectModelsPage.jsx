@@ -79,7 +79,7 @@ export const ProjectModelsPage = () => {
   const [editingName, setEditingName] = useState("");
 
   /** 推論裝置種類："GPU" | "CPU" | "AUTO" */
-  const [instanceKind, setInstanceKind] = useState("AUTO");
+  const [instanceKind, setInstanceKind] = useState("GPU");
   /** GPU 裝置 ID 字串，逗號分隔，例如 "0" 或 "0,1"。僅 instanceKind==="GPU" 時有效 */
   const [gpuIds, setGpuIds] = useState("0");
   /** 推論實例數量（Triton instance_group.count） */
@@ -516,10 +516,6 @@ export const ProjectModelsPage = () => {
               </span>
             ) : null}
           </div>
-          <div className={cn("project-models-page").elem("triton-deploy-hint").toClassName()}>
-            選擇預設或手動輸入；部署時會將此前綴寫入模型後設，並供模型測試／儀錶板轉發使用。指定 URL 時會先經後端連線檢查再部署。空值表示由伺服器{' '}
-            <code>TRITON_SERVER_URL</code> 決定。
-          </div>
 
           {/* GPU / 推論裝置設定 */}
           <div className={cn("project-models-page").elem("triton-deploy-label").toClassName()}>
@@ -532,9 +528,9 @@ export const ProjectModelsPage = () => {
               value={instanceKind}
               onChange={(e) => setInstanceKind(e.target.value)}
             >
-              <option value="AUTO">自動（KIND_AUTO，Triton 決定）</option>
               <option value="GPU">GPU（KIND_GPU）</option>
               <option value="CPU">CPU（KIND_CPU）</option>
+              <option value="AUTO">自動（KIND_AUTO，Triton 決定）</option>
             </select>
             <label
               className={cn("project-models-page").elem("triton-deploy-inline-label").toClassName()}
