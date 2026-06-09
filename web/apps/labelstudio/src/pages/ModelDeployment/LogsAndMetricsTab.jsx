@@ -1,10 +1,18 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { Typography, Button, buttonVariant, Spinner } from "@humansignal/ui";
-import { IconExternal, IconTerminal, IconCode, IconInfoOutline, IconAnalytics, IconTrash, IconChevronRight, IconCopy } from "@humansignal/icons";
+import { Typography, Button, Spinner } from "@humansignal/ui";
+import {
+  IconExternal,
+  IconTerminal,
+  IconCode,
+  IconInfoOutline,
+  IconAnalytics,
+  IconTrash,
+  IconChevronRight,
+  IconCopy,
+} from "@humansignal/icons";
 import { ToggleItems } from "../../components";
 import { Select } from "../../components/Form";
 import { cn } from "../../utils/bem";
-import { MONITORING_ENDPOINTS } from "./config";
 import {
   TRITON_PLAYGROUND_STATE_KEY,
   extractHostFromUrl,
@@ -154,12 +162,13 @@ function extractServersFromModels(models) {
   /** @type {Map<string, {url: string, ip: string, models: string[]}>} */
   const map = new Map();
 
-  for (const m of (models || [])) {
-    const serverList = Array.isArray(m.triton_servers) && m.triton_servers.length > 0
-      ? m.triton_servers
-      : m.triton_public_base_url
-        ? [{ url: m.triton_public_base_url }]
-        : [];
+  for (const m of models || []) {
+    const serverList =
+      Array.isArray(m.triton_servers) && m.triton_servers.length > 0
+        ? m.triton_servers
+        : m.triton_public_base_url
+          ? [{ url: m.triton_public_base_url }]
+          : [];
 
     for (const s of serverList) {
       const url = (s.url || "").trim().replace(/\/+$/, "");
@@ -192,8 +201,10 @@ function ServerPerformancePanel({ ip, models, metricsData, isManual = false }) {
   const hasError = metricsData?.error;
   const tritonHasCpuMetrics = hardware.metrics_available && hardware.cpu > 0;
   // 以後端旗標判斷 VRAM / RAM 指標是否實際可用，避免顯示 0 GB / 0%
-  const tritonHasVramMetrics = hardware.metrics_available && (hardware.vram_available === true || hardware.vram_total_gb > 0);
-  const tritonHasRamMetrics = hardware.metrics_available && (hardware.ram_mem_available === true || hardware.ram_used_gb > 0);
+  const tritonHasVramMetrics =
+    hardware.metrics_available && (hardware.vram_available === true || hardware.vram_total_gb > 0);
+  const tritonHasRamMetrics =
+    hardware.metrics_available && (hardware.ram_mem_available === true || hardware.ram_used_gb > 0);
 
   const hardwareStats = [
     { label: "GPU 使用率", value: formatValue(hardware.gpu), unit: "%", icon: IconAnalytics, color: "#10b981" },
@@ -201,7 +212,9 @@ function ServerPerformancePanel({ ip, models, metricsData, isManual = false }) {
       label: "VRAM 佔用",
       value: tritonHasVramMetrics ? formatValue(hardware.vram_used_gb) : "—",
       unit: tritonHasVramMetrics
-        ? (hardware.vram_total_gb > 0 ? `GB / ${formatValue(hardware.vram_total_gb)} GB` : "GB")
+        ? hardware.vram_total_gb > 0
+          ? `GB / ${formatValue(hardware.vram_total_gb)} GB`
+          : "GB"
         : "",
       icon: IconTerminal,
       color: "#6366f1",
@@ -250,18 +263,14 @@ function ServerPerformancePanel({ ip, models, metricsData, isManual = false }) {
         <span className={rootClass.elem("meta-chip").toClassName()}>
           {isLoading ? "—" : health.metrics_available ? "Metrics 已連線" : "Metrics 未連線"}
         </span>
-        {isManual && (
-          <span className={rootClass.elem("manual-badge").toClassName()}>手動新增</span>
-        )}
+        {isManual && <span className={rootClass.elem("manual-badge").toClassName()}>手動新增</span>}
         {models.length > 0 && (
           <span className={rootClass.elem("meta-chip").toClassName()} title={models.join(", ")}>
             模型：{models.length <= 3 ? models.join(", ") : `${models.slice(0, 3).join(", ")} …+${models.length - 3}`}
           </span>
         )}
         {hasError && (
-          <span style={{ color: "var(--color-negative-content, #991b1b)", fontSize: 12 }}>
-            連線失敗：{hasError}
-          </span>
+          <span style={{ color: "var(--color-negative-content, #991b1b)", fontSize: 12 }}>連線失敗：{hasError}</span>
         )}
       </div>
       {isLoading ? (
@@ -273,11 +282,15 @@ function ServerPerformancePanel({ ip, models, metricsData, isManual = false }) {
         <>
           <div className={rootClass.elem("server-panel-group-label").toClassName()}>硬體資源</div>
           <div className={rootClass.elem("stats-grid").toClassName()}>
-            {hardwareStats.map((s) => <StatCard key={s.label} {...s} />)}
+            {hardwareStats.map((s) => (
+              <StatCard key={s.label} {...s} />
+            ))}
           </div>
           <div className={rootClass.elem("server-panel-group-label").toClassName()}>推論效能</div>
           <div className={rootClass.elem("stats-grid").toClassName()}>
-            {perfStats.map((s) => <StatCard key={s.label} {...s} />)}
+            {perfStats.map((s) => (
+              <StatCard key={s.label} {...s} />
+            ))}
           </div>
         </>
       )}
@@ -357,7 +370,6 @@ export function LogsAndMetricsTab() {
    * @type {[Map<string, Object>, Function]}
    */
   const [serverMetricsMap, setServerMetricsMap] = useState(new Map());
-  const [iframeUrl, setIframeUrl] = useState(null);
   const [loading, setLoading] = useState(true);
   /** 輪詢更新時（資料已存在的背景刷新）顯示小型載入指示器。 */
   const [refreshing, setRefreshing] = useState(false);
@@ -390,14 +402,18 @@ export function LogsAndMetricsTab() {
   /** 元件掛載時拉取所有專案，供名稱下拉篩選使用。 */
   useEffect(() => {
     setProjectsLoading(true);
-    api.callApi("projects").then((res) => {
-      const list = Array.isArray(res) ? res : (res?.results ?? []);
-      setProjects(list);
-    }).catch(() => {
-      setProjects([]);
-    }).finally(() => {
-      setProjectsLoading(false);
-    });
+    api
+      .callApi("projects")
+      .then((res) => {
+        const list = Array.isArray(res) ? res : (res?.results ?? []);
+        setProjects(list);
+      })
+      .catch(() => {
+        setProjects([]);
+      })
+      .finally(() => {
+        setProjectsLoading(false);
+      });
   }, [api]);
 
   useEffect(() => {
@@ -424,10 +440,13 @@ export function LogsAndMetricsTab() {
    * 供下拉選單使用的專案選項。
    * @type {{ label: string, value: string }[]}
    */
-  const projectOptions = useMemo(() => [
-    { label: "— 選擇專案 —", value: "" },
-    ...projects.map((p) => ({ label: p.title || `Project ${p.id}`, value: String(p.id) })),
-  ], [projects]);
+  const projectOptions = useMemo(
+    () => [
+      { label: "— 選擇專案 —", value: "" },
+      ...projects.map((p) => ({ label: p.title || `Project ${p.id}`, value: String(p.id) })),
+    ],
+    [projects],
+  );
 
   /**
    * 自動偵測伺服器與手動新增伺服器合併後的完整清單（去重）。
@@ -444,24 +463,6 @@ export function LogsAndMetricsTab() {
     }
     return Array.from(map.values());
   }, [autoServers, manualServers]);
-
-  /**
-   * 監控與分析入口，依所有已知伺服器（自動 + 手動）動態加入各台 Triton Metrics 連結。
-   */
-  const monitoringEndpoints = useMemo(() => {
-    const endpoints = [...MONITORING_ENDPOINTS];
-    for (const { url, ip } of allServers) {
-      const metricsUrl = buildTritonMetricsUrl(extractHostFromUrl(url));
-      if (metricsUrl) {
-        endpoints.push({
-          name: `Triton Metrics (${ip})`,
-          url: metricsUrl,
-          description: `${ip} 的 Triton 推論指標（Prometheus）`,
-        });
-      }
-    }
-    return endpoints;
-  }, [allServers]);
 
   const fetchMetrics = useCallback(async () => {
     if (!projectId) {
@@ -531,10 +532,7 @@ export function LogsAndMetricsTab() {
         );
 
         setServerMetricsMap(
-          new Map(serverResults.map(({ url, result, error }) => [
-            url,
-            { ...(result ?? {}), error },
-          ])),
+          new Map(serverResults.map(({ url, result, error }) => [url, { ...(result ?? {}), error }])),
         );
       } else {
         setServerMetricsMap(new Map());
@@ -589,17 +587,20 @@ export function LogsAndMetricsTab() {
    * 移除手動監控伺服器。
    * @param {string} url - 要移除的伺服器 URL
    */
-  const handleRemoveServer = useCallback((url) => {
-    const updated = manualServers.filter((s) => s.url !== url);
-    setManualServers(updated);
-    persistManualMonitorServers(updated);
-    // 同步清除 serverMetricsMap 中已移除伺服器的快取
-    setServerMetricsMap((prev) => {
-      const next = new Map(prev);
-      next.delete(url);
-      return next;
-    });
-  }, [manualServers]);
+  const handleRemoveServer = useCallback(
+    (url) => {
+      const updated = manualServers.filter((s) => s.url !== url);
+      setManualServers(updated);
+      persistManualMonitorServers(updated);
+      // 同步清除 serverMetricsMap 中已移除伺服器的快取
+      setServerMetricsMap((prev) => {
+        const next = new Map(prev);
+        next.delete(url);
+        return next;
+      });
+    },
+    [manualServers],
+  );
 
   /**
    * 切換單一列（模型 × 伺服器）的展開狀態。
@@ -625,30 +626,33 @@ export function LogsAndMetricsTab() {
    * @param {string} serverUrl   - 目標 Triton 基底 URL（空字串表示刪除全部）
    * @param {string} rowKey      - 當前列唯一鍵，用於清除展開狀態
    */
-  const handleDeleteModelFromServer = useCallback(async (modelName, serverUrl, rowKey) => {
-    const serverIp = serverUrl ? extractHostFromUrl(serverUrl) : "";
-    const confirmMsg = serverUrl
-      ? `確定要從伺服器 [${serverIp}] 移除部署模型「${modelName}」嗎？\n其餘伺服器的部署不受影響，此操作不可復原。`
-      : `確定要完整移除部署模型「${modelName}」嗎？\n此操作不可復原。`;
-    if (!window.confirm(confirmMsg)) return;
+  const handleDeleteModelFromServer = useCallback(
+    async (modelName, serverUrl, rowKey) => {
+      const serverIp = serverUrl ? extractHostFromUrl(serverUrl) : "";
+      const confirmMsg = serverUrl
+        ? `確定要從伺服器 [${serverIp}] 移除部署模型「${modelName}」嗎？\n其餘伺服器的部署不受影響，此操作不可復原。`
+        : `確定要完整移除部署模型「${modelName}」嗎？\n此操作不可復原。`;
+      if (!window.confirm(confirmMsg)) return;
 
-    setDeletingModel(rowKey);
-    try {
-      const params = { pk: projectId, model_name: modelName };
-      if (serverUrl) params.triton_url = serverUrl;
-      await api.callApi("trainingTritonModelDelete", { params });
-      await fetchMetrics();
-      setExpandedModels((prev) => {
-        const next = new Set(prev);
-        next.delete(rowKey);
-        return next;
-      });
-    } catch (err) {
-      window.alert(`刪除失敗：${err?.message ?? err}`);
-    } finally {
-      setDeletingModel(null);
-    }
-  }, [api, projectId, fetchMetrics]);
+      setDeletingModel(rowKey);
+      try {
+        const params = { pk: projectId, model_name: modelName };
+        if (serverUrl) params.triton_url = serverUrl;
+        await api.callApi("trainingTritonModelDelete", { params });
+        await fetchMetrics();
+        setExpandedModels((prev) => {
+          const next = new Set(prev);
+          next.delete(rowKey);
+          return next;
+        });
+      } catch (err) {
+        window.alert(`刪除失敗：${err?.message ?? err}`);
+      } finally {
+        setDeletingModel(null);
+      }
+    },
+    [api, projectId, fetchMetrics],
+  );
 
   /**
    * 刪除指定模型的單一版本目錄。
@@ -658,41 +662,47 @@ export function LogsAndMetricsTab() {
    * @param {number} version    - 要刪除的版本號
    * @param {string} rowKey     - 該模型列的唯一鍵（用於清除展開狀態）
    */
-  const handleDeleteVersion = useCallback(async (modelName, version, rowKey) => {
-    if (!window.confirm(
-      `確定要刪除模型「${modelName}」的版本 ${version} 嗎？\n此操作不可復原，Triton 將無法再載入此版本。`
-    )) return;
-
-    const vKey = `${modelName}::${version}`;
-    setDeletingVersionKeys((prev) => new Set([...prev, vKey]));
-    try {
-      // 使用與 handleDeleteModelFromServer 相同的呼叫模式（不用 errorFilter，以 try/catch 捕捉錯誤）
-      const res = await api.callApi("trainingTritonVersionDelete", {
-        params: { pk: projectId, model_name: modelName, version },
-      });
-      if (res?.detail) {
-        window.alert(`刪除失敗：${res.detail}`);
+  const handleDeleteVersion = useCallback(
+    async (modelName, version, rowKey) => {
+      if (
+        !window.confirm(
+          `確定要刪除模型「${modelName}」的版本 ${version} 嗎？\n此操作不可復原，Triton 將無法再載入此版本。`,
+        )
+      )
         return;
-      }
-      // 若整個模型都已移除，清除展開狀態
-      if (res?.model_removed) {
-        setExpandedModels((prev) => {
+
+      const vKey = `${modelName}::${version}`;
+      setDeletingVersionKeys((prev) => new Set([...prev, vKey]));
+      try {
+        // 使用與 handleDeleteModelFromServer 相同的呼叫模式（不用 errorFilter，以 try/catch 捕捉錯誤）
+        const res = await api.callApi("trainingTritonVersionDelete", {
+          params: { pk: projectId, model_name: modelName, version },
+        });
+        if (res?.detail) {
+          window.alert(`刪除失敗：${res.detail}`);
+          return;
+        }
+        // 若整個模型都已移除，清除展開狀態
+        if (res?.model_removed) {
+          setExpandedModels((prev) => {
+            const next = new Set(prev);
+            next.delete(rowKey);
+            return next;
+          });
+        }
+        await fetchMetrics();
+      } catch (err) {
+        window.alert(`刪除版本失敗：${err?.message ?? err}`);
+      } finally {
+        setDeletingVersionKeys((prev) => {
           const next = new Set(prev);
-          next.delete(rowKey);
+          next.delete(vKey);
           return next;
         });
       }
-      await fetchMetrics();
-    } catch (err) {
-      window.alert(`刪除版本失敗：${err?.message ?? err}`);
-    } finally {
-      setDeletingVersionKeys((prev) => {
-        const next = new Set(prev);
-        next.delete(vKey);
-        return next;
-      });
-    }
-  }, [api, projectId, fetchMetrics]);
+    },
+    [api, projectId, fetchMetrics],
+  );
 
   useEffect(() => {
     if (scope === "mine" && selectedUserId !== ALL_DEPLOYERS) {
@@ -730,9 +740,7 @@ export function LogsAndMetricsTab() {
           </Typography>
           <div className={rootClass.elem("project-form").toClassName()}>
             <div className={rootClass.elem("field").toClassName()}>
-              <label className={rootClass.elem("field-label").toClassName()}>
-                專案
-              </label>
+              <label className={rootClass.elem("field-label").toClassName()}>專案</label>
               <select
                 className={rootClass.elem("text-input").toClassName()}
                 value={projectId}
@@ -740,7 +748,9 @@ export function LogsAndMetricsTab() {
                 disabled={projectsLoading}
               >
                 {projectOptions.map((opt) => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
                 ))}
               </select>
             </div>
@@ -780,9 +790,10 @@ export function LogsAndMetricsTab() {
    * }>}
    */
   const tableRows = modelUsage.flatMap((m) => {
-    const serverList = Array.isArray(m.triton_servers) && m.triton_servers.length > 0
-      ? m.triton_servers
-      : [{ url: m.triton_public_base_url ?? "", deployed_at: m.deployed_at ?? "" }];
+    const serverList =
+      Array.isArray(m.triton_servers) && m.triton_servers.length > 0
+        ? m.triton_servers
+        : [{ url: m.triton_public_base_url ?? "", deployed_at: m.deployed_at ?? "" }];
 
     return serverList.map((s) => {
       const serverUrl = (s.url || "").trim().replace(/\/+$/, "");
@@ -823,32 +834,27 @@ export function LogsAndMetricsTab() {
             即時查看部署模型、推論事件、效能快照與監控入口。
           </Typography>
           <div className={rootClass.elem("hero-meta").toClassName()}>
+            <span className={rootClass.elem("meta-chip").toClassName()}>{selectedProjectTitle || projectId}</span>
             <span className={rootClass.elem("meta-chip").toClassName()}>
-              {selectedProjectTitle || projectId}
-            </span>
-            <span className={rootClass.elem("meta-chip").toClassName()}>
-              檢視範圍: {VIEW_MODES[scope]}{data?.viewer?.username ? ` (${data.viewer.username})` : ""}
+              檢視範圍: {VIEW_MODES[scope]}
+              {data?.viewer?.username ? ` (${data.viewer.username})` : ""}
             </span>
             {scope === "project" && selectedUser?.username ? (
-              <span className={rootClass.elem("meta-chip").toClassName()}>
-                部署者: {selectedUser.username}
-              </span>
+              <span className={rootClass.elem("meta-chip").toClassName()}>部署者: {selectedUser.username}</span>
             ) : null}
-            <span className={rootClass.elem("meta-chip").toClassName()}>
-              已偵測伺服器: {autoServers.length} 台
-            </span>
+            <span className={rootClass.elem("meta-chip").toClassName()}>已偵測伺服器: {autoServers.length} 台</span>
           </div>
         </div>
         <div className={rootClass.elem("toolbar").toClassName()}>
           <div className={rootClass.elem("field").mod({ project: true }).toClassName()}>
             <label className={rootClass.elem("field-label").toClassName()}>
               專案
-            {refreshing && data ? (
-            <span className={rootClass.elem("refresh-indicator").toClassName()} title="資料更新中…">
-              <span className={rootClass.elem("refresh-dot").toClassName()} />
-              <span className={rootClass.elem("refresh-label").toClassName()}>更新中</span>
-            </span>
-          ) : null}
+              {refreshing && data ? (
+                <span className={rootClass.elem("refresh-indicator").toClassName()} title="資料更新中…">
+                  <span className={rootClass.elem("refresh-dot").toClassName()} />
+                  <span className={rootClass.elem("refresh-label").toClassName()}>更新中</span>
+                </span>
+              ) : null}
             </label>
 
             <select
@@ -858,7 +864,9 @@ export function LogsAndMetricsTab() {
               disabled={projectsLoading}
             >
               {projectOptions.map((opt) => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
               ))}
             </select>
           </div>
@@ -894,31 +902,27 @@ export function LogsAndMetricsTab() {
               className={rootClass.elem("text-input").toClassName()}
               placeholder="http://10.214.57.20:18000"
               value={newServerUrl}
-              onChange={(e) => { setNewServerUrl(e.target.value); setAddServerError(""); }}
-              onKeyDown={(e) => { if (e.key === "Enter") handleAddServer(); }}
+              onChange={(e) => {
+                setNewServerUrl(e.target.value);
+                setAddServerError("");
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleAddServer();
+              }}
             />
-            <Button
-              variant="primary"
-              look="outlined"
-              onClick={handleAddServer}
-              disabled={!newServerUrl.trim()}
-            >
+            <Button variant="primary" look="outlined" onClick={handleAddServer} disabled={!newServerUrl.trim()}>
               新增監控
             </Button>
           </div>
           {addServerError && (
-            <div className={rootClass.elem("manual-server-error").toClassName()}>
-              {addServerError}
-            </div>
+            <div className={rootClass.elem("manual-server-error").toClassName()}>{addServerError}</div>
           )}
           {/* 已新增的手動伺服器 tag 列表 */}
           {manualServers.length > 0 && (
             <div className={rootClass.elem("manual-server-list").toClassName()}>
               {manualServers.map((s) => (
                 <span key={s.url} className={rootClass.elem("manual-server-item").toClassName()}>
-                  <span className={rootClass.elem("server-badge-ip").toClassName()}>
-                    {extractHostFromUrl(s.url)}
-                  </span>
+                  <span className={rootClass.elem("server-badge-ip").toClassName()}>{extractHostFromUrl(s.url)}</span>
                   <span className={rootClass.elem("manual-server-url").toClassName()}>{s.url}</span>
                   <button
                     type="button"
@@ -936,7 +940,10 @@ export function LogsAndMetricsTab() {
 
         {/* ── 伺服器效能面板 ──────────────────────────────────────────────────── */}
         {allServers.length === 0 ? (
-          <div className={rootClass.elem("empty-cell").toClassName()} style={{ padding: "28px 0", textAlign: "center" }}>
+          <div
+            className={rootClass.elem("empty-cell").toClassName()}
+            style={{ padding: "28px 0", textAlign: "center" }}
+          >
             尚未偵測到 Triton 伺服器；請輸入 Triton 位址或先完成模型部署
           </div>
         ) : (
@@ -954,7 +961,10 @@ export function LogsAndMetricsTab() {
         )}
       </SectionBlock>
 
-      <SectionBlock title="部署模型" description="每列對應一個模型部署至單台 Triton 伺服器；點擊列可展開詳情，每列可獨立移除。">
+      <SectionBlock
+        title="部署模型"
+        description="每列對應一個模型部署至單台 Triton 伺服器；點擊列可展開詳情，每列可獨立移除。"
+      >
         <div className={rootClass.elem("table-wrap").toClassName()}>
           <table className={rootClass.elem("table").mod({ compact: true }).toClassName()}>
             <thead>
@@ -979,188 +989,204 @@ export function LogsAndMetricsTab() {
               </tr>
             </thead>
             <tbody>
-              {tableRows.length > 0 ? tableRows.map((row) => {
-                const badge = getHealthBadge(row.status);
-                const isExpanded = expandedModels.has(row._rowKey);
-                const isDeleting = deletingModel === row._rowKey;
-                /** 該模型共部署於幾台伺服器（用於顯示提示） */
-                const totalServers = (Array.isArray(row.triton_servers) ? row.triton_servers : []).length || 1;
+              {tableRows.length > 0 ? (
+                tableRows.map((row) => {
+                  const badge = getHealthBadge(row.status);
+                  const isExpanded = expandedModels.has(row._rowKey);
+                  const isDeleting = deletingModel === row._rowKey;
+                  /** 該模型共部署於幾台伺服器（用於顯示提示） */
+                  const totalServers = (Array.isArray(row.triton_servers) ? row.triton_servers : []).length || 1;
 
-                return [
-                  /* ── 主列：(模型, 伺服器) 一列 ── */
-                  <tr
-                    key={row._rowKey}
-                    className={rootClass.elem("model-row").mod({ expanded: isExpanded }).toClassName()}
-                    style={{ cursor: "pointer" }}
-                    onClick={() => toggleExpand(row._rowKey)}
-                  >
-                    <td style={{ paddingRight: 0 }}>
-                      <IconChevronRight
-                        size={14}
-                        style={{
-                          transition: "transform 0.2s",
-                          transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
-                          color: "var(--color-neutral-content-subtle)",
-                        }}
-                      />
-                    </td>
-                    <td className={rootClass.elem("table-primary").toClassName()}>
-                      <div className={rootClass.elem("model-name-row").toClassName()}>
-                        <span className={rootClass.elem("model-name").toClassName()}>{row.name}</span>
-                        {/* 複製模型名稱按鈕：滑鼠移入列時顯示 */}
-                        <button
-                          type="button"
-                          className={rootClass.elem("copy-btn").mod({ copied: copiedKey === row._rowKey }).toClassName()}
-                          title={copiedKey === row._rowKey ? "已複製！" : `複製「${row.name}」`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            navigator.clipboard.writeText(row.name).then(() => {
-                              setCopiedKey(row._rowKey);
-                              setTimeout(() => setCopiedKey(null), 1500);
-                            });
+                  return [
+                    /* ── 主列：(模型, 伺服器) 一列 ── */
+                    <tr
+                      key={row._rowKey}
+                      className={rootClass.elem("model-row").mod({ expanded: isExpanded }).toClassName()}
+                      style={{ cursor: "pointer" }}
+                      onClick={() => toggleExpand(row._rowKey)}
+                    >
+                      <td style={{ paddingRight: 0 }}>
+                        <IconChevronRight
+                          size={14}
+                          style={{
+                            transition: "transform 0.2s",
+                            transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
+                            color: "var(--color-neutral-content-subtle)",
                           }}
-                        >
-                          {copiedKey === row._rowKey
-                            ? <span className={rootClass.elem("copy-check").toClassName()}>✓</span>
-                            : <IconCopy size={12} />
-                          }
-                        </button>
-                      </div>
-                      <small className={rootClass.elem("model-meta").toClassName()}>
-                        {row.owned_by_current_user ? "目前使用者部署" : "其他成員部署"}
-                        {totalServers > 1 ? ` · 共 ${totalServers} 台伺服器` : ""}
-                      </small>
-                    </td>
-                    <td>{row.deployed_by_username ?? "未記錄"}</td>
-                    <td>
-                      {row._serverIp
-                        ? <span className={rootClass.elem("server-badge-ip").toClassName()} title={row._serverUrl}>{row._serverIp}</span>
-                        : <span style={{ color: "var(--color-neutral-content-subtle)" }}>—</span>
-                      }
-                    </td>
-                    <td style={{ textAlign: "right" }}>{formatValue(row.request_count, 0)}</td>
-                    <td style={{ textAlign: "right" }}>{formatValue(row.rps, 1)}</td>
-                    <td style={{ textAlign: "right" }}>{formatValue(row.latency_ms, 1)}</td>
-                    <td style={{ textAlign: "right" }}>
-                      {formatValue(row.success_count, 0)} / {formatValue(row.error_count, 0)}
-                    </td>
-                    <td style={{ textAlign: "center" }}>
-                      <span
-                        className={rootClass.elem("status-badge").toClassName()}
-                        style={{ background: badge.background, color: badge.color }}
-                      >
-                        {badge.label}
-                      </span>
-                    </td>
-                    <td style={{ textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
-                      <Button
-                        size="small"
-                        look="outlined"
-                        variant="negative"
-                        icon={<IconTrash size={14} />}
-                        waiting={isDeleting}
-                        disabled={isDeleting}
-                        onClick={() => handleDeleteModelFromServer(row.name, row._serverUrl, row._rowKey)}
-                        title={row._serverUrl
-                          ? `從 ${row._serverIp} 移除模型 ${row.name}`
-                          : `完整移除模型 ${row.name}`
-                        }
-                      >
-                        移除
-                      </Button>
-                    </td>
-                  </tr>,
-
-                  /* ── 展開詳情列（單台伺服器詳情） ── */
-                  isExpanded ? (
-                    <tr key={`${row._rowKey}--detail`} className={rootClass.elem("model-detail-row").toClassName()}>
-                      <td />
-                      <td colSpan={9}>
-                        <div className={rootClass.elem("model-detail").toClassName()}>
-                          <div className={rootClass.elem("model-detail-grid").toClassName()}>
-                            <span className={rootClass.elem("detail-label").toClassName()}>部署至此台時間</span>
-                            <span>{formatDateTime(row._serverDeployedAt || row.deployed_at)}</span>
-
-                            <span className={rootClass.elem("detail-label").toClassName()}>Triton 伺服器</span>
-                            <span>
-                              {row._serverIp ? (
-                                <span className={rootClass.elem("server-list-item").toClassName()}>
-                                  <span className={rootClass.elem("server-badge-ip").toClassName()}>{row._serverIp}</span>
-                                  <span className={rootClass.elem("detail-mono").toClassName()}>{row._serverUrl}</span>
-                                </span>
-                              ) : (
-                                <span className={rootClass.elem("detail-mono").toClassName()}>—</span>
-                              )}
-                            </span>
-
-                            <span className={rootClass.elem("detail-label").toClassName()}>推論端點</span>
-                            <span className={rootClass.elem("detail-mono").toClassName()}>
-                              {row._serverUrl
-                                ? `${row._serverUrl}/v2/models/${row.name}/infer`
-                                : (row.infer_url ?? "—")
-                              }
-                            </span>
-
-                            <span className={rootClass.elem("detail-label").toClassName()}>Run ID</span>
-                            <span className={rootClass.elem("detail-mono").toClassName()}>
-                              {row.run_id ?? "—"}
-                            </span>
-
-                            <span className={rootClass.elem("detail-label").toClassName()}>輸入尺寸</span>
-                            <span>{row.imgsz ? `${row.imgsz} × ${row.imgsz}` : "—"}</span>
-
-                          </div>
-
-                          {/* ── 版本管理區塊 ── */}
-                          {Array.isArray(row.available_versions) && row.available_versions.length > 0 && (
-                            <div className={rootClass.elem("version-manager").toClassName()}>
-                              <div className={rootClass.elem("version-manager-title").toClassName()}>
-                                版本管理
-                                <span className={rootClass.elem("version-manager-hint").toClassName()}>
-                                  （共 {row.available_versions.length} 個版本，最新：v{row.latest_version}）
-                                </span>
-                              </div>
-                              <div className={rootClass.elem("version-list").toClassName()}>
-                                {row.available_versions.map((ver) => {
-                                  const vKey = `${row.name}::${ver}`;
-                                  const isLatest = ver === row.latest_version;
-                                  const isDeleting = deletingVersionKeys.has(vKey);
-                                  return (
-                                    <div key={ver} className={rootClass.elem("version-item").toClassName()}>
-                                      <span className={rootClass.elem("version-badge").mod({ latest: isLatest }).toClassName()}>
-                                        v{ver}
-                                        {isLatest && <span className={rootClass.elem("version-latest-tag").toClassName()}>最新</span>}
-                                      </span>
-                                      <span className={rootClass.elem("version-infer-url").toClassName()}>
-                                        {row._serverUrl
-                                          ? `${row._serverUrl}/v2/models/${row.name}/versions/${ver}/infer`
-                                          : `…/v2/models/${row.name}/versions/${ver}/infer`
-                                        }
-                                      </span>
-                                      <Button
-                                        size="small"
-                                        look="outlined"
-                                        variant="negative"
-                                        icon={<IconTrash size={12} />}
-                                        waiting={isDeleting}
-                                        disabled={isDeleting}
-                                        onClick={() => handleDeleteVersion(row.name, ver, row._rowKey)}
-                                        title={`刪除版本 ${ver}`}
-                                      >
-                                        刪除版本
-                                      </Button>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          )}
-                        </div>
+                        />
                       </td>
-                    </tr>
-                  ) : null,
-                ];
-              }) : (
+                      <td className={rootClass.elem("table-primary").toClassName()}>
+                        <div className={rootClass.elem("model-name-row").toClassName()}>
+                          <span className={rootClass.elem("model-name").toClassName()}>{row.name}</span>
+                          {/* 複製模型名稱按鈕：滑鼠移入列時顯示 */}
+                          <button
+                            type="button"
+                            className={rootClass
+                              .elem("copy-btn")
+                              .mod({ copied: copiedKey === row._rowKey })
+                              .toClassName()}
+                            title={copiedKey === row._rowKey ? "已複製！" : `複製「${row.name}」`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigator.clipboard.writeText(row.name).then(() => {
+                                setCopiedKey(row._rowKey);
+                                setTimeout(() => setCopiedKey(null), 1500);
+                              });
+                            }}
+                          >
+                            {copiedKey === row._rowKey ? (
+                              <span className={rootClass.elem("copy-check").toClassName()}>✓</span>
+                            ) : (
+                              <IconCopy size={12} />
+                            )}
+                          </button>
+                        </div>
+                        <small className={rootClass.elem("model-meta").toClassName()}>
+                          {row.owned_by_current_user ? "目前使用者部署" : "其他成員部署"}
+                          {totalServers > 1 ? ` · 共 ${totalServers} 台伺服器` : ""}
+                        </small>
+                      </td>
+                      <td>{row.deployed_by_username ?? "未記錄"}</td>
+                      <td>
+                        {row._serverIp ? (
+                          <span className={rootClass.elem("server-badge-ip").toClassName()} title={row._serverUrl}>
+                            {row._serverIp}
+                          </span>
+                        ) : (
+                          <span style={{ color: "var(--color-neutral-content-subtle)" }}>—</span>
+                        )}
+                      </td>
+                      <td style={{ textAlign: "right" }}>{formatValue(row.request_count, 0)}</td>
+                      <td style={{ textAlign: "right" }}>{formatValue(row.rps, 1)}</td>
+                      <td style={{ textAlign: "right" }}>{formatValue(row.latency_ms, 1)}</td>
+                      <td style={{ textAlign: "right" }}>
+                        {formatValue(row.success_count, 0)} / {formatValue(row.error_count, 0)}
+                      </td>
+                      <td style={{ textAlign: "center" }}>
+                        <span
+                          className={rootClass.elem("status-badge").toClassName()}
+                          style={{ background: badge.background, color: badge.color }}
+                        >
+                          {badge.label}
+                        </span>
+                      </td>
+                      <td style={{ textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
+                        <Button
+                          size="small"
+                          look="outlined"
+                          variant="negative"
+                          icon={<IconTrash size={14} />}
+                          waiting={isDeleting}
+                          disabled={isDeleting}
+                          onClick={() => handleDeleteModelFromServer(row.name, row._serverUrl, row._rowKey)}
+                          title={
+                            row._serverUrl ? `從 ${row._serverIp} 移除模型 ${row.name}` : `完整移除模型 ${row.name}`
+                          }
+                        >
+                          移除
+                        </Button>
+                      </td>
+                    </tr>,
+
+                    /* ── 展開詳情列（單台伺服器詳情） ── */
+                    isExpanded ? (
+                      <tr key={`${row._rowKey}--detail`} className={rootClass.elem("model-detail-row").toClassName()}>
+                        <td />
+                        <td colSpan={9}>
+                          <div className={rootClass.elem("model-detail").toClassName()}>
+                            <div className={rootClass.elem("model-detail-grid").toClassName()}>
+                              <span className={rootClass.elem("detail-label").toClassName()}>部署至此台時間</span>
+                              <span>{formatDateTime(row._serverDeployedAt || row.deployed_at)}</span>
+
+                              <span className={rootClass.elem("detail-label").toClassName()}>Triton 伺服器</span>
+                              <span>
+                                {row._serverIp ? (
+                                  <span className={rootClass.elem("server-list-item").toClassName()}>
+                                    <span className={rootClass.elem("server-badge-ip").toClassName()}>
+                                      {row._serverIp}
+                                    </span>
+                                    <span className={rootClass.elem("detail-mono").toClassName()}>
+                                      {row._serverUrl}
+                                    </span>
+                                  </span>
+                                ) : (
+                                  <span className={rootClass.elem("detail-mono").toClassName()}>—</span>
+                                )}
+                              </span>
+
+                              <span className={rootClass.elem("detail-label").toClassName()}>推論端點</span>
+                              <span className={rootClass.elem("detail-mono").toClassName()}>
+                                {row._serverUrl
+                                  ? `${row._serverUrl}/v2/models/${row.name}/infer`
+                                  : (row.infer_url ?? "—")}
+                              </span>
+
+                              <span className={rootClass.elem("detail-label").toClassName()}>Run ID</span>
+                              <span className={rootClass.elem("detail-mono").toClassName()}>{row.run_id ?? "—"}</span>
+
+                              <span className={rootClass.elem("detail-label").toClassName()}>輸入尺寸</span>
+                              <span>{row.imgsz ? `${row.imgsz} × ${row.imgsz}` : "—"}</span>
+                            </div>
+
+                            {/* ── 版本管理區塊 ── */}
+                            {Array.isArray(row.available_versions) && row.available_versions.length > 0 && (
+                              <div className={rootClass.elem("version-manager").toClassName()}>
+                                <div className={rootClass.elem("version-manager-title").toClassName()}>
+                                  版本管理
+                                  <span className={rootClass.elem("version-manager-hint").toClassName()}>
+                                    （共 {row.available_versions.length} 個版本，最新：v{row.latest_version}）
+                                  </span>
+                                </div>
+                                <div className={rootClass.elem("version-list").toClassName()}>
+                                  {row.available_versions.map((ver) => {
+                                    const vKey = `${row.name}::${ver}`;
+                                    const isLatest = ver === row.latest_version;
+                                    const isDeleting = deletingVersionKeys.has(vKey);
+                                    return (
+                                      <div key={ver} className={rootClass.elem("version-item").toClassName()}>
+                                        <span
+                                          className={rootClass
+                                            .elem("version-badge")
+                                            .mod({ latest: isLatest })
+                                            .toClassName()}
+                                        >
+                                          v{ver}
+                                          {isLatest && (
+                                            <span className={rootClass.elem("version-latest-tag").toClassName()}>
+                                              最新
+                                            </span>
+                                          )}
+                                        </span>
+                                        <span className={rootClass.elem("version-infer-url").toClassName()}>
+                                          {row._serverUrl
+                                            ? `${row._serverUrl}/v2/models/${row.name}/versions/${ver}/infer`
+                                            : `…/v2/models/${row.name}/versions/${ver}/infer`}
+                                        </span>
+                                        <Button
+                                          size="small"
+                                          look="outlined"
+                                          variant="negative"
+                                          icon={<IconTrash size={12} />}
+                                          waiting={isDeleting}
+                                          disabled={isDeleting}
+                                          onClick={() => handleDeleteVersion(row.name, ver, row._rowKey)}
+                                          title={`刪除版本 ${ver}`}
+                                        >
+                                          刪除版本
+                                        </Button>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ) : null,
+                  ];
+                })
+              ) : (
                 <tr>
                   <td colSpan={10} className={rootClass.elem("empty-cell").toClassName()}>
                     目前沒有符合此檢視條件的部署模型。
@@ -1187,25 +1213,33 @@ export function LogsAndMetricsTab() {
               </tr>
             </thead>
             <tbody>
-              {events.length > 0 ? events.map((event) => (
-                <tr key={`${event.captured_at}-${event.model_name}-${event.status_code}`}>
-                  <td>{formatDateTime(event.captured_at)}</td>
-                  <td className={rootClass.elem("table-primary").toClassName()}>{event.model_name ?? "未記錄"}</td>
-                  <td>{event.requested_by_username ?? "未記錄"}</td>
-                  <td>{event.deployed_by_username ?? "未記錄"}</td>
-                  <td>{formatValue(event.duration_ms)} <small>ms</small></td>
-                  <td>
-                    <span
-                      className={rootClass.elem("status-text").mod({ success: event.ok, error: !event.ok }).toClassName()}
-                    >
-                      {event.ok ? "成功" : `失敗 (${event.status_code ?? "-"})`}
-                    </span>
-                  </td>
-                  <td>
-                    {formatValue(event?.request?.input_count ?? 0, 0)} / {formatValue(event?.request?.output_count ?? 0, 0)}
-                  </td>
-                </tr>
-              )) : (
+              {events.length > 0 ? (
+                events.map((event) => (
+                  <tr key={`${event.captured_at}-${event.model_name}-${event.status_code}`}>
+                    <td>{formatDateTime(event.captured_at)}</td>
+                    <td className={rootClass.elem("table-primary").toClassName()}>{event.model_name ?? "未記錄"}</td>
+                    <td>{event.requested_by_username ?? "未記錄"}</td>
+                    <td>{event.deployed_by_username ?? "未記錄"}</td>
+                    <td>
+                      {formatValue(event.duration_ms)} <small>ms</small>
+                    </td>
+                    <td>
+                      <span
+                        className={rootClass
+                          .elem("status-text")
+                          .mod({ success: event.ok, error: !event.ok })
+                          .toClassName()}
+                      >
+                        {event.ok ? "成功" : `失敗 (${event.status_code ?? "-"})`}
+                      </span>
+                    </td>
+                    <td>
+                      {formatValue(event?.request?.input_count ?? 0, 0)} /{" "}
+                      {formatValue(event?.request?.output_count ?? 0, 0)}
+                    </td>
+                  </tr>
+                ))
+              ) : (
                 <tr>
                   <td colSpan={7} className={rootClass.elem("empty-cell").toClassName()}>
                     目前沒有可用的推論事件歷史。
@@ -1233,20 +1267,35 @@ export function LogsAndMetricsTab() {
               </tr>
             </thead>
             <tbody>
-              {snapshots.length > 0 ? snapshots.map((snapshot) => (
-                <tr key={`${snapshot.captured_at}-${snapshot.scope}`}>
-                  <td>{formatDateTime(snapshot.captured_at)}</td>
-                  <td>{formatValue(snapshot?.hardware?.cpu)} <small>%</small></td>
-                  <td>{formatValue(snapshot?.hardware?.ram)} <small>%</small></td>
-                  <td>{formatValue(snapshot?.hardware?.gpu)} <small>%</small></td>
-                  <td>
-                    {formatValue(snapshot?.hardware?.vram_used_gb)} / {formatValue(snapshot?.hardware?.vram_total_gb)} <small>GB</small>
-                  </td>
-                  <td>{formatValue(snapshot?.inference?.rps)} <small>req/s</small></td>
-                  <td>{formatValue(snapshot?.inference?.latency)} <small>ms</small></td>
-                  <td>{formatValue(snapshot?.inference?.success_rate)} <small>%</small></td>
-                </tr>
-              )) : (
+              {snapshots.length > 0 ? (
+                snapshots.map((snapshot) => (
+                  <tr key={`${snapshot.captured_at}-${snapshot.scope}`}>
+                    <td>{formatDateTime(snapshot.captured_at)}</td>
+                    <td>
+                      {formatValue(snapshot?.hardware?.cpu)} <small>%</small>
+                    </td>
+                    <td>
+                      {formatValue(snapshot?.hardware?.ram)} <small>%</small>
+                    </td>
+                    <td>
+                      {formatValue(snapshot?.hardware?.gpu)} <small>%</small>
+                    </td>
+                    <td>
+                      {formatValue(snapshot?.hardware?.vram_used_gb)} / {formatValue(snapshot?.hardware?.vram_total_gb)}{" "}
+                      <small>GB</small>
+                    </td>
+                    <td>
+                      {formatValue(snapshot?.inference?.rps)} <small>req/s</small>
+                    </td>
+                    <td>
+                      {formatValue(snapshot?.inference?.latency)} <small>ms</small>
+                    </td>
+                    <td>
+                      {formatValue(snapshot?.inference?.success_rate)} <small>%</small>
+                    </td>
+                  </tr>
+                ))
+              ) : (
                 <tr>
                   <td colSpan={8} className={rootClass.elem("empty-cell").toClassName()}>
                     目前沒有可用的監控快照歷史。
@@ -1257,62 +1306,6 @@ export function LogsAndMetricsTab() {
           </table>
         </div>
       </SectionBlock>
-
-      <SectionBlock title="監控與分析入口" description="快速進入外部監控工具，查看更完整的圖表與即時資料。">
-        <div className={rootClass.elem("grid").toClassName()}>
-          {monitoringEndpoints.map((item) => (
-            <div key={item.name} className={rootClass.elem("item-card").toClassName()}>
-              <div>
-                <Typography variant="title" size="small" className={rootClass.elem("item-title").toClassName()}>
-                  {item.name}
-                </Typography>
-                <Typography variant="body" size="small" className="text-neutral-content-subtle">
-                  {item.description}
-                </Typography>
-              </div>
-              <div className={rootClass.elem("item-actions").toClassName()}>
-                <Button
-                  variant="neutral"
-                  look="outlined"
-                  size="small"
-                  onClick={() => setIframeUrl(item.url)}
-                >
-                  內嵌檢視
-                </Button>
-                <a
-                  href={item.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={buttonVariant({ variant: "neutral", look: "outlined", size: "small" })}
-                >
-                  <IconExternal size={14} style={{ marginRight: 4 }} />
-                  新分頁
-                </a>
-              </div>
-            </div>
-          ))}
-        </div>
-      </SectionBlock>
-
-      {iframeUrl && (
-        <div className={rootClass.elem("iframe-wrap").toClassName()}>
-          <div className={rootClass.elem("iframe-header").toClassName()}>
-            <Typography variant="title" size="small">
-              {monitoringEndpoints.find((e) => e.url === iframeUrl)?.name ?? "預覽模式"}
-            </Typography>
-            <Button variant="neutral" look="outlined" size="small" onClick={() => setIframeUrl(null)}>
-              關閉視窗
-            </Button>
-          </div>
-          <div className={rootClass.elem("iframe-container").toClassName()}>
-            <iframe
-              className={rootClass.elem("iframe").toClassName()}
-              title="監控預覽"
-              src={iframeUrl}
-            />
-          </div>
-        </div>
-      )}
     </section>
   );
 }

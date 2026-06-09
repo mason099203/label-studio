@@ -21,9 +21,7 @@ function readUploadServerHost() {
   try {
     const raw = window.localStorage.getItem(TRITON_PLAYGROUND_STATE_KEY);
     const parsed = raw ? JSON.parse(raw) : {};
-    return typeof parsed?.[UPLOAD_SERVER_HOST_KEY] === "string"
-      ? parsed[UPLOAD_SERVER_HOST_KEY]
-      : "";
+    return typeof parsed?.[UPLOAD_SERVER_HOST_KEY] === "string" ? parsed[UPLOAD_SERVER_HOST_KEY] : "";
   } catch (_) {
     return "";
   }
@@ -238,13 +236,14 @@ export function UploadTab() {
 
   return (
     <section className="model-upload-tab">
-
       {/* ── 連線設定 ── */}
       <div className="model-upload-tab__settings">
-        <Typography variant="headline" size="medium">上傳模型至 Triton</Typography>
+        <Typography variant="headline" size="medium">
+          上傳模型至 Triton
+        </Typography>
         <Typography variant="body" size="small" className="text-neutral-content-subtle">
-          透過 Triton Upload Server REST API 直接將模型推送到推論伺服器的模型倉庫。
-          Upload Server 埠號固定為 <code>{UPLOAD_PORT}</code>。
+          透過 Triton Upload Server REST API 直接將模型推送到推論伺服器的模型倉庫。 Upload Server 埠號固定為{" "}
+          <code>{UPLOAD_PORT}</code>。
         </Typography>
 
         <div className="model-upload-tab__url-row">
@@ -280,7 +279,6 @@ export function UploadTab() {
 
       {/* ── 主要內容區：左上傳表單 + 右模型列表 ── */}
       <div className="model-upload-tab__grid">
-
         {/* 左：上傳表單 */}
         <div className="model-upload-tab__card">
           <Typography variant="title" size="medium" className="model-upload-tab__card-title">
@@ -288,7 +286,6 @@ export function UploadTab() {
           </Typography>
 
           <form onSubmit={handleUpload} className="model-upload-tab__form">
-
             {/* 模型名稱 */}
             <div className="model-upload-tab__field">
               <label className="model-upload-tab__label" htmlFor="model-name">
@@ -302,9 +299,7 @@ export function UploadTab() {
                 placeholder="例如: yolo_v8_detection"
                 required
               />
-              <span className="model-upload-tab__hint">
-                對應 Triton 模型倉庫中的子目錄名稱
-              </span>
+              <span className="model-upload-tab__hint">對應 Triton 模型倉庫中的子目錄名稱</span>
             </div>
 
             {/* 版本號 */}
@@ -318,7 +313,7 @@ export function UploadTab() {
                 type="number"
                 min={1}
                 value={uploadVersion}
-                onChange={(e) => setUploadVersion(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                onChange={(e) => setUploadVersion(Math.max(1, Number.parseInt(e.target.value, 10) || 1))}
               />
             </div>
 
@@ -386,11 +381,7 @@ export function UploadTab() {
             </div>
 
             {/* 上傳結果 / 錯誤訊息 */}
-            {uploadError && (
-              <div className="model-upload-tab__alert model-upload-tab__alert--error">
-                {uploadError}
-              </div>
-            )}
+            {uploadError && <div className="model-upload-tab__alert model-upload-tab__alert--error">{uploadError}</div>}
             {uploadResult && (
               <div className="model-upload-tab__alert model-upload-tab__alert--success">
                 <strong>上傳成功！</strong>
@@ -420,14 +411,14 @@ export function UploadTab() {
         {/* 右：模型倉庫列表 */}
         <div className="model-upload-tab__card">
           <div className="model-upload-tab__card-header">
-            <Typography variant="title" size="medium">模型倉庫</Typography>
+            <Typography variant="title" size="medium">
+              模型倉庫
+            </Typography>
             {loadingModels && <Spinner size={16} />}
           </div>
 
           {modelListError && (
-            <div className="model-upload-tab__alert model-upload-tab__alert--error">
-              {modelListError}
-            </div>
+            <div className="model-upload-tab__alert model-upload-tab__alert--error">{modelListError}</div>
           )}
 
           {!loadingModels && !modelListError && models.length === 0 && (
@@ -464,23 +455,33 @@ export function UploadTab() {
             <table className="model-upload-tab__api-table">
               <tbody>
                 <tr>
-                  <td><code>POST /upload/model</code></td>
+                  <td>
+                    <code>POST /upload/model</code>
+                  </td>
                   <td>上傳模型主檔（含版本）</td>
                 </tr>
                 <tr>
-                  <td><code>POST /upload/config</code></td>
+                  <td>
+                    <code>POST /upload/config</code>
+                  </td>
                   <td>上傳 config.pbtxt</td>
                 </tr>
                 <tr>
-                  <td><code>GET /models</code></td>
+                  <td>
+                    <code>GET /models</code>
+                  </td>
                   <td>列出所有模型</td>
                 </tr>
                 <tr>
-                  <td><code>DELETE /models/{"{name}"}</code></td>
+                  <td>
+                    <code>DELETE /models/{"{name}"}</code>
+                  </td>
                   <td>刪除模型目錄</td>
                 </tr>
                 <tr>
-                  <td><code>GET /health</code></td>
+                  <td>
+                    <code>GET /health</code>
+                  </td>
                   <td>健康檢查</td>
                 </tr>
               </tbody>

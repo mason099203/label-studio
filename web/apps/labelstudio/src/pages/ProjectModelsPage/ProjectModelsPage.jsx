@@ -1,5 +1,13 @@
 import { useEffect, useState } from "react";
-import { IconAnalytics, IconFileDownload, IconWarningCircleFilled, IconPencil, IconCheck, IconClose, IconTrash } from "@humansignal/icons";
+import {
+  IconAnalytics,
+  IconFileDownload,
+  IconWarningCircleFilled,
+  IconPencil,
+  IconCheck,
+  IconClose,
+  IconTrash,
+} from "@humansignal/icons";
 import { Button } from "@humansignal/ui";
 import { Modal } from "../../components/Modal/Modal";
 import { useAPI } from "../../providers/ApiProvider";
@@ -289,7 +297,10 @@ export const ProjectModelsPage = () => {
     if (!params?.id || !runId) return;
 
     const label = runName || runId;
-    if (!window.confirm(`確定要刪除訓練紀錄「${label}」嗎？\n此操作將移除所有相關檔案（模型、圖表、紀錄），且不可復原。`)) return;
+    if (
+      !window.confirm(`確定要刪除訓練紀錄「${label}」嗎？\n此操作將移除所有相關檔案（模型、圖表、紀錄），且不可復原。`)
+    )
+      return;
 
     setDeletingRunId(runId);
     try {
@@ -545,7 +556,7 @@ export const ProjectModelsPage = () => {
               max={16}
               className={cn("project-models-page").elem("triton-deploy-count-input").toClassName()}
               value={instanceCount}
-              onChange={(e) => setInstanceCount(Math.max(1, parseInt(e.target.value, 10) || 1))}
+              onChange={(e) => setInstanceCount(Math.max(1, Number.parseInt(e.target.value, 10) || 1))}
               aria-label="推論實例數量"
             />
           </div>
@@ -570,9 +581,7 @@ export const ProjectModelsPage = () => {
           )}
 
           {/* 記憶體常駐模式 */}
-          <div className={cn("project-models-page").elem("triton-deploy-label").toClassName()}>
-            記憶體載入策略
-          </div>
+          <div className={cn("project-models-page").elem("triton-deploy-label").toClassName()}>記憶體載入策略</div>
           <div className={cn("project-models-page").elem("triton-deploy-row").toClassName()}>
             <select
               className={cn("project-models-page").elem("triton-deploy-select").toClassName()}
@@ -584,7 +593,6 @@ export const ProjectModelsPage = () => {
               <option value="lazy">即時載入（首次推論時初始化，省記憶體）</option>
             </select>
           </div>
-
 
           {/* Triton 版本號 */}
           <div className={cn("project-models-page").elem("triton-deploy-label").toClassName()}>
@@ -619,7 +627,7 @@ export const ProjectModelsPage = () => {
                   min={1}
                   className={cn("project-models-page").elem("triton-deploy-count-input").toClassName()}
                   value={targetVersion}
-                  onChange={(e) => setTargetVersion(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                  onChange={(e) => setTargetVersion(Math.max(1, Number.parseInt(e.target.value, 10) || 1))}
                   aria-label="部署目標版本號"
                 />
               </>
@@ -628,9 +636,7 @@ export const ProjectModelsPage = () => {
           {lastDeployedVersion && (
             <div className={cn("project-models-page").elem("triton-last-version-hint").toClassName()}>
               上次部署版本：<strong>v{lastDeployedVersion}</strong>
-              {autoVersion && (
-                <span>，下次將自動寫入 v{lastDeployedVersion + 1}</span>
-              )}
+              {autoVersion && <span>，下次將自動寫入 v{lastDeployedVersion + 1}</span>}
             </div>
           )}
 
@@ -677,7 +683,6 @@ export const ProjectModelsPage = () => {
               />
             </div>
           )}
-
         </div>
         <div className={cn("project-models-page").elem("run-list").toClassName()}>
           {runs.length === 0 && (
@@ -703,7 +708,12 @@ export const ProjectModelsPage = () => {
                     {/* <div className={cn("project-models-page").elem("run-summary-time").toClassName()}>{trainingTime}</div> */}
                   </div>
                   <div className={cn("project-models-page").elem("run-summary-side").toClassName()}>
-                    <div className={cn("project-models-page").elem("run-status").mod({ [run.status ?? "unknown"]: true }).toClassName()}>
+                    <div
+                      className={cn("project-models-page")
+                        .elem("run-status")
+                        .mod({ [run.status ?? "unknown"]: true })
+                        .toClassName()}
+                    >
                       {run.status ?? "unknown"}
                     </div>
                     <div className={cn("project-models-page").elem("run-toggle").toClassName()}>
@@ -764,9 +774,7 @@ export const ProjectModelsPage = () => {
                           </div>
                         )}
                         {run.name && (
-                          <div className={cn("project-models-page").elem("run-uuid").toClassName()}>
-                            {run.run_id}
-                          </div>
+                          <div className={cn("project-models-page").elem("run-uuid").toClassName()}>{run.run_id}</div>
                         )}
                       </div>
                       <div className={cn("project-models-page").elem("run-actions").toClassName()}>
@@ -807,7 +815,9 @@ export const ProjectModelsPage = () => {
 
                     <div className={cn("project-models-page").elem("run-description").toClassName()}>
                       {run.message && <div>{run.message}</div>}
-                      {run.error && <div className={cn("project-models-page").elem("run-error").toClassName()}>{run.error}</div>}
+                      {run.error && (
+                        <div className={cn("project-models-page").elem("run-error").toClassName()}>{run.error}</div>
+                      )}
                       {/* {run.params?.base_weights && <div>Base: {run.params.base_weights}</div>} */}
                       {/* {run.params?.data_yaml && <div>Dataset: {run.params.data_yaml}</div>} */}
                     </div>
@@ -889,4 +899,3 @@ export const ProjectModelsPage = () => {
 
 ProjectModelsPage.path = "/models";
 ProjectModelsPage.title = "Models";
-

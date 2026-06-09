@@ -12,7 +12,7 @@ import "./settings.scss";
 export const MenuLayout = ({ children, ...routeProps }) => {
   return (
     <SidebarMenu
-    // 專案設定內容
+      // 專案設定內容
       menuItems={[
         GeneralSettings,
         LabelingSettings,

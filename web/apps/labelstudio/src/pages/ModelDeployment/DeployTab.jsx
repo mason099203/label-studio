@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState, useRef } from "react";
-import { Button, Typography, SimpleCard, Spinner } from "@humansignal/ui";
-import { IconCopy, IconPlus, IconUpload, IconInfoOutline } from "@humansignal/icons";
+import { Button, Typography, Spinner } from "@humansignal/ui";
+import { IconCopy, IconPlus, IconUpload } from "@humansignal/icons";
 import { useAPI } from "../../providers/ApiProvider";
 import { cn } from "../../utils/bem";
-import { Modal, confirm } from "../../components/Modal/Modal";
+import { Modal } from "../../components/Modal/Modal";
 import { useProject } from "../../providers/ProjectProvider";
 import { Toggle } from "../../components/Form";
 import "./ModelDeployment.scss";
@@ -21,9 +21,17 @@ import "./ModelDeployment.scss";
  * }} props
  * @returns {JSX.Element}
  */
-function NumericStepper({ value, onChange, min = 1, max = Infinity, step = 1, disabled = false, ariaLabel = "數值" }) {
+function NumericStepper({
+  value,
+  onChange,
+  min = 1,
+  max = Number.POSITIVE_INFINITY,
+  step = 1,
+  disabled = false,
+  ariaLabel = "數值",
+}) {
   const handleDec = () => onChange(Math.max(min, value - step));
-  const handleInc = () => onChange(max === Infinity ? value + step : Math.min(max, value + step));
+  const handleInc = () => onChange(max === Number.POSITIVE_INFINITY ? value + step : Math.min(max, value + step));
 
   return (
     <div className={rootClass.elem("instance-stepper").toClassName()}>
@@ -36,9 +44,7 @@ function NumericStepper({ value, onChange, min = 1, max = Infinity, step = 1, di
       >
         −
       </button>
-      <span className={rootClass.elem("stepper-value").toClassName()}>
-        {value}
-      </span>
+      <span className={rootClass.elem("stepper-value").toClassName()}>{value}</span>
       <button
         type="button"
         className={rootClass.elem("stepper-btn").toClassName()}
@@ -59,14 +65,7 @@ function NumericStepper({ value, onChange, min = 1, max = Infinity, step = 1, di
  */
 function InstanceGroupStepper({ value, onChange, disabled = false }) {
   return (
-    <NumericStepper
-      value={value}
-      onChange={onChange}
-      min={1}
-      max={10}
-      disabled={disabled}
-      ariaLabel="GPU 實例數"
-    />
+    <NumericStepper value={value} onChange={onChange} min={1} max={10} disabled={disabled} ariaLabel="GPU 實例數" />
   );
 }
 
@@ -76,15 +75,7 @@ function InstanceGroupStepper({ value, onChange, disabled = false }) {
  * @returns {JSX.Element}
  */
 function ModelVersionStepper({ value, onChange, disabled = false }) {
-  return (
-    <NumericStepper
-      value={value}
-      onChange={onChange}
-      min={1}
-      disabled={disabled}
-      ariaLabel="模型版本"
-    />
-  );
+  return <NumericStepper value={value} onChange={onChange} min={1} disabled={disabled} ariaLabel="模型版本" />;
 }
 
 const rootClass = cn("model-deploy-tab");
@@ -94,38 +85,39 @@ const rootClass = cn("model-deploy-tab");
  */
 function ModelCard({ title, subtitle, status, children, footer, type = "deployed", onToggle, isEnabled, updating }) {
   return (
-    <div className={rootClass.elem("card").mod({ type, disabled: !isEnabled && type === "deployed" }).toClassName()}>
+    <div
+      className={rootClass
+        .elem("card")
+        .mod({ type, disabled: !isEnabled && type === "deployed" })
+        .toClassName()}
+    >
       <div className={rootClass.elem("card-header").toClassName()}>
         <div>
-          <Typography variant="title" size="medium">{title}</Typography>
+          <Typography variant="title" size="medium">
+            {title}
+          </Typography>
           {subtitle && (
-             <Typography variant="body" size="small" className="text-neutral-content-subtle">
-               {subtitle}
-             </Typography>
+            <Typography variant="body" size="small" className="text-neutral-content-subtle">
+              {subtitle}
+            </Typography>
           )}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           {onToggle && (
-            <Toggle 
-              checked={isEnabled} 
-              onChange={onToggle} 
-              disabled={updating}
-              style={{ transform: 'scale(0.8)' }}
-            />
+            <Toggle checked={isEnabled} onChange={onToggle} disabled={updating} style={{ transform: "scale(0.8)" }} />
           )}
-          <span className={rootClass.elem("status").mod({ [status.toLowerCase()]: true }).toClassName()}>
+          <span
+            className={rootClass
+              .elem("status")
+              .mod({ [status.toLowerCase()]: true })
+              .toClassName()}
+          >
             {status}
           </span>
         </div>
       </div>
-      <div className={rootClass.elem("card-body").toClassName()}>
-        {children}
-      </div>
-      {footer && (
-        <div className={rootClass.elem("actions").toClassName()}>
-          {footer}
-        </div>
-      )}
+      <div className={rootClass.elem("card-body").toClassName()}>{children}</div>
+      {footer && <div className={rootClass.elem("actions").toClassName()}>{footer}</div>}
     </div>
   );
 }
@@ -182,8 +174,7 @@ export function DeployTab() {
    * @param {number} backendId
    * @param {number} count
    */
-  const setPendingCount = (backendId, count) =>
-    setPendingCounts((prev) => ({ ...prev, [backendId]: count }));
+  const setPendingCount = (backendId, count) => setPendingCounts((prev) => ({ ...prev, [backendId]: count }));
 
   /**
    * 取得指定 ml_backend 的待部署模型版本號（預設 1）。
@@ -197,8 +188,7 @@ export function DeployTab() {
    * @param {number} backendId
    * @param {number} version
    */
-  const setPendingVersion = (backendId, version) =>
-    setPendingVersions((prev) => ({ ...prev, [backendId]: version }));
+  const setPendingVersion = (backendId, version) => setPendingVersions((prev) => ({ ...prev, [backendId]: version }));
 
   /**
    * 取得已部署卡片中指定欄位的「本地暫存值」，若無則使用伺服器值。
@@ -232,10 +222,8 @@ export function DeployTab() {
     const local = deployedPending[deploymentId];
     if (!local) return false;
     return (
-      (local.instance_group_count !== undefined &&
-        local.instance_group_count !== deployment.instance_group_count) ||
-      (local.model_version !== undefined &&
-        local.model_version !== deployment.model_version)
+      (local.instance_group_count !== undefined && local.instance_group_count !== deployment.instance_group_count) ||
+      (local.model_version !== undefined && local.model_version !== deployment.model_version)
     );
   };
 
@@ -293,17 +281,11 @@ export function DeployTab() {
 
     // 僅送出實際有變更的欄位
     const body = {};
-    if (
-      local.instance_group_count !== undefined &&
-      local.instance_group_count !== deployment.instance_group_count
-    ) {
+    if (local.instance_group_count !== undefined && local.instance_group_count !== deployment.instance_group_count) {
       body.instance_group_count = local.instance_group_count;
     }
     // 使用者明確調整版本時帶入，後端收到 model_version 就不再自動遞增
-    if (
-      local.model_version !== undefined &&
-      local.model_version !== deployment.model_version
-    ) {
+    if (local.model_version !== undefined && local.model_version !== deployment.model_version) {
       body.model_version = local.model_version;
     }
     if (Object.keys(body).length === 0) return;
@@ -336,12 +318,12 @@ export function DeployTab() {
       const formData = new FormData();
       formData.append("file", file);
       formData.append("model_name", uploadModelName || file.name.split(".")[0]);
-      
+
       await api.callApi("trainingModelUpload", {
         params: { pk: project.id },
         body: formData,
       });
-      
+
       setShowUploadModal(false);
       setUploadModelName("");
       fetchList();
@@ -361,16 +343,14 @@ export function DeployTab() {
     <section className={rootClass.toClassName()}>
       <div className={rootClass.elem("header-row").toClassName()}>
         <div>
-          <Typography variant="headline" size="medium">模型部署</Typography>
+          <Typography variant="headline" size="medium">
+            模型部署
+          </Typography>
           <Typography variant="body" size="small" className="text-neutral-content-subtle">
             管理您的模型服務，並獲得推論 API 金鑰。
           </Typography>
         </div>
-        <Button 
-          variant="primary" 
-          icon={<IconPlus />} 
-          onClick={() => setShowUploadModal(true)}
-        >
+        <Button variant="primary" icon={<IconPlus />} onClick={() => setShowUploadModal(true)}>
           上傳自定義模型
         </Button>
       </div>
@@ -381,8 +361,8 @@ export function DeployTab() {
           const depId = d.id;
           const isDirty = hasDeployedChanges(depId, d);
           const isApplying = applyingId === depId;
-          const localCount = getDeployedSetting(depId, 'instance_group_count', d.instance_group_count ?? 1);
-          const localVersion = getDeployedSetting(depId, 'model_version', d.model_version ?? 1);
+          const localCount = getDeployedSetting(depId, "instance_group_count", d.instance_group_count ?? 1);
+          const localVersion = getDeployedSetting(depId, "model_version", d.model_version ?? 1);
           const countChanged = localCount !== (d.instance_group_count ?? 1);
           const versionChanged = localVersion !== (d.model_version ?? 1);
           // 預覽版本：若使用者手動改版本以手動值為準；若只改了設定則預覽自動遞增後的版本
@@ -390,7 +370,7 @@ export function DeployTab() {
             ? localVersion
             : countChanged
               ? (d.model_version ?? 1) + 1
-              : d.model_version ?? 1;
+              : (d.model_version ?? 1);
 
           return (
             <ModelCard
@@ -401,7 +381,7 @@ export function DeployTab() {
               isEnabled={d.is_enabled}
               onToggle={() => handleToggle(depId, d.is_enabled)}
               updating={updatingId === depId}
-              footer={(
+              footer={
                 <>
                   {/* 有暫存變更時才顯示「套用」與「取消」按鈕 */}
                   {isDirty && (
@@ -424,12 +404,7 @@ export function DeployTab() {
                       </Button>
                     </>
                   )}
-                  <Button
-                    size="small"
-                    look="outlined"
-                    icon={<IconCopy />}
-                    onClick={() => handleCopyKey(d.api_key)}
-                  >
+                  <Button size="small" look="outlined" icon={<IconCopy />} onClick={() => handleCopyKey(d.api_key)}>
                     複製金鑰
                   </Button>
                   <Button
@@ -446,17 +421,20 @@ export function DeployTab() {
                     移除
                   </Button>
                 </>
-              )}
+              }
             >
               <div className={rootClass.elem("field").toClassName()}>
                 <span className={rootClass.elem("label").toClassName()}>API Key (已遮蔽)</span>
-                <code className={rootClass.elem("mono").toClassName()}>
-                  ●●●●●●●●●●●●●●●●●●●●
-                </code>
+                <code className={rootClass.elem("mono").toClassName()}>●●●●●●●●●●●●●●●●●●●●</code>
               </div>
 
               {/* GPU 實例數：本地暫存，不即時 PATCH */}
-              <div className={rootClass.elem("field").mod({ dirty: localCount !== (d.instance_group_count ?? 1) }).toClassName()}>
+              <div
+                className={rootClass
+                  .elem("field")
+                  .mod({ dirty: localCount !== (d.instance_group_count ?? 1) })
+                  .toClassName()}
+              >
                 <span
                   className={rootClass.elem("label").toClassName()}
                   title="對應 Triton instance_group[].count，套用後自動遞增版本號"
@@ -470,7 +448,7 @@ export function DeployTab() {
                 </span>
                 <InstanceGroupStepper
                   value={localCount}
-                  onChange={(count) => setDeployedSetting(depId, 'instance_group_count', count)}
+                  onChange={(count) => setDeployedSetting(depId, "instance_group_count", count)}
                   disabled={isApplying}
                 />
               </div>
@@ -491,7 +469,7 @@ export function DeployTab() {
                 <div className={rootClass.elem("version-display").toClassName()}>
                   <ModelVersionStepper
                     value={localVersion}
-                    onChange={(v) => setDeployedSetting(depId, 'model_version', v)}
+                    onChange={(v) => setDeployedSetting(depId, "model_version", v)}
                     disabled={isApplying}
                   />
                   {!versionChanged && countChanged && (
@@ -504,17 +482,17 @@ export function DeployTab() {
             </ModelCard>
           );
         })}
-        
+
         {available.map((item) => (
-          <ModelCard 
+          <ModelCard
             key={item.ml_backend.id}
             title={item.ml_backend.title}
             subtitle={`專案: ${item.ml_backend.project_title}`}
             status="READY"
             type="available"
-            footer={(
-              <Button 
-                variant="primary" 
+            footer={
+              <Button
+                variant="primary"
                 size="small"
                 onClick={async () => {
                   await api.callApi("createDeployment", {
@@ -529,7 +507,7 @@ export function DeployTab() {
               >
                 部署並取得金鑰
               </Button>
-            )}
+            }
           >
             <Typography variant="body" size="small">
               此模型已訓練完成，準備好提供服務。
@@ -573,28 +551,26 @@ export function DeployTab() {
         <form className="upload-modal__form" onSubmit={handleUploadModel}>
           <div>
             <Typography variant="label">模型顯示名稱</Typography>
-            <input 
+            <input
               className="ls-input"
               value={uploadModelName}
-              onChange={e => setUploadModelName(e.target.value)}
+              onChange={(e) => setUploadModelName(e.target.value)}
               placeholder="例如: my-custom-resnet"
               required
             />
           </div>
-          
+
           <div className="upload-modal__dropzone" onClick={() => fileInputRef.current?.click()}>
             <IconUpload size={32} className="mb-tight" />
             <Typography variant="body">點擊或拖放 .pt 或 .pth 檔案至此</Typography>
-            <input 
-              type="file" 
-              ref={fileInputRef} 
-              accept=".pt,.pth" 
-              onChange={e => setUploadModelName(v => v || e.target.files[0]?.name.split('.')[0])}
+            <input
+              type="file"
+              ref={fileInputRef}
+              accept=".pt,.pth"
+              onChange={(e) => setUploadModelName((v) => v || e.target.files[0]?.name.split(".")[0])}
             />
             {fileInputRef.current?.files[0] && (
-               <div className="mt-tight text-primary">
-                 已選擇: {fileInputRef.current.files[0].name}
-               </div>
+              <div className="mt-tight text-primary">已選擇: {fileInputRef.current.files[0].name}</div>
             )}
           </div>
 

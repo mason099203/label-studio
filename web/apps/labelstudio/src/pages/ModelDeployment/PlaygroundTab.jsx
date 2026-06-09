@@ -125,7 +125,7 @@ function buildPlaygroundApiExampleSnippets(opts) {
     try {
       const parsed = new URL(tritonServerUrl);
       tritonHost = parsed.hostname || tritonHost;
-      tritonPort = parsed.port ? Number(parsed.port) : (parsed.protocol === "https:" ? 443 : 18000);
+      tritonPort = parsed.port ? Number(parsed.port) : parsed.protocol === "https:" ? 443 : 18000;
     } catch (_) {
       // URL 格式不合法，保留佔位符
     }
@@ -311,10 +311,13 @@ function CopyCodeButton({ text, className }) {
     };
 
     if (navigator?.clipboard?.writeText) {
-      navigator.clipboard.writeText(text).then(done).catch(() => {
-        execCommandCopy(text);
-        done();
-      });
+      navigator.clipboard
+        .writeText(text)
+        .then(done)
+        .catch(() => {
+          execCommandCopy(text);
+          done();
+        });
     } else {
       execCommandCopy(text);
       done();
@@ -322,12 +325,7 @@ function CopyCodeButton({ text, className }) {
   };
 
   return (
-    <button
-      type="button"
-      className={className}
-      onClick={handleCopy}
-      aria-label="複製程式碼"
-    >
+    <button type="button" className={className} onClick={handleCopy} aria-label="複製程式碼">
       {copied ? "已複製 ✓" : "複製"}
     </button>
   );
@@ -441,14 +439,7 @@ function extractClassificationChoiceLabels(labelConfig) {
 function extractSpatialControlLabelNames(labelConfig) {
   if (typeof labelConfig !== "string" || !labelConfig.trim()) return [];
   const xml = labelConfig.replace(/<!--[\s\S]*?-->/g, " ");
-  const tagNames = [
-    "RectangleLabels",
-    "PolygonLabels",
-    "KeyPointLabels",
-    "EllipseLabels",
-    "BrushLabels",
-    "MaskLabels",
-  ];
+  const tagNames = ["RectangleLabels", "PolygonLabels", "KeyPointLabels", "EllipseLabels", "BrushLabels", "MaskLabels"];
   for (const tag of tagNames) {
     const reBlock = new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?<\\/${tag}>`, "i");
     const bm = xml.match(reBlock);
@@ -742,9 +733,7 @@ export function PlaygroundTab() {
   const [modelName, setModelName] = useState(savedState.modelName);
   const [apiKey, setApiKey] = useState(savedState.apiKey);
   /** Triton 伺服器主機 IP（如 `192.168.1.10`）；port 18000 固定。空值表示使用伺服器 TRITON_SERVER_URL。 */
-  const [tritonServerHost, setTritonServerHost] = useState(
-    () => extractHostFromUrl(savedState.tritonServerUrl),
-  );
+  const [tritonServerHost, setTritonServerHost] = useState(() => extractHostFromUrl(savedState.tritonServerUrl));
   /** 後端轉發 Triton 時使用的完整 HTTP URL（固定埠 18000）；由 tritonServerHost 自動組成。 */
   const tritonServerUrl = useMemo(() => buildTritonBaseUrl(tritonServerHost), [tritonServerHost]);
   /** Prometheus Metrics 完整 URL（固定埠 8002）；由 tritonServerHost 自動組成。 */
@@ -781,7 +770,7 @@ export function PlaygroundTab() {
   const canvasRef = useRef(null);
   const [imagePreview, setImagePreview] = useState(null);
   const [processingImage, setProcessingImage] = useState(false);
-  
+
   // 不要將 Tensor 資料存進 useState，避免渲染卡頓
   const tensorPayloadRef = useRef(null);
 
@@ -878,7 +867,7 @@ export function PlaygroundTab() {
 
   /** Label Studio 代理 Triton 推論的 REST URL（隨專案 ID 更新）。 */
   const inferProxyUrl = useMemo(() => {
-    const hostname = typeof window !== "undefined" ? window.APP_SETTINGS?.hostname ?? "" : "";
+    const hostname = typeof window !== "undefined" ? (window.APP_SETTINGS?.hostname ?? "") : "";
     return buildTritonInferProxyUrl(hostname, projectId);
   }, [projectId]);
 
@@ -1036,7 +1025,7 @@ export function PlaygroundTab() {
       const TARGET_SIZE = PLAYGROUND_INPUT_SIZE;
       const imageData = ctx.getImageData(0, 0, TARGET_SIZE, TARGET_SIZE).data;
       const numPixels = TARGET_SIZE * TARGET_SIZE;
-      
+
       // CHW 順序: R channel, G channel, B channel
       const rChannel = new Float32Array(numPixels);
       const gChannel = new Float32Array(numPixels);
@@ -1128,8 +1117,7 @@ export function PlaygroundTab() {
         await redrawLetterboxFromPreviewUrl(imagePreview, canvasRef);
         const ctx = canvasRef.current.getContext("2d");
         if (ctx && taskType === "classification") {
-          const primary =
-            res.body.outputs.find((o) => o.name === "output0") ?? res.body.outputs[0];
+          const primary = res.body.outputs.find((o) => o.name === "output0") ?? res.body.outputs[0];
           const extracted = extractClassificationVector(primary);
           if (extracted) {
             const rows = buildClassificationRows(extracted.values);
@@ -1193,8 +1181,7 @@ export function PlaygroundTab() {
         </Typography>
         <Typography variant="body" size="small" className="text-neutral-content-subtle mb-tight block">
           後端會校驗該 <code>model_name</code> 是否為此專案已部署之模型，並轉送 Triton{" "}
-          <code>{`/v2/models/<name>/infer`}</code>。請求方法為 <code>POST</code>，內容類型{" "}
-          <code>application/json</code>
+          <code>{`/v2/models/<name>/infer`}</code>。請求方法為 <code>POST</code>，內容類型 <code>application/json</code>
           ；需具專案檢視權限（與網頁相同之登入狀態或對應 Cookie／Token）。若專案設定了 Triton 安全金鑰，JSON 內須含{" "}
           <code>api_key</code>。可選查詢參數 <code>?timeout=60</code>（秒）調整逾時；<code>?triton_url=...</code>{" "}
           指定後端轉發之 Triton HTTP 基底（與下方「Triton 服務位址」一致）。
@@ -1242,37 +1229,41 @@ export function PlaygroundTab() {
       </div>
 
       <div className={rootClass.elem("form").toClassName()}>
-        <div className={rootClass.elem("form-row").toClassName()} style={{ display: "flex", gap: "16px", marginBottom: "16px" }}>
-           <div className={rootClass.elem("field").toClassName()} style={{ flex: 1 }}>
-             <label className="text-label-small text-neutral-content mb-tightest block" htmlFor="playground-project-select">
-               專案名稱
-             </label>
-             <select
-               id="playground-project-select"
-               className={rootClass.elem("input").toClassName()}
-               value={projectId}
-               onChange={(e) => setProjectId(e.target.value)}
-               disabled={projectsLoading}
-               style={{ width: "100%", padding: "8px", borderRadius: "4px", border: "1px solid #ccc", height: "36px" }}
-             >
-               <option value="">{projectsLoading ? "載入專案列表中…" : "請選擇專案"}</option>
-               {!projectsLoading &&
-                 projects.map((p) => (
-                   <option key={p.id} value={String(p.id)}>
-                     {projectSelectLabelsById.get(String(p.id)) ?? `專案 #${p.id}`}
-                   </option>
-                 ))}
-             </select>
-             {projectId.trim() ? (
-               <Typography variant="body" size="small" className="text-neutral-content-subtle mt-tightest block">
-                 API 路徑使用專案 ID：<code>{projectId.trim()}</code>
-               </Typography>
-             ) : null}
-             {projectsError && (
-               <div className={rootClass.elem("error").toClassName()}>{projectsError}</div>
-             )}
-           </div>
-           {/* <div className={rootClass.elem("field").toClassName()} style={{ flex: 1 }}>
+        <div
+          className={rootClass.elem("form-row").toClassName()}
+          style={{ display: "flex", gap: "16px", marginBottom: "16px" }}
+        >
+          <div className={rootClass.elem("field").toClassName()} style={{ flex: 1 }}>
+            <label
+              className="text-label-small text-neutral-content mb-tightest block"
+              htmlFor="playground-project-select"
+            >
+              專案名稱
+            </label>
+            <select
+              id="playground-project-select"
+              className={rootClass.elem("input").toClassName()}
+              value={projectId}
+              onChange={(e) => setProjectId(e.target.value)}
+              disabled={projectsLoading}
+              style={{ width: "100%", padding: "8px", borderRadius: "4px", border: "1px solid #ccc", height: "36px" }}
+            >
+              <option value="">{projectsLoading ? "載入專案列表中…" : "請選擇專案"}</option>
+              {!projectsLoading &&
+                projects.map((p) => (
+                  <option key={p.id} value={String(p.id)}>
+                    {projectSelectLabelsById.get(String(p.id)) ?? `專案 #${p.id}`}
+                  </option>
+                ))}
+            </select>
+            {projectId.trim() ? (
+              <Typography variant="body" size="small" className="text-neutral-content-subtle mt-tightest block">
+                API 路徑使用專案 ID：<code>{projectId.trim()}</code>
+              </Typography>
+            ) : null}
+            {projectsError && <div className={rootClass.elem("error").toClassName()}>{projectsError}</div>}
+          </div>
+          {/* <div className={rootClass.elem("field").toClassName()} style={{ flex: 1 }}>
              <label className="text-label-small text-neutral-content mb-tightest block">Triton 安全金鑰 (API Key)</label>
              <input
                type="password"
@@ -1284,9 +1275,15 @@ export function PlaygroundTab() {
            </div> */}
         </div>
 
-        <div className={rootClass.elem("form-row").toClassName()} style={{ display: "flex", gap: "16px", marginBottom: "16px", flexWrap: "wrap" }}>
+        <div
+          className={rootClass.elem("form-row").toClassName()}
+          style={{ display: "flex", gap: "16px", marginBottom: "16px", flexWrap: "wrap" }}
+        >
           <div className={rootClass.elem("field").toClassName()} style={{ flex: "1 1 280px" }}>
-            <label className="text-label-small text-neutral-content mb-tightest block" htmlFor="playground-triton-server-host">
+            <label
+              className="text-label-small text-neutral-content mb-tightest block"
+              htmlFor="playground-triton-server-host"
+            >
               Triton 伺服器 IP（選填）
             </label>
             <input
@@ -1297,7 +1294,13 @@ export function PlaygroundTab() {
               onChange={(e) => setTritonServerHost(e.target.value.trim())}
               placeholder="192.168.1.10"
               autoComplete="off"
-              style={{ width: "100%", padding: "8px", borderRadius: "4px", border: "1px solid #ccc", minHeight: "36px" }}
+              style={{
+                width: "100%",
+                padding: "8px",
+                borderRadius: "4px",
+                border: "1px solid #ccc",
+                minHeight: "36px",
+              }}
             />
             <Typography variant="body" size="small" className="text-neutral-content-subtle mt-tightest block">
               {tritonServerHost.trim() ? (
@@ -1416,9 +1419,7 @@ export function PlaygroundTab() {
               此專案尚無已部署模型於清單中；若已知 Triton 名稱仍可手動輸入後測試。
             </Typography>
           ) : null}
-          {modelsError && (
-            <div className={rootClass.elem("error").toClassName()}>{modelsError}</div>
-          )}
+          {modelsError && <div className={rootClass.elem("error").toClassName()}>{modelsError}</div>}
         </div>
 
         <div className={rootClass.elem("field").toClassName()} style={{ marginBottom: "16px" }}>
@@ -1452,112 +1453,139 @@ export function PlaygroundTab() {
           </Typography>
         </div>
 
-        <div className={rootClass.elem("field").toClassName()} style={{ marginBottom: "24px", border: "1px solid #e0e0e0", padding: "16px", borderRadius: "8px", backgroundColor: "#fff" }}>
-          <label className="text-label-small text-neutral-content block" style={{ marginBottom: "8px", fontWeight: "bold" }}>上傳圖片</label>
+        <div
+          className={rootClass.elem("field").toClassName()}
+          style={{
+            marginBottom: "24px",
+            border: "1px solid #e0e0e0",
+            padding: "16px",
+            borderRadius: "8px",
+            backgroundColor: "#fff",
+          }}
+        >
+          <label
+            className="text-label-small text-neutral-content block"
+            style={{ marginBottom: "8px", fontWeight: "bold" }}
+          >
+            上傳圖片
+          </label>
           <input type="file" accept="image/*" onChange={handleImageUpload} disabled={processingImage} />
           {processingImage && <span className="text-neutral-content-subtle ml-tight">運算中...</span>}
-          
+
           <div style={{ marginTop: "16px", display: imagePreview ? "block" : "none", textAlign: "center" }}>
-              <canvas 
-                 ref={canvasRef} 
-                 style={{ maxWidth: "100%", maxHeight: "500px", border: "1px solid #ddd", borderRadius: "4px", backgroundColor: "#f9f9f9" }}
-              />
-              {outputParseHint && (
-                <Typography variant="body" size="small" className="text-neutral-content-subtle mt-tight block" style={{ textAlign: "left" }}>
-                  輸出解析：{outputParseHint}
-                  {taskType === "detect"
-                    ? `（座標為 letterbox ${PLAYGROUND_INPUT_SIZE}×${PLAYGROUND_INPUT_SIZE} 模型空間；無 NMS，框可能重疊）`
-                    : "（機率欄：若輸出已近似機率分佈則沿用；否則以 softmax(logits) 計算）"}
+            <canvas
+              ref={canvasRef}
+              style={{
+                maxWidth: "100%",
+                maxHeight: "500px",
+                border: "1px solid #ddd",
+                borderRadius: "4px",
+                backgroundColor: "#f9f9f9",
+              }}
+            />
+            {outputParseHint && (
+              <Typography
+                variant="body"
+                size="small"
+                className="text-neutral-content-subtle mt-tight block"
+                style={{ textAlign: "left" }}
+              >
+                輸出解析：{outputParseHint}
+                {taskType === "detect"
+                  ? `（座標為 letterbox ${PLAYGROUND_INPUT_SIZE}×${PLAYGROUND_INPUT_SIZE} 模型空間；無 NMS，框可能重疊）`
+                  : "（機率欄：若輸出已近似機率分佈則沿用；否則以 softmax(logits) 計算）"}
+              </Typography>
+            )}
+            {taskType === "detect" && detectionRows.length > 0 && (
+              <div style={{ marginTop: "16px", overflowX: "auto", textAlign: "left" }}>
+                <Typography variant="title" size="small" className="mb-tight block">
+                  偵測數值（前 {detectionRows.length} 筆；標籤來自 RectangleLabels 等之 Label 順序）
                 </Typography>
-              )}
-              {taskType === "detect" && detectionRows.length > 0 && (
-                <div style={{ marginTop: "16px", overflowX: "auto", textAlign: "left" }}>
-                  <Typography variant="title" size="small" className="mb-tight block">
-                    偵測數值（前 {detectionRows.length} 筆；標籤來自 RectangleLabels 等之 Label 順序）
-                  </Typography>
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", fontFamily: "monospace" }}>
-                    <thead>
-                      <tr style={{ background: "#f3f4f6" }}>
-                        <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>#</th>
-                        <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>錨點</th>
-                        <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>索引</th>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", fontFamily: "monospace" }}>
+                  <thead>
+                    <tr style={{ background: "#f3f4f6" }}>
+                      <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>#</th>
+                      <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>錨點</th>
+                      <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>索引</th>
+                      <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>標籤（介面）</th>
+                      <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>信心度</th>
+                      <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>cx</th>
+                      <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>cy</th>
+                      <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>w</th>
+                      <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>h</th>
+                      <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>x1</th>
+                      <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>y1</th>
+                      <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>x2</th>
+                      <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>y2</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detectionRows.map((row, i) => {
+                      const x1 = row.cx - row.w / 2;
+                      const y1 = row.cy - row.h / 2;
+                      const x2 = row.cx + row.w / 2;
+                      const y2 = row.cy + row.h / 2;
+                      return (
+                        <tr key={`${row.anchorIndex}-${row.classIndex}-${i}`}>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{i + 1}</td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{row.anchorIndex}</td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{row.classIndex}</td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>
+                            {resolveInterfaceLabelName(interfaceDetectionLabels, row.classIndex) || (
+                              <span className="text-neutral-content-subtle">—</span>
+                            )}
+                          </td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{row.confidence.toFixed(4)}</td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{Number(row.cx).toFixed(2)}</td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{Number(row.cy).toFixed(2)}</td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{Number(row.w).toFixed(2)}</td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{Number(row.h).toFixed(2)}</td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{x1.toFixed(2)}</td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{y1.toFixed(2)}</td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{x2.toFixed(2)}</td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{y2.toFixed(2)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {taskType === "classification" && classificationRows.length > 0 && (
+              <div style={{ marginTop: "16px", textAlign: "left" }}>
+                <Typography variant="title" size="small" className="mb-tight block">
+                  分類數值（共 {classificationRows.length} 類；標籤來自專案 Labeling Interface 之 Choices 順序）
+                </Typography>
+                <div style={{ maxHeight: "360px", overflow: "auto", border: "1px solid #e5e7eb", borderRadius: "6px" }}>
+                  <table
+                    style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", fontFamily: "monospace" }}
+                  >
+                    <thead style={{ position: "sticky", top: 0, background: "#f3f4f6", zIndex: 1 }}>
+                      <tr>
                         <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>標籤（介面）</th>
-                        <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>信心度</th>
-                        <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>cx</th>
-                        <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>cy</th>
-                        <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>w</th>
-                        <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>h</th>
-                        <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>x1</th>
-                        <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>y1</th>
-                        <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>x2</th>
-                        <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>y2</th>
+                        <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>索引</th>
+                        <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>原始輸出</th>
+                        <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>機率</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {detectionRows.map((row, i) => {
-                        const x1 = row.cx - row.w / 2;
-                        const y1 = row.cy - row.h / 2;
-                        const x2 = row.cx + row.w / 2;
-                        const y2 = row.cy + row.h / 2;
-                        return (
-                          <tr key={`${row.anchorIndex}-${row.classIndex}-${i}`}>
-                            <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{i + 1}</td>
-                            <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{row.anchorIndex}</td>
-                            <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{row.classIndex}</td>
-                            <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>
-                              {resolveInterfaceLabelName(interfaceDetectionLabels, row.classIndex) || (
-                                <span className="text-neutral-content-subtle">—</span>
-                              )}
-                            </td>
-                            <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{row.confidence.toFixed(4)}</td>
-                            <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{Number(row.cx).toFixed(2)}</td>
-                            <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{Number(row.cy).toFixed(2)}</td>
-                            <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{Number(row.w).toFixed(2)}</td>
-                            <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{Number(row.h).toFixed(2)}</td>
-                            <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{x1.toFixed(2)}</td>
-                            <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{y1.toFixed(2)}</td>
-                            <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{x2.toFixed(2)}</td>
-                            <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{y2.toFixed(2)}</td>
-                          </tr>
-                        );
-                      })}
+                      {classificationRows.map((row) => (
+                        <tr key={row.classIndex}>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>
+                            {resolveInterfaceLabelName(interfaceClassificationLabels, row.classIndex) || (
+                              <span className="text-neutral-content-subtle">—</span>
+                            )}
+                          </td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{row.classIndex}</td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{Number(row.raw).toFixed(6)}</td>
+                          <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{row.probability.toFixed(6)}</td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
-              )}
-              {taskType === "classification" && classificationRows.length > 0 && (
-                <div style={{ marginTop: "16px", textAlign: "left" }}>
-                  <Typography variant="title" size="small" className="mb-tight block">
-                    分類數值（共 {classificationRows.length} 類；標籤來自專案 Labeling Interface 之 Choices 順序）
-                  </Typography>
-                  <div style={{ maxHeight: "360px", overflow: "auto", border: "1px solid #e5e7eb", borderRadius: "6px" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", fontFamily: "monospace" }}>
-                      <thead style={{ position: "sticky", top: 0, background: "#f3f4f6", zIndex: 1 }}>
-                        <tr>
-                          <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>標籤（介面）</th>
-                          <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>索引</th>
-                          <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>原始輸出</th>
-                          <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>機率</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {classificationRows.map((row) => (
-                          <tr key={row.classIndex}>
-                            <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>
-                              {resolveInterfaceLabelName(interfaceClassificationLabels, row.classIndex) || (
-                                <span className="text-neutral-content-subtle">—</span>
-                              )}
-                            </td>
-                            <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{row.classIndex}</td>
-                            <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{Number(row.raw).toFixed(6)}</td>
-                            <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{row.probability.toFixed(6)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -1578,16 +1606,31 @@ export function PlaygroundTab() {
             結果
           </Typography>
           {response.error && (
-            <div className={rootClass.elem("error").toClassName()} style={{ padding: "12px", background: "#fee2e2", color: "#b91c1c", borderRadius: "6px" }}>
+            <div
+              className={rootClass.elem("error").toClassName()}
+              style={{ padding: "12px", background: "#fee2e2", color: "#b91c1c", borderRadius: "6px" }}
+            >
               {response.error}
             </div>
           )}
           {response.status != null && (
             <div style={{ padding: "12px", background: response.ok ? "#f0fdf4" : "#fef2f2", borderRadius: "6px" }}>
-              <div className={rootClass.elem("status").toClassName()} style={{ fontWeight: "bold", marginBottom: "8px", color: response.ok ? "#166534" : "#991b1b" }}>
+              <div
+                className={rootClass.elem("status").toClassName()}
+                style={{ fontWeight: "bold", marginBottom: "8px", color: response.ok ? "#166534" : "#991b1b" }}
+              >
                 HTTP 狀態: {response.status} {response.statusText}
               </div>
-              <pre className={rootClass.elem("pre").toClassName()} style={{ margin: 0, whiteSpace: "pre-wrap", color: "#374151", fontSize: "14px", fontFamily: "monospace" }}>
+              <pre
+                className={rootClass.elem("pre").toClassName()}
+                style={{
+                  margin: 0,
+                  whiteSpace: "pre-wrap",
+                  color: "#374151",
+                  fontSize: "14px",
+                  fontFamily: "monospace",
+                }}
+              >
                 {response.summary}
               </pre>
             </div>

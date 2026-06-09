@@ -8,15 +8,10 @@ import {
   IconLsLabeling,
   IconLsReview,
   IconCheck,
-  IconCloudProviderS3,
-  IconCloudProviderGCS,
-  IconCloudProviderAzure,
-  IconCloudProviderRedis,
   IconExternal,
   IconRelationLink,
 } from "@humansignal/icons";
 import { Typography } from "../typography/typography";
-import { Tooltip } from "../Tooltip/Tooltip";
 
 const meta: Meta<typeof EmptyState> = {
   component: EmptyState,

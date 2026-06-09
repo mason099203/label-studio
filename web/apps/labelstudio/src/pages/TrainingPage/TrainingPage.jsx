@@ -1,11 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useHistory } from "react-router";
-import {
-  IconAnalytics,
-  IconFileDownload,
-  IconPlay,
-  IconWarningCircleFilled,
-} from "@humansignal/icons";
+import { IconAnalytics, IconFileDownload, IconPlay, IconWarningCircleFilled } from "@humansignal/icons";
 import { Button } from "@humansignal/ui";
 import { Modal } from "../../components/Modal/Modal";
 import { Space } from "../../components/Space/Space";
@@ -14,10 +9,6 @@ import { useFixedLocation, useParams } from "../../providers/RoutesProvider";
 import { cn } from "../../utils/bem";
 import { absoluteURL, isDefined } from "../../utils/helpers";
 import "./TrainingPage.scss";
-
-
-
-
 
 /**
  * 訓練模組頁面：使用當前專案與已標註資料進行模型訓練，
@@ -178,8 +169,7 @@ export const TrainingPage = () => {
 
   const disabledReason = (() => {
     if (trainingState === "running") return "目前已有任務進行中";
-    if (trainingState === "done")
-      return "本次訓練已完成；若要再次訓練請關閉此視窗後重新開啟 Training。";
+    if (trainingState === "done") return "本次訓練已完成；若要再次訓練請關閉此視窗後重新開啟 Training。";
     if (localModels.length === 0) return "找不到本機權重檔（請確認 data/training/models/original/）";
     if (!selectedBaseWeights) return "請先選擇 base 模型";
     if (!datasetConfigPath) return "請先輸入或從 Export 產生 dataset_config.json";
@@ -279,8 +269,7 @@ export const TrainingPage = () => {
           )}
           {(datasetMeta?.task_type || trainingSpec?.task_type) && (
             <div className={cn("training-page").elem("hint").toClassName()} style={{ marginTop: 8 }}>
-              任務類型：{datasetMeta?.task_type ?? trainingSpec?.task_type} / 訓練模型：
-              {" "}
+              任務類型：{datasetMeta?.task_type ?? trainingSpec?.task_type} / 訓練模型：{" "}
               {datasetMeta?.training_model ?? trainingSpec?.training_model}
             </div>
           )}
@@ -307,9 +296,7 @@ export const TrainingPage = () => {
                   tabIndex={0}
                   onKeyDown={(e) => e.key === "Enter" && setSelectedBaseWeights(m.path)}
                 >
-                  <span className={cn("training-page").elem("backend-title").toClassName()}>
-                    {m.name}
-                  </span>
+                  <span className={cn("training-page").elem("backend-title").toClassName()}>{m.name}</span>
                   {/* <span className={cn("training-page").elem("backend-desc").toClassName()}>{m.path}</span> */}
                 </div>
               ))}
@@ -353,22 +340,41 @@ export const TrainingPage = () => {
             />
           </div>
 
-
           {/* 訓練引擎選擇 (僅限分類任務) */}
           {(datasetMeta?.task_type === "classification" || trainingSpec?.task_type === "classification") && (
             <div style={{ marginTop: 12 }}>
-              <div className={cn("training-page").elem("section-title").toClassName()} style={{ fontSize: 13 }}>訓練引擎</div>
+              <div className={cn("training-page").elem("section-title").toClassName()} style={{ fontSize: 13 }}>
+                訓練引擎
+              </div>
               <div style={{ display: "flex", gap: 12, marginTop: 4 }}>
                 <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
-                  <input type="radio" name="engine" value="auto" checked={trainingEngine === "auto"} onChange={() => setTrainingEngine("auto")} />
+                  <input
+                    type="radio"
+                    name="engine"
+                    value="auto"
+                    checked={trainingEngine === "auto"}
+                    onChange={() => setTrainingEngine("auto")}
+                  />
                   自動 (依資料集)
                 </label>
                 <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
-                  <input type="radio" name="engine" value="yolo_classify" checked={trainingEngine === "yolo_classify"} onChange={() => setTrainingEngine("yolo_classify")} />
+                  <input
+                    type="radio"
+                    name="engine"
+                    value="yolo_classify"
+                    checked={trainingEngine === "yolo_classify"}
+                    onChange={() => setTrainingEngine("yolo_classify")}
+                  />
                   YOLO v8/v11
                 </label>
                 <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
-                  <input type="radio" name="engine" value="cnn_classify" checked={trainingEngine === "cnn_classify"} onChange={() => setTrainingEngine("cnn_classify")} />
+                  <input
+                    type="radio"
+                    name="engine"
+                    value="cnn_classify"
+                    checked={trainingEngine === "cnn_classify"}
+                    onChange={() => setTrainingEngine("cnn_classify")}
+                  />
                   ResNet18 (PyTorch)
                 </label>
               </div>
@@ -414,20 +420,19 @@ export const TrainingPage = () => {
               <IconAnalytics /> 訓練效能
             </div>
             <div className={cn("training-page").elem("metrics").toClassName()}>
-              {(
-                metrics?.top1 != null || metrics?.top5 != null
-                  ? [
-                      ["Top-1", metrics.top1],
-                      ["Top-5", metrics.top5],
-                      ["Fitness", metrics.fitness],
-                    ]
-                  : [
-                      ["mAP@0.5", metrics.map50],
-                      ["mAP@0.5:0.95", metrics.map],
-                      ["mAP@0.75", metrics.map75],
-                      ["Precision (mp)", metrics.mp],
-                      ["Recall (mr)", metrics.mr],
-                    ]
+              {(metrics?.top1 != null || metrics?.top5 != null
+                ? [
+                    ["Top-1", metrics.top1],
+                    ["Top-5", metrics.top5],
+                    ["Fitness", metrics.fitness],
+                  ]
+                : [
+                    ["mAP@0.5", metrics.map50],
+                    ["mAP@0.5:0.95", metrics.map],
+                    ["mAP@0.75", metrics.map75],
+                    ["Precision (mp)", metrics.mp],
+                    ["Recall (mr)", metrics.mr],
+                  ]
               ).map(([label, value]) => (
                 <div key={label} className={cn("training-page").elem("metric").toClassName()}>
                   <span className={cn("training-page").elem("metric-label").toClassName()}>{label}</span>
