@@ -10,13 +10,13 @@ import {
 } from "@humansignal/shad/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@humansignal/shad/components/ui/popover";
 import type { SelectOption, OptionProps, SelectProps } from "./types.ts";
-import { Checkbox, Label, Typography } from "@humansignal/ui";
+import { Button, Checkbox, Label, Typography } from "@humansignal/ui";
 import { Badge } from "../badge/badge";
 import { isDefined } from "@humansignal/core/lib/utils/helpers";
 import { IconChevron, IconChevronDown } from "@humansignal/icons";
 import clsx from "clsx";
 import styles from "./select.module.scss";
-import { cnm } from "../../utils/utils";
+import { cn, cnm } from "../../utils/utils";
 import { VariableSizeList } from "react-window";
 import InfiniteLoader from "react-window-infinite-loader";
 
@@ -34,6 +34,7 @@ type SelectedItemsGroupProps = {
   onDeselectItem: (value: any) => void;
   onDeselectAll: () => void;
   disabled?: boolean;
+  onSelectAllClick?: () => void;
 };
 
 /**
@@ -47,6 +48,7 @@ const SelectedItemsGroup = ({
   onDeselectItem,
   onDeselectAll,
   disabled,
+  onSelectAllClick,
 }: SelectedItemsGroupProps) => {
   const handleItemClick = useCallback(
     (option: any) => {
@@ -66,6 +68,15 @@ const SelectedItemsGroup = ({
     [onDeselectAll, disabled],
   );
 
+  const handleSelectAllClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (disabled) return;
+      onSelectAllClick?.();
+    },
+    [onSelectAllClick, disabled],
+  );
+
   const hasNoItems = selectedOptions.length === 0;
 
   // Collapse the group when no items are selected
@@ -78,48 +89,58 @@ const SelectedItemsGroup = ({
   return (
     <div className={styles.selectedItemsGroup}>
       {/* Header - Always visible */}
-      <button
-        type="button"
-        className={styles.selectedItemsHeader}
-        onClick={hasNoItems ? undefined : onToggleExpand}
-        aria-expanded={expanded}
-        aria-label={`Selected items group, ${selectedOptions.length} items selected`}
-        disabled={hasNoItems}
-        style={{ cursor: hasNoItems ? "default" : "pointer" }}
-      >
-        {/* Caret icon */}
-        {expanded ? (
-          <IconChevron
-            className={styles.selectedItemsCaret}
-            aria-hidden="true"
-            style={{ opacity: hasNoItems ? 0.3 : 1 }}
-          />
-        ) : (
+      <div className={styles.selectedItemsHeader}>
+        <button
+          type="button"
+          className={styles.selectedItemsToggle}
+          onClick={hasNoItems ? undefined : onToggleExpand}
+          aria-expanded={expanded}
+          aria-label={`Selected items group, ${selectedOptions.length} items selected`}
+          disabled={hasNoItems}
+          style={{ cursor: hasNoItems ? "default" : "pointer" }}
+        >
+          {/* Caret icon */}
           <IconChevronDown
-            className={styles.selectedItemsCaret}
+            className={cn(
+              styles.selectedItemsCaret,
+              "transition-transform ease-out duration-200",
+              !expanded && "-rotate-90",
+            )}
             aria-hidden="true"
             style={{ opacity: hasNoItems ? 0.3 : 1 }}
           />
+
+          {/* Deselect all checkbox */}
+          <Checkbox
+            tabIndex={-1}
+            checked={selectedOptions.length > 0}
+            readOnly
+            disabled={disabled || selectedOptions.length === 0}
+            onClick={handleDeselectAllClick}
+            aria-label="Deselect all items"
+          />
+
+          {/* Title with counter badge inline */}
+          <div className={styles.selectedItemsTitle}>
+            <Typography variant="body">Selected items</Typography>
+            <Badge>{selectedOptions.length}</Badge>
+          </div>
+        </button>
+
+        {/* Select All button - shown when callback is provided */}
+        {onSelectAllClick && (
+          <Button
+            type="button"
+            onClick={handleSelectAllClick}
+            disabled={disabled}
+            aria-label="Select all rendered items"
+            look="string"
+            size="smaller"
+          >
+            Select All
+          </Button>
         )}
-
-        {/* Deselect all checkbox */}
-        <Checkbox
-          tabIndex={-1}
-          checked={selectedOptions.length > 0}
-          readOnly
-          disabled={disabled || selectedOptions.length === 0}
-          onClick={handleDeselectAllClick}
-          aria-label="Deselect all items"
-        />
-
-        {/* Title with counter badge */}
-        <div className={styles.selectedItemsTitle}>
-          <Typography variant="body">Selected items</Typography>
-          <Badge variant="info" shape="squared" className="ml-auto">
-            {selectedOptions.length}
-          </Badge>
-        </div>
-      </button>
+      </div>
 
       {/* Content - Conditionally rendered when expanded */}
       {expanded && (
@@ -215,6 +236,7 @@ export const Select = forwardRef(
       selectFirstIfEmpty,
       renderSelected,
       isVirtualList = false,
+      virtualListMaxVisible,
       loadMore,
       pageSize = VARIABLE_LIST_PAGE_SIZE,
       page = 1,
@@ -223,6 +245,8 @@ export const Select = forwardRef(
       onOpen,
       footer,
       alwaysShowSelectedGroup = false,
+      onSelectAllClick,
+      open: controlledOpen,
       ...props
     }: SelectProps<T, A>,
     _ref: ForwardedRef<HTMLSelectElement>,
@@ -240,7 +264,8 @@ export const Select = forwardRef(
     } else if (Array.isArray(initialValue)) {
       initialValue = initialValue[0];
     }
-    const [isOpen, setIsOpen] = useState<boolean>(false);
+    const [internalIsOpen, setInternalIsOpen] = useState<boolean>(false);
+    const isOpen = controlledOpen !== undefined ? controlledOpen : internalIsOpen;
     const [selectedGroupExpanded, setSelectedGroupExpanded] = useState<boolean>(false);
     const [value, setValue] = useState<any>(initialValue);
 
@@ -278,8 +303,10 @@ export const Select = forwardRef(
           onSearch?.(defaultSearchValue);
         }
       } else if (wasJustClosed) {
-        // When closing, reset to defaultSearchValue (or empty if not provided)
+        // When closing, reset visual query and notify parent so external search state
+        // (e.g. API params) is also cleared — not just the visual input.
         setQuery(defaultSearchValue || "");
+        onSearch?.(defaultSearchValue || "");
       }
     }, [isOpen, defaultSearchValue, onSearch]);
     const _onChange = useCallback(
@@ -296,7 +323,7 @@ export const Select = forwardRef(
           setValue(val);
         }
         if (!multiple) {
-          setIsOpen(false);
+          setInternalIsOpen(false);
           onClose?.();
         }
         props?.onChange?.(valueRef.current);
@@ -358,7 +385,21 @@ export const Select = forwardRef(
         }
       });
 
-      return Array.from(uniqueSelected.values());
+      const result = Array.from(uniqueSelected.values());
+
+      // Preserve stable selection order (matches `value` array order) so that
+      // searching — which reorders `flatOptions` — doesn't shuffle the trigger
+      // display or the SelectedItemsGroup panel.
+      if (multiple && Array.isArray(value) && value.length > 1) {
+        const valueOrder = new Map((value as any[]).map((v, i) => [v?.value ?? v, i]));
+        result.sort((a, b) => {
+          const ai = valueOrder.get(a?.value ?? a) ?? Number.POSITIVE_INFINITY;
+          const bi = valueOrder.get(b?.value ?? b) ?? Number.POSITIVE_INFINITY;
+          return ai - bi;
+        });
+      }
+
+      return result;
     }, [flatOptions, isSelected, value, multiple]);
 
     const onSearchInputHandler = useCallback(
@@ -476,7 +517,7 @@ export const Select = forwardRef(
       <Popover
         open={isOpen}
         onOpenChange={(_isOpen) => {
-          setIsOpen(_isOpen);
+          setInternalIsOpen(_isOpen);
           _isOpen ? onOpen?.() : onClose?.();
         }}
       >
@@ -532,7 +573,7 @@ export const Select = forwardRef(
                 label="Select an option"
                 className={cnm({
                   "shadow-inner shadow-neutral-surface-inset border-t border-neutral-border shadow-": searchable,
-                  "max-h-none": footer !== undefined,
+                  "max-h-none": footer !== undefined || isVirtualList,
                 })}
               >
                 {/* Selected Items Group - Only for multiple + searchable + virtual lists */}
@@ -549,6 +590,7 @@ export const Select = forwardRef(
                       });
                     }}
                     disabled={disabled}
+                    onSelectAllClick={onSelectAllClick}
                   />
                 )}
 
@@ -574,17 +616,23 @@ export const Select = forwardRef(
                         onItemsRendered: (params: any) => void;
                         ref: any;
                       }) => {
-                        // Calculate height based on actual item count from flatOptions
-                        // When searching, _options is filtered and flat; when not searching, _options === options (all items)
                         const actualItemCount = searchable && query.trim() ? _options.length : flatOptions.length;
-                        const maxVisibleItems = VARIABLE_LIST_COUNT_RENDERED;
-                        const listHeight = Math.min(actualItemCount, maxVisibleItems) * VARIABLE_LIST_ITEM_HEIGHT;
+                        const maxVisibleItems = virtualListMaxVisible ?? VARIABLE_LIST_COUNT_RENDERED;
+
+                        const getItemHeight = (index: number) =>
+                          (_options[index] as any)?.height ?? VARIABLE_LIST_ITEM_HEIGHT;
+
+                        const visibleCount = Math.min(actualItemCount, maxVisibleItems);
+                        let listHeight = 0;
+                        for (let i = 0; i < visibleCount; i++) {
+                          listHeight += getItemHeight(i);
+                        }
 
                         return (
                           <VariableSizeList
                             key="virtual-list"
                             itemData={renderedOptions}
-                            itemSize={() => VARIABLE_LIST_ITEM_HEIGHT}
+                            itemSize={getItemHeight}
                             itemCount={renderedOptions.length}
                             height={listHeight}
                             // width={VARIABLE_LIST_WIDTH}
@@ -603,7 +651,7 @@ export const Select = forwardRef(
                     renderedOptions
                   )}
                 </CommandGroup>
-                {footer && <div className="px-base py-tight border-t border-neutral-border">{footer}</div>}
+                {footer && <div className="p-tight border-t border-neutral-border flex">{footer}</div>}
               </CommandList>
             </Command>
           )}
@@ -685,6 +733,7 @@ const Option = ({
       className={clsx(
         className,
         [
+          "w-full",
           "rounded-4",
           "text-neutral-content-subtle",
           "overflow-hidden",

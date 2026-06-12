@@ -16,7 +16,7 @@ import { Input, TextArea } from "../../components/Form";
 const ProjectName = ({ name, setName, onSaveName, onSubmit, error, description, setDescription, show = true }) =>
   !show ? null : (
     <form
-      className={cn("project-name")}
+      className={cn("project-name").toClassName()}
       onSubmit={(e) => {
         e.preventDefault();
         onSubmit();
@@ -55,7 +55,7 @@ const ProjectName = ({ name, setName, onSaveName, onSubmit, error, description, 
         <div className="w-full flex flex-col gap-2">
           <label>
             Workspace
-            <EnterpriseBadge className="ml-2" />
+            <EnterpriseBadge className="ml-tight" />
           </label>
           <Select placeholder="Select an option" disabled options={[]} triggerClassName="!flex-1" />
           <Typography size="small" className="mt-tight mb-wider">
@@ -113,8 +113,8 @@ export const CreateProject = ({ onClose }) => {
   const rootClass = cn("create-project");
   const tabClass = rootClass.elem("tab");
   const steps = {
-    name: <span className={tabClass.mod({ disabled: !!error })}>Project Name</span>,
-    import: <span className={tabClass.mod({ disabled: uploadDisabled })}>Data Import</span>,
+    name: <span className={tabClass.mod({ disabled: !!error }).toClassName()}>Project Name</span>,
+    import: <span className={tabClass.mod({ disabled: uploadDisabled }).toClassName()}>Data Import</span>,
     config: "Labeling Setup",
   };
 

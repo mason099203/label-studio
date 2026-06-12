@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import { cnm, IconChevronDown } from "@humansignal/ui";
+import { cnm, IconChevronDown, Skeleton } from "@humansignal/ui";
 import type { Header } from "@tanstack/react-table";
 import { useQuery } from "@tanstack/react-query";
 import type { RawResult } from "../../stores/types";
@@ -46,7 +46,11 @@ export const AggregationCell = ({
   control,
   annotations,
   isExpanded,
-}: { control: ControlTag; annotations: AnnotationSummary[]; isExpanded: boolean }) => {
+}: {
+  control: ControlTag;
+  annotations: AnnotationSummary[];
+  isExpanded: boolean;
+}) => {
   const allResults = annotations.flatMap((ann) => ann.results.filter((r) => r.from_name === control.name));
   // Exclude predictions for percentage denominator to match backend TaskAgreementAPI
   const totalAnnotations = annotations.filter((a) => a.type === "annotation").length;
@@ -194,8 +198,8 @@ export const AggregationCell = ({
 
 const DistributionSkeleton = () => (
   <div className="flex items-center gap-2">
-    <div className="h-5 w-16 bg-neutral-surface-subtle rounded animate-pulse" />
-    <div className="h-5 w-12 bg-neutral-surface-subtle rounded animate-pulse" />
+    <Skeleton className="h-5 w-16 rounded-small" />
+    <Skeleton className="h-5 w-12 rounded-small" />
   </div>
 );
 

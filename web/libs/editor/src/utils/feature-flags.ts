@@ -6,9 +6,6 @@ export const FF_DEV_1284 = "fflag_fix_front_dev_1284_auto_detect_undo_281022_sho
 
 export const FF_DEV_1442 = "ff_front_dev_1442_unselect_shape_on_click_outside_080622_short";
 
-// User labels for Taxonomy
-export const FF_DEV_1536 = "ff_front_dev_1536_taxonomy_user_labels_150222_long";
-
 export const FF_DEV_2669 = "ff_front_dev_2669_paragraph_author_filter_210622_short";
 
 // Change the rotate tool from bbox
@@ -43,11 +40,6 @@ export const FF_DEV_3377 = "fflag_fix_front_dev_3377_image_regions_shift_on_resi
 export const FF_DEV_3391 = "fflag_fix_front_dev_3391_interactive_view_all";
 
 /**
- * Fixing "Auto Detect" tool undo functionality and bugs with skipNextUndoState.
- * @link https://app.launchdarkly.com/default/production/features/fflag_fix_front_dev_1284_auto_detect_undo_281022_short
- */
-export const FF_DEV_3873 = "fflag_feat_front_dev_3873_labeling_ui_improvements_short";
-/**
  * Label stream ablation experiment for solving overlap issue
  * @link https://app.launchdarkly.com/default/production/features/fflag_fix_back_dev_4174_overlap_issue_experiments_10012023_short
  */
@@ -67,20 +59,9 @@ export const FF_LSDV_E_278 = "fflag_feat_front_lsdv_e_278_contextual_scrolling_s
 export const FF_NER_SELECT_ALL = "fflag_feat_front_bros_199_enable_select_all_in_ner_phrase_short";
 
 /**
- * Annotations with LLM assistance
- * @link https://app.launchdarkly.com/default/production/features/fflag_feat_all_lsdv_e_294_llm_annotations_180723_long
- */
-export const FF_LLM_EPIC = "fflag_feat_all_lsdv_e_294_llm_annotations_180723_long";
-
-/**
  * Multi-image segmentation support via `valueList`
  */
 export const FF_LSDV_4583 = "fflag_feat_front_lsdv_4583_multi_image_segmentation_short";
-
-/**
- * Enables new way of preloading/caching images
- */
-export const FF_LSDV_4583_6 = "fflag_feat_front_lsdv_4583_6_images_preloading_short";
 
 /**
  * Allows to count time spend on textarea results and store it to lead_time meta field
@@ -108,12 +89,6 @@ export const FF_LSDV_4930 = "fflag_fix_front_lsdv_4930_selection_tool_fixes_2404
  * @link https://app.launchdarkly.com/default/production/features/fflag_fix_front_lsdv_4998_missed_dynamic_children_030523_short
  */
 export const FF_LSDV_4998 = "fflag_fix_front_lsdv_4998_missed_dynamic_children_030523_short";
-
-/**
- * Allow to load Taxonomy from remote API
- * @link https://app.launchdarkly.com/default/production/features/fflag_feat_front_lsdv_5451_async_taxonomy_110823_short
- */
-export const FF_TAXONOMY_ASYNC = "fflag_feat_front_lsdv_5451_async_taxonomy_110823_short";
 
 /**
  * Allow to label NER directly with Taxonomy instead of Labels

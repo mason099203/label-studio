@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom";
 import { TaskSourceViewer } from "./TaskSourceViewer";
@@ -67,6 +67,8 @@ jest.mock("./TaskSourceViewer.module.scss", () => ({
 }));
 
 describe("TaskSourceViewer Component", () => {
+  // View uses global key; resolveUrls and JSON viewer use project-scoped key (storageKey prop)
+  const GLOBAL_STORAGE_KEY = "dm:tasksource";
   const mockTaskData = {
     id: 123,
     data: {
@@ -133,7 +135,7 @@ describe("TaskSourceViewer Component", () => {
     });
 
     it("should show resolve URI toggle in JsonViewer toolbar for interactive view", async () => {
-      localStorage.setItem("test:tasksource:view", "interactive");
+      localStorage.setItem(`${GLOBAL_STORAGE_KEY}:view`, "interactive");
 
       render(<TaskSourceViewer {...defaultProps} />);
 
@@ -145,7 +147,7 @@ describe("TaskSourceViewer Component", () => {
     });
 
     it("should reload task data when resolve URIs toggle changes", async () => {
-      localStorage.setItem("test:tasksource:view", "interactive");
+      localStorage.setItem(`${GLOBAL_STORAGE_KEY}:view`, "interactive");
       const user = userEvent.setup();
       const mockOnTaskLoad = jest.fn().mockResolvedValue(mockTaskData);
 
@@ -166,7 +168,7 @@ describe("TaskSourceViewer Component", () => {
     });
 
     it("should save resolve URIs preference to localStorage", async () => {
-      localStorage.setItem("test:tasksource:view", "interactive");
+      localStorage.setItem(`${GLOBAL_STORAGE_KEY}:view`, "interactive");
       const user = userEvent.setup();
 
       render(<TaskSourceViewer {...defaultProps} />);
@@ -193,7 +195,7 @@ describe("TaskSourceViewer Component", () => {
     });
 
     it("should respect stored view preference from localStorage", async () => {
-      localStorage.setItem("test:tasksource:view", "interactive");
+      localStorage.setItem(`${GLOBAL_STORAGE_KEY}:view`, "interactive");
 
       render(<TaskSourceViewer {...defaultProps} />);
 
@@ -237,7 +239,7 @@ describe("TaskSourceViewer Component", () => {
       capturedOnViewChange!("interactive");
 
       await waitFor(() => {
-        expect(localStorage.getItem("test:tasksource:view")).toBe("interactive");
+        expect(localStorage.getItem(`${GLOBAL_STORAGE_KEY}:view`)).toBe("interactive");
         expect(screen.getByTestId("json-viewer")).toBeInTheDocument();
       });
     });
@@ -262,7 +264,7 @@ describe("TaskSourceViewer Component", () => {
   });
 
   describe("Loading State", () => {
-    it("should show initial content while loading then update", async () => {
+    it("should show skeleton while loading then update to code view", async () => {
       // Create a promise that doesn't resolve immediately
       let resolvePromise: (value: any) => void;
       const mockOnTaskLoad = jest.fn().mockImplementation(
@@ -274,13 +276,15 @@ describe("TaskSourceViewer Component", () => {
 
       render(<TaskSourceViewer {...defaultProps} onTaskLoad={mockOnTaskLoad} />);
 
-      // Should show initial content from props
-      expect(screen.getByTestId("code-view")).toBeInTheDocument();
+      // While loading, code-view is not shown (skeleton is shown instead)
+      expect(screen.queryByTestId("code-view")).not.toBeInTheDocument();
 
-      // Resolve the promise with new data
-      resolvePromise!(mockTaskData);
+      // Resolve the promise with new data (wrap in act to avoid state-update warning)
+      await act(async () => {
+        resolvePromise!(mockTaskData);
+      });
 
-      // Wait for content to be updated
+      // Wait for content to be updated and code view to appear
       await waitFor(() => {
         expect(screen.getByTestId("code-view")).toHaveTextContent("s3://bucket/image.jpg");
       });

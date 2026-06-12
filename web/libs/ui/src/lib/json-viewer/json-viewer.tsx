@@ -27,6 +27,32 @@ const labelStudioTheme = {
   },
 };
 
+const fallbackNodeMatch = (nodeData: any, searchTerm: string): boolean => {
+  const normalizedTerm = searchTerm.toLowerCase();
+  const nodeKey = typeof nodeData?.key === "string" ? nodeData.key.toLowerCase() : "";
+
+  if (nodeKey.includes(normalizedTerm)) {
+    return true;
+  }
+
+  if (Array.isArray(nodeData?.path)) {
+    const hasPathMatch = nodeData.path.some((segment: string | number) =>
+      String(segment).toLowerCase().includes(normalizedTerm),
+    );
+
+    if (hasPathMatch) {
+      return true;
+    }
+  }
+
+  const nodeValue = nodeData?.value;
+  if (typeof nodeValue === "string" || typeof nodeValue === "number" || typeof nodeValue === "boolean") {
+    return String(nodeValue).toLowerCase().includes(normalizedTerm);
+  }
+
+  return false;
+};
+
 /**
  * JsonViewer - An interactive JSON viewer component
  *
@@ -55,6 +81,7 @@ export const JsonViewer: FC<JsonViewerProps> = ({
   maxHeight = 500,
   fontSize = "inherit",
   stringTruncate,
+  collapse: initialCollapse,
   // Styling
   className = "",
   inset = false,
@@ -72,7 +99,7 @@ export const JsonViewer: FC<JsonViewerProps> = ({
     storageKey ? localStorage.getItem(`${storageKey}:filter`) : null,
   );
 
-  const [collapseDepth, setCollapseDepth] = useState<number | boolean>(false);
+  const [collapseDepth, setCollapseDepth] = useState<number | boolean>(initialCollapse ?? false);
   const [resetKey, setResetKey] = useState(0);
 
   // Combine built-in "All" filter with custom filters
@@ -118,7 +145,7 @@ export const JsonViewer: FC<JsonViewerProps> = ({
       }
       // Also apply search if there's search text
       if (searchTerm) {
-        return matchNode(nodeData, searchTerm);
+        return matchNode(nodeData, searchTerm) || fallbackNodeMatch(nodeData, searchTerm);
       }
       return true;
     };
@@ -140,11 +167,12 @@ export const JsonViewer: FC<JsonViewerProps> = ({
         return filterId;
       });
 
-      // Always expand all nodes when a filter is applied so filtered results are visible
-      setCollapseDepth(Number.POSITIVE_INFINITY);
+      // Expand nodes so filtered results are visible, but limit depth to avoid
+      // freezing with large datasets (e.g. 1000+ annotations)
+      setCollapseDepth(initialCollapse ?? Number.POSITIVE_INFINITY);
       setResetKey((prev) => prev + 1);
     },
-    [storageKey],
+    [storageKey, initialCollapse],
   );
 
   const handleResetFilters = useCallback(() => {

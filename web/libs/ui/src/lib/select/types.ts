@@ -6,6 +6,8 @@ export type SelectOptionData<T = any> = {
   hidden?: boolean;
   disabled?: boolean;
   children?: SelectOptionData<T>[];
+  /** Custom row height (px) for virtual-list mode; defaults to VARIABLE_LIST_ITEM_HEIGHT (40). */
+  height?: number;
 };
 
 export enum SelectSize {
@@ -82,13 +84,18 @@ export type SelectProps<T, A extends SelectOption<T>[]> = {
   selectFirstIfEmpty?: boolean;
   renderSelected?: (selectedOptions?: A[number][], placeholder?: string) => React.ReactNode | string;
   isVirtualList?: boolean;
+  /** Max visible items in the virtual list before scrolling (default: 5) */
+  virtualListMaxVisible?: number;
   loadMore?: () => void;
   pageSize?: number;
   page?: number;
   itemCount?: number;
   onClose?: () => void;
   onOpen?: () => void;
+  /** Controlled open state. When provided, the dropdown open/close state is driven externally. */
+  open?: boolean;
   alwaysShowSelectedGroup?: boolean;
+  onSelectAllClick?: () => void;
 } & SelectVirtualizedProps &
   Omit<React.SelectHTMLAttributes<HTMLSelectElement>, "value" | "placeholder">;
 

@@ -14,8 +14,6 @@ export const FF_DEV_2887 = "fflag-feat-dev-2887-comments-ui-editor-short";
 
 export const FF_DEV_3034 = "fflag-feat-dev-3034-comments-with-drafts-short";
 
-export const FF_DEV_3873 = "fflag_feat_front_dev_3873_labeling_ui_improvements_short";
-
 /**
  * Support for Datasets functionality.
  */
@@ -27,9 +25,6 @@ export const FF_LOPS_E_3 = "fflag_feat_all_lops_e_3_datasets_short";
  * @link https://app.launchdarkly.com/default/production/features/fflag_fix_front_lsdv_4620_memory_leaks_100723_short
  */
 export const FF_LSDV_4620_3_ML = "fflag_fix_front_lsdv_4620_memory_leaks_100723_short";
-
-/** Add ability to preview image tasks in Data Manager Grid View */
-export const FF_GRID_PREVIEW = "fflag_feat_front_leap_1424_grid_preview_short";
 
 /**
  * Allow to filter tasks in Data Manager by control tag labels used in annotation results

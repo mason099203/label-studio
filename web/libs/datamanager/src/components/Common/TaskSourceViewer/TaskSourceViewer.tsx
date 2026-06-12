@@ -1,4 +1,4 @@
-import { type ChangeEvent, type FC, useEffect, useState, useCallback } from "react";
+import { type ChangeEvent, type FC, useEffect, useMemo, useState, useCallback } from "react";
 import { JsonViewer, type FilterConfig, Toggle } from "@humansignal/ui";
 import { FF_LOPS_E_3, FF_INTERACTIVE_JSON_VIEWER, isFF } from "../../../utils/feature-flags";
 import { CodeView } from "./CodeView";
@@ -6,6 +6,15 @@ import styles from "./TaskSourceViewer.module.scss";
 import { ViewToggle, type ViewMode } from "./ViewToggle";
 
 export type { ViewMode };
+
+/** Build project-scoped localStorage key for JSON viewer search and filter state. Returns undefined when projectId is missing. */
+export function getTaskSourceViewerStorageKey(projectId: string | number | null | undefined): string | undefined {
+  if (projectId == null || projectId === "") return undefined;
+  return `dm:tasksource:${projectId}`;
+}
+
+/** Global key for view mode (Code/Interactive) only — shared across all projects. */
+const TASK_SOURCE_VIEWER_GLOBAL_KEY = "dm:tasksource";
 
 /** Options passed to onTaskLoad callback */
 export interface TaskLoadOptions {
@@ -20,7 +29,7 @@ export interface TaskSourceViewerProps {
   onTaskLoad: (options?: TaskLoadOptions) => Promise<any>;
   /** SDK type (e.g., "DE" for Data Explorer) */
   sdkType?: string;
-  /** Storage key for localStorage persistence */
+  /** Storage key for project-scoped persistence (JSON viewer search/filters and Resolve URIs). View mode stays global. */
   storageKey?: string;
   /** Render toggle in external location (e.g., modal header) */
   renderToggle?: (toggle: React.ReactNode) => void;
@@ -64,37 +73,32 @@ export const TaskSourceViewer: FC<TaskSourceViewerProps> = ({
   content,
   onTaskLoad,
   sdkType,
-  storageKey = "dm:tasksource",
+  storageKey,
   renderToggle,
 }) => {
   const isInteractiveViewerEnabled = isFF(FF_INTERACTIVE_JSON_VIEWER);
 
   const [taskData, setTaskData] = useState(content);
+  const [loading, setLoading] = useState(true);
 
-  // Manage view state internally
-  const [view, setView] = useState<ViewMode>(() =>
-    storageKey ? (localStorage.getItem(`${storageKey}:view`) as ViewMode) || "code" : "code",
+  // View mode (Code/Interactive) — global key so preference is shared across projects
+  const [view, setView] = useState<ViewMode>(
+    () => (localStorage.getItem(`${TASK_SOURCE_VIEWER_GLOBAL_KEY}:view`) as ViewMode) || "code",
   );
 
-  // Manage resolve URIs state - default OFF to show original storage URIs
+  // Resolve URIs — per project when storageKey is set (same key as JSON viewer search/filters)
   const [resolveUrls, setResolveUrls] = useState<boolean>(() =>
     storageKey ? localStorage.getItem(`${storageKey}:resolveUrls`) === "true" : false,
   );
 
-  const handleViewChange = useCallback(
-    (newView: ViewMode) => {
-      setView(newView);
-
-      // Save to localStorage
-      if (storageKey) {
-        localStorage.setItem(`${storageKey}:view`, newView);
-      }
-    },
-    [storageKey],
-  );
+  const handleViewChange = useCallback((newView: ViewMode) => {
+    setView(newView);
+    localStorage.setItem(`${TASK_SOURCE_VIEWER_GLOBAL_KEY}:view`, newView);
+  }, []);
 
   // Load full task data
   useEffect(() => {
+    setLoading(true);
     onTaskLoad({ resolveUri: resolveUrls }).then((response) => {
       const formatted: any = {
         id: response.id,
@@ -112,6 +116,7 @@ export const TaskSourceViewer: FC<TaskSourceViewerProps> = ({
       }
 
       setTaskData(formatted);
+      setLoading(false);
     });
   }, [onTaskLoad, sdkType, resolveUrls]);
 
@@ -134,10 +139,22 @@ export const TaskSourceViewer: FC<TaskSourceViewerProps> = ({
     }
   }, [renderToggle, view, handleViewChange, isInteractiveViewerEnabled]);
 
+  // Collapse the tree when there are many annotations/predictions to avoid freezing
+  const collapseDepth = useMemo(() => {
+    const totalItems = (taskData?.annotations?.length ?? 0) + (taskData?.predictions?.length ?? 0);
+    return totalItems > 100 ? 2 : undefined;
+  }, [taskData]);
+
   return (
     <div className={styles.taskSourceView}>
       <div className={styles.viewContent}>
-        {view === "code" ? (
+        {loading ? (
+          <div className={styles.skeletonContainer}>
+            {Array.from({ length: 16 }).map((_, i) => (
+              <div key={i} className={styles.skeletonLine} style={{ width: `${65 + Math.sin(i * 1.8) * 25}%` }} />
+            ))}
+          </div>
+        ) : view === "code" ? (
           <CodeView data={taskData} />
         ) : (
           <JsonViewer
@@ -148,6 +165,7 @@ export const TaskSourceViewer: FC<TaskSourceViewerProps> = ({
             customFilters={TASK_SOURCE_FILTERS}
             minHeight={560}
             maxHeight={560}
+            collapse={collapseDepth}
             readerViewThreshold={100}
             storageKey={storageKey}
             toolbarExtra={
