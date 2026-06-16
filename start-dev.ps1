@@ -1,16 +1,15 @@
 $root = $PSScriptRoot
 
-$envFile = Join-Path $root '.env'
-$envVars = @{}
-if (Test-Path $envFile) {
-    foreach ($line in (Get-Content $envFile)) {
-        if ($line -match '^\s*#' -or $line -match '^\s*$') { continue }
-        if ($line -match '^([^=]+)=(.*)$') { $envVars[$Matches[1].Trim()] = $Matches[2].Trim() }
-    }
-}
+. (Join-Path $root 'scripts\Import-DotEnv.ps1') -Root $root | Out-Null
 
-$tritonModelRepo = if ($envVars['TRITON_MODEL_REPOSITORY']) { $envVars['TRITON_MODEL_REPOSITORY'] } else { "$root\data\triton_models" }
-$tritonServerUrl = if ($envVars['TRITON_SERVER_URL']) { $envVars['TRITON_SERVER_URL'] } else { 'http://localhost:8000' }
+$tritonModelRepo = if ($env:TRITON_MODEL_REPOSITORY) {
+    [System.IO.Path]::GetFullPath($env:TRITON_MODEL_REPOSITORY)
+} else {
+    Join-Path $root 'data\triton_models'
+}
+$tritonServerUrl = if ($env:TRITON_SERVER_URL) { $env:TRITON_SERVER_URL } else { 'http://localhost:8000' }
+$frontendHmr = if ($env:FRONTEND_HMR) { $env:FRONTEND_HMR } else { 'true' }
+$redisUrl = if ($env:REDIS_URL) { $env:REDIS_URL } else { 'redis://localhost:6379/0' }
 
 function Test-PortListening { param([int]$Port)
     try { return [bool](Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop | Select-Object -First 1) }
@@ -21,7 +20,8 @@ if (-not (Test-PortListening -Port 8080)) {
     Start-Process powershell -ArgumentList '-NoExit', '-Command', (
         "cd '$root'; " +
         "`$env:DJANGO_DB='sqlite'; `$env:LOG_DIR='tmp'; `$env:DEBUG='true'; `$env:LOG_LEVEL='DEBUG'; " +
-        "`$env:DJANGO_SETTINGS_MODULE='core.settings.label_studio'; `$env:FRONTEND_HMR='true'; " +
+        "`$env:DJANGO_SETTINGS_MODULE='core.settings.label_studio'; `$env:FRONTEND_HMR='$frontendHmr'; " +
+        "`$env:REDIS_URL='$redisUrl'; " +
         "`$env:TRITON_MODEL_REPOSITORY='$tritonModelRepo'; `$env:TRITON_SERVER_URL='$tritonServerUrl'; " +
         'poetry run python label_studio/manage.py runserver 8080'
     )

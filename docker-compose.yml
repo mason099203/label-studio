@@ -58,6 +58,7 @@ services:
       # 與同 compose 內的 triton 服務通訊（勿用 localhost，那是容器自己）
       # triton 容器內部監聽 8000，主機對外才是 18000（ports: "18000:8000"）
       - TRITON_SERVER_URL=http://triton:8000
+      - TRITON_MODEL_REPOSITORY=/label-studio/data/triton_models
     #      - LOG_LEVEL=DEBUG
     volumes:
       - ./data:/label-studio/data:rw
@@ -89,9 +90,30 @@ services:
       - RQ_REDIS_DB=0
       # triton 容器內部監聽 8000，主機對外才是 18000（ports: "18000:8000"）
       - TRITON_SERVER_URL=http://triton:8000
+      - TRITON_MODEL_REPOSITORY=/label-studio/data/triton_models
     volumes:
       - ./data:/label-studio/data:rw
     command: python label_studio/manage.py rqworker low --worker-class rq.worker.SimpleWorker
+
+  triton:
+    image: nvcr.io/nvidia/tritonserver:24.01-py3
+    hostname: triton
+    restart: unless-stopped
+    ports:
+      - "18000:8000"
+      - "18001:8001"
+      - "18002:8002"
+    volumes:
+      - ./data/triton_models:/models
+    command: tritonserver --model-repository=/models
+    # GPU：取消下行註解並安裝 NVIDIA Container Toolkit
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
 
   db:
     image: pgautoupgrade/pgautoupgrade:17-alpine

@@ -281,6 +281,8 @@ module.exports = composePlugins(
       mode,
       plugins,
       optimization: optimizer(),
+      // 第三方套件常引用未隨 npm 發布的 .map；不影響 HMR，僅 suppress 噪音
+      ignoreWarnings: [/Failed to parse source map/],
       devServer: process.env.MODE?.startsWith("standalone")
         ? {}
         : {

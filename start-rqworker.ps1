@@ -1,28 +1,28 @@
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 
-$envFile = Join-Path $root '.env'
-$envVars = @{}
-if (Test-Path $envFile) {
-    foreach ($line in (Get-Content $envFile)) {
-        if ($line -match '^\s*#' -or $line -match '^\s*$') { continue }
-        if ($line -match '^([^=]+)=(.*)$') {
-            $envVars[$Matches[1].Trim()] = $Matches[2].Trim()
-        }
-    }
+. (Join-Path $root 'scripts\Import-DotEnv.ps1') -Root $root | Out-Null
+
+$tritonModelRepo = if ($env:TRITON_MODEL_REPOSITORY) {
+    [System.IO.Path]::GetFullPath($env:TRITON_MODEL_REPOSITORY)
+} else {
+    Join-Path $root 'data\triton_models'
 }
+$tritonServerUrl = if ($env:TRITON_SERVER_URL) { $env:TRITON_SERVER_URL } else { 'http://localhost:8000' }
+$redisUrl = if ($env:REDIS_URL) { $env:REDIS_URL } else { 'redis://localhost:6379/0' }
 
-$tritonModelRepo = if ($envVars['TRITON_MODEL_REPOSITORY']) { $envVars['TRITON_MODEL_REPOSITORY'] } else { "$root\data\triton_models" }
-$tritonServerUrl = if ($envVars['TRITON_SERVER_URL']) { $envVars['TRITON_SERVER_URL'] } else { 'http://localhost:8000' }
-
-Write-Host "Starting RQ worker (queue: low, SimpleWorker)..."
+Write-Host 'Starting RQ worker (queue: low, SimpleWorker)...'
 Write-Host "Triton model repo : $tritonModelRepo"
 Write-Host "Triton URL        : $tritonServerUrl"
+Write-Host "Redis URL         : $redisUrl"
 
 Set-Location $root
-$env:DJANGO_SETTINGS_MODULE  = 'core.settings.label_studio'
+$env:DJANGO_DB = 'sqlite'
+$env:LOG_DIR = 'tmp'
+$env:DJANGO_SETTINGS_MODULE = 'core.settings.label_studio'
 $env:TRITON_MODEL_REPOSITORY = $tritonModelRepo
-$env:TRITON_SERVER_URL       = $tritonServerUrl
+$env:TRITON_SERVER_URL = $tritonServerUrl
+$env:REDIS_URL = $redisUrl
 
 function Resolve-LabelStudioPython {
     if (Get-Command poetry -ErrorAction SilentlyContinue) { return @{ kind = 'poetry' } }

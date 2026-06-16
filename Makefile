@@ -16,7 +16,7 @@ shell-dev:
 
 env-dev-setup:
 	if [ ! -f .env ]; then \
-		cp .env.development .env; \
+		cp .env.example .env; \
 	fi
 
 docker-dev-override:

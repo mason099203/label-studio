@@ -68,12 +68,15 @@ flowchart LR
 
 ## Windows 本機開發（PowerShell，專案根目錄）
 
-本 fork 以三支腳本啟動（**順序**如下）。腳本內容為單一真相來源：`start-redis.ps1`、`start-rqworker.ps1`、`start-dev.ps1`。
+完整啟動步驟、Docker 部署與疑難排解見 **`測試以及部署.md`**。
+
+本 fork 以多支腳本啟動（**順序**如下）。腳本內容為單一真相來源：`start-redis.ps1`、`start-rqworker.ps1`、`start-dev.ps1`、`start-triton.ps1`、`start-all.ps1`。
 
 ### 一般 UI／API 開發
 
 ```powershell
 .\start-dev.ps1
+# 或一鍵：.\start-all.ps1
 ```
 
 - 會另開視窗：後端 **Django**（`localhost:8080`，SQLite + `FRONTEND_HMR=true`）與 **前端 HMR**（`yarn dev:win`，預設 **8010**）。
@@ -88,6 +91,7 @@ flowchart LR
 .\start-redis.ps1      # Docker：容器 ls-redis，埠 6379
 .\start-rqworker.ps1   # queue `low`，Windows 使用 SimpleWorker（避免 os.fork）
 .\start-dev.ps1
+# 或：.\start-all.ps1 -WithQueue
 ```
 
 - 若未啟 Redis／worker，在 Windows 上跑預設 fork worker 可能出現 **`os` 無 `fork`** 等錯誤；請依 `start-rqworker.ps1` 註解使用 **Poetry** 的 Python，避免與系統 Anaconda 的 NumPy／SciPy ABI 衝突。
@@ -142,6 +146,7 @@ yarn ls:e2e           # labelstudio e2e（Cypress）
 
 ## 延伸閱讀（人類與代理共用）
 
+- **本機測試與 Docker 部署**：`測試以及部署.md`
 - 前端安裝與 HMR：`web/README.md`
 - 使用者與部署面向：`README.md`、`docs/source/guide/`
 - Playground 架構摘要：`web/apps/playground/README.mdc`
