@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useHistory } from "react-router";
-import { IconAnalytics, IconFileDownload, IconPlay, IconWarningCircleFilled } from "@humansignal/icons";
+import { IconAnalytics, IconCheck, IconFileDownload, IconPlay, IconWarningCircleFilled } from "@humansignal/icons";
 import { Button } from "@humansignal/ui";
 import { Modal } from "../../components/Modal/Modal";
 import { Space } from "../../components/Space/Space";
@@ -8,6 +8,13 @@ import { useAPI } from "../../providers/ApiProvider";
 import { useFixedLocation, useParams } from "../../providers/RoutesProvider";
 import { cn } from "../../utils/bem";
 import { absoluteURL, isDefined } from "../../utils/helpers";
+import {
+  getTrainServerBodyFields,
+  getTrainServerQueryParams,
+  getTrainServerSettings,
+  normalizeTrainServerUrl,
+  setTrainServerSettings,
+} from "./trainServerStorage";
 import "./TrainingPage.scss";
 
 /**
@@ -42,6 +49,89 @@ export const TrainingPage = () => {
   const [jobInfo, setJobInfo] = useState(null);
   const [trainingHistory, setTrainingHistory] = useState(null);
   const [trainingSpec, setTrainingSpec] = useState(null);
+  const [trainServerMode, setTrainServerMode] = useState("local");
+  const [taskDefaults, setTaskDefaults] = useState(null);
+  const [epochs, setEpochs] = useState(100);
+  const [imgsz, setImgsz] = useState(640);
+  const [batch, setBatch] = useState(16);
+  const [patience, setPatience] = useState(100);
+  const [runName, setRunName] = useState("");
+  const [showAdvancedParams, setShowAdvancedParams] = useState(false);
+  const [optimizer, setOptimizer] = useState("auto");
+  const [lr0, setLr0] = useState("");
+  const [lrf, setLrf] = useState("");
+  const [mosaic, setMosaic] = useState("");
+  const [mixup, setMixup] = useState("");
+  const [trainServerUrl, setTrainServerUrl] = useState("");
+  const [trainServerApiKey, setTrainServerApiKey] = useState("");
+  const [trainServerVerified, setTrainServerVerified] = useState(false);
+  const [trainServerVerifyDetail, setTrainServerVerifyDetail] = useState(null);
+  const [verifyingTrainServer, setVerifyingTrainServer] = useState(false);
+
+  const loadModels = useCallback(async () => {
+    if (!pageParams?.id) return;
+    const query = getTrainServerQueryParams(pageParams.id);
+    const res = await api.callApi("trainingLocalModels", {
+      params: { pk: pageParams.id, ...query },
+      errorFilter: () => true,
+    });
+    if (!res) {
+      setErrorMessage("無法取得模型清單");
+      return;
+    }
+    const models = res?.models ?? [];
+    setLocalModels(Array.isArray(models) ? models : []);
+    setTrainingSpec(res?.training_spec ?? null);
+    setTrainServerMode(res?.train_server ?? "local");
+    setTaskDefaults(res?.task_defaults ?? null);
+    if (res?.task_defaults?.epochs) setEpochs(res.task_defaults.epochs);
+    if (res?.task_defaults?.imgsz) setImgsz(res.task_defaults.imgsz);
+    if (res?.task_defaults?.batch) setBatch(res.task_defaults.batch);
+    if (res?.task_defaults?.patience) setPatience(res.task_defaults.patience);
+    if (res?.task_defaults?.optimizer) setOptimizer(res.task_defaults.optimizer);
+    if (models?.length) {
+      const preferred = models.find((m) => m.available) ?? models[0];
+      setSelectedBaseWeights(preferred.path ?? preferred.name);
+    }
+  }, [api, pageParams?.id]);
+
+  const verifyTrainServer = useCallback(async () => {
+    if (!pageParams?.id) return;
+    setVerifyingTrainServer(true);
+    setTrainServerVerifyDetail(null);
+    const normalized = normalizeTrainServerUrl(trainServerUrl);
+    setTrainServerSettings(pageParams.id, {
+      url: normalized,
+      apiKey: trainServerApiKey,
+      verified: false,
+    });
+    try {
+      const res = await api.callApi("trainingTrainServerHealth", {
+        params: {
+          pk: pageParams.id,
+          train_server_url: normalized,
+          ...(trainServerApiKey ? { train_server_api_key: trainServerApiKey } : {}),
+        },
+        errorFilter: () => true,
+      });
+      const ok = Boolean(res?.ok);
+      setTrainServerVerified(ok);
+      setTrainServerVerifyDetail(res?.detail ?? (ok ? "連線成功" : "連線失敗"));
+      setTrainServerSettings(pageParams.id, {
+        url: normalized,
+        apiKey: trainServerApiKey,
+        verified: ok,
+        verifiedAt: ok ? new Date().toISOString() : null,
+        detail: res?.detail ?? null,
+      });
+      if (ok) await loadModels();
+    } catch (err) {
+      setTrainServerVerified(false);
+      setTrainServerVerifyDetail(err?.message ?? "驗證失敗");
+    } finally {
+      setVerifyingTrainServer(false);
+    }
+  }, [api, pageParams?.id, trainServerUrl, trainServerApiKey, loadModels]);
 
   const closeAndBack = useCallback(() => {
     const path = location.pathname.replace(TrainingPage.path, "");
@@ -52,6 +142,12 @@ export const TrainingPage = () => {
   useEffect(() => {
     if (!isDefined(pageParams?.id)) return;
     let cancelled = false;
+
+    const saved = getTrainServerSettings(pageParams.id);
+    setTrainServerUrl(saved.url ?? "");
+    setTrainServerApiKey(saved.apiKey ?? "");
+    setTrainServerVerified(Boolean(saved.verified));
+    setTrainServerVerifyDetail(saved.detail ?? null);
 
     api
       .callApi("project", {
@@ -67,23 +163,9 @@ export const TrainingPage = () => {
         });
       });
 
-    api
-      .callApi("trainingLocalModels", {
-        params: { pk: pageParams.id },
-        errorFilter: () => true,
-      })
-      .then((res) => {
-        if (cancelled) return;
-        if (!res) {
-          setErrorMessage("無法取得本機模型清單（training/models API 回傳空值或請求失敗）");
-          return;
-        }
-        const models = res?.models ?? [];
-
-        setLocalModels(Array.isArray(models) ? models : []);
-        setTrainingSpec(res?.training_spec ?? null);
-        if (models?.length) setSelectedBaseWeights(models[0].path);
-      });
+    loadModels().catch(() => {
+      if (!cancelled) setErrorMessage("無法取得模型清單");
+    });
 
     api
       .callApi("trainingHistory", {
@@ -98,7 +180,7 @@ export const TrainingPage = () => {
     return () => {
       cancelled = true;
     };
-  }, [pageParams?.id]);
+  }, [pageParams?.id, api, loadModels]);
 
   /**
    * 啟動訓練（後端 RQ job，在本機 server 進行）。
@@ -117,24 +199,55 @@ export const TrainingPage = () => {
       if (!selectedBaseWeights) throw new Error("請先選擇 base 模型（權重檔）");
       if (!datasetConfigPath) throw new Error("請輸入 dataset_config.json 路徑");
 
+      const extraTrainParams = {};
+      if (mosaic !== "") extraTrainParams.mosaic = Number(mosaic);
+      if (mixup !== "") extraTrainParams.mixup = Number(mixup);
+
       const res = await api.callApi("trainingCreateJob", {
         params: { pk: pageParams.id },
         body: {
           base_weights: selectedBaseWeights,
           dataset_config: datasetConfigPath,
-          epochs: 50,
-          imgsz: trainingEngine === "cnn_classify" ? 224 : 640,
-          batch: trainingEngine === "cnn_classify" ? 32 : 16,
+          epochs,
+          imgsz: trainingEngine === "cnn_classify" ? 224 : imgsz,
+          batch: trainingEngine === "cnn_classify" ? 32 : batch,
+          patience,
+          run_name: runName.trim() || undefined,
+          optimizer: optimizer !== "auto" ? optimizer : undefined,
+          lr0: lr0 !== "" ? Number(lr0) : undefined,
+          lrf: lrf !== "" ? Number(lrf) : undefined,
+          train_params: Object.keys(extraTrainParams).length ? extraTrainParams : undefined,
           training_model: trainingEngine !== "auto" ? trainingEngine : undefined,
+          ...getTrainServerBodyFields(pageParams.id),
         },
       });
 
       setJobId(res?.job_id);
+      if (res?.job_id) {
+        history.push(`/projects/${pageParams.id}/data/training/progress/${res.job_id}`);
+      }
     } catch (err) {
       setErrorMessage(err?.message ?? "Training failed");
       setTrainingState("error");
     }
-  }, [pageParams?.id, selectedBaseWeights, datasetConfigPath]);
+  }, [
+    pageParams?.id,
+    selectedBaseWeights,
+    datasetConfigPath,
+    epochs,
+    imgsz,
+    batch,
+    patience,
+    runName,
+    optimizer,
+    lr0,
+    lrf,
+    mosaic,
+    mixup,
+    trainingEngine,
+    api,
+    history,
+  ]);
 
   const prepareDatasetFromExport = useCallback(async () => {
     setErrorMessage(null);
@@ -157,10 +270,14 @@ export const TrainingPage = () => {
     } finally {
       setPreparingDataset(false);
     }
-  }, [pageParams?.id, exportFormat]);
+  }, [pageParams?.id, exportFormat, api]);
+
+  const hasSelectableModel = localModels.some(
+    (m) => m.path === selectedBaseWeights || m.name === selectedBaseWeights,
+  );
 
   const canStart =
-    localModels.length > 0 &&
+    hasSelectableModel &&
     (trainingState === "idle" || trainingState === "error") &&
     Boolean(selectedBaseWeights) &&
     Boolean(datasetConfigPath);
@@ -170,7 +287,7 @@ export const TrainingPage = () => {
   const disabledReason = (() => {
     if (trainingState === "running") return "目前已有任務進行中";
     if (trainingState === "done") return "本次訓練已完成；若要再次訓練請關閉此視窗後重新開啟 Training。";
-    if (localModels.length === 0) return "找不到本機權重檔（請確認 data/training/models/original/）";
+    if (localModels.length === 0) return "找不到可用模型（請設定 Train Server 或放置權重於 data/training/models/original/）";
     if (!selectedBaseWeights) return "請先選擇 base 模型";
     if (!datasetConfigPath) return "請先輸入或從 Export 產生 dataset_config.json";
     return null;
@@ -184,8 +301,9 @@ export const TrainingPage = () => {
 
     const poll = async () => {
       try {
+        const trainQuery = getTrainServerQueryParams(pageParams.id);
         const info = await api.callApi("trainingJob", {
-          params: { pk: pageParams.id, job_id: jobId },
+          params: { pk: pageParams.id, job_id: jobId, ...trainQuery },
           errorFilter: () => true,
         });
         if (cancelled) return;
@@ -201,7 +319,7 @@ export const TrainingPage = () => {
           setMetrics(meta?.metrics ?? null);
 
           const artifactsRes = await api.callApi("trainingJobArtifacts", {
-            params: { pk: pageParams.id, job_id: jobId },
+            params: { pk: pageParams.id, job_id: jobId, ...trainQuery },
             errorFilter: () => true,
           });
           if (cancelled) return;
@@ -250,6 +368,57 @@ export const TrainingPage = () => {
       <div className={cn("training-page").toClassName()}>
         <div className={cn("training-page").elem("intro").toClassName()}>
           使用此專案資料進行訓練，並檢視效能指標與輸出模型。
+          {trainServerMode === "remote" && (
+            <span className={cn("training-page").elem("hint").toClassName()} style={{ marginLeft: 8 }}>
+              （遠端 Train Server — 模型可自動下載）
+            </span>
+          )}
+        </div>
+
+        {/* Train Server 設定 */}
+        <div className={cn("training-page").elem("section").toClassName()}>
+          <div className={cn("training-page").elem("section-title").toClassName()}>Train Server</div>
+          <div className={cn("training-page").elem("train-server-row").toClassName()}>
+            <input
+              className="w-full"
+              placeholder="例如：192.168.1.10:8011 或 http://gpu-server:8011"
+              value={trainServerUrl}
+              onChange={(e) => {
+                setTrainServerUrl(e.target.value);
+                setTrainServerVerified(false);
+                setTrainServerVerifyDetail(null);
+              }}
+            />
+            <input
+              className={cn("training-page").elem("input").toClassName()}
+              style={{ width: 160 }}
+              placeholder="API Key（可選）"
+              type="password"
+              value={trainServerApiKey}
+              onChange={(e) => {
+                setTrainServerApiKey(e.target.value);
+                setTrainServerVerified(false);
+              }}
+            />
+            <Button
+              look="outlined"
+              size="small"
+              waiting={verifyingTrainServer}
+              onClick={verifyTrainServer}
+              icon={trainServerVerified ? <IconCheck /> : undefined}
+            >
+              {trainServerVerified ? "已驗證" : "驗證連線"}
+            </Button>
+          </div>
+          <div className={cn("training-page").elem("hint").toClassName()} style={{ marginTop: 8 }}>
+            留空則使用伺服器環境變數 TRAIN_SERVER_URL；填寫後會優先連到指定 IP/主機。
+            {trainServerVerifyDetail ? ` — ${trainServerVerifyDetail}` : ""}
+          </div>
+          {trainServerMode === "remote" && trainServerVerified && (
+            <div className={cn("training-page").elem("hint").toClassName()} style={{ marginTop: 4 }}>
+              目前使用遠端 Train Server（模型可自動下載）。
+            </div>
+          )}
         </div>
 
         {/* 專案與資料摘要 */}
@@ -280,26 +449,179 @@ export const TrainingPage = () => {
           <div className={cn("training-page").elem("section-title").toClassName()}>基礎模型</div>
           {localModels.length === 0 ? (
             <div className={cn("training-page").elem("hint").toClassName()}>
-              找不到本機權重檔。請把 `.pt` 放到 `data/training/models/original/`，即可在此選擇。
+              找不到模型清單。請設定 TRAIN_SERVER_URL 或將 `.pt` 放到 `data/training/models/original/`。
             </div>
           ) : (
             <div className={cn("training-page").elem("backends").toClassName()}>
               {localModels.map((m) => (
                 <div
-                  key={m.path}
+                  key={m.path ?? m.name}
                   className={cn("training-page")
                     .elem("backend-item")
-                    .mod({ selected: selectedBaseWeights === m.path })
+                    .mod({ selected: selectedBaseWeights === m.path || selectedBaseWeights === m.name })
                     .toClassName()}
-                  onClick={() => setSelectedBaseWeights(m.path)}
+                  onClick={() => setSelectedBaseWeights(m.path ?? m.name)}
                   role="button"
                   tabIndex={0}
-                  onKeyDown={(e) => e.key === "Enter" && setSelectedBaseWeights(m.path)}
+                  onKeyDown={(e) => e.key === "Enter" && setSelectedBaseWeights(m.path ?? m.name)}
                 >
-                  <span className={cn("training-page").elem("backend-title").toClassName()}>{m.name}</span>
-                  {/* <span className={cn("training-page").elem("backend-desc").toClassName()}>{m.path}</span> */}
+                  <span className={cn("training-page").elem("backend-title").toClassName()}>
+                    {m.name}
+                    {m.family ? ` (${m.family})` : ""}
+                    {!m.available && trainServerMode === "remote" ? " · 將自動下載" : ""}
+                  </span>
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+
+        {/* 訓練超參數（對齊 Ultralytics 第 3 步：epochs / batch / imgsz / run name） */}
+        <div className={cn("training-page").elem("section").toClassName()}>
+          <div className={cn("training-page").elem("section-title").toClassName()}>訓練參數</div>
+          <div className={cn("training-page").elem("stats").toClassName()} style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            <label>
+              Run 名稱
+              <input
+                type="text"
+                className={cn("training-page").elem("input").toClassName()}
+                value={runName}
+                placeholder="可選"
+                onChange={(e) => setRunName(e.target.value)}
+                style={{ width: 140, marginLeft: 6 }}
+              />
+            </label>
+            <label>
+              Epochs
+              <input
+                type="number"
+                min={1}
+                className={cn("training-page").elem("input").toClassName()}
+                value={epochs}
+                onChange={(e) => setEpochs(Number(e.target.value) || taskDefaults?.epochs || 100)}
+                style={{ width: 80, marginLeft: 6 }}
+              />
+            </label>
+            <label>
+              Image size
+              <input
+                type="number"
+                min={32}
+                step={32}
+                className={cn("training-page").elem("input").toClassName()}
+                value={imgsz}
+                onChange={(e) => setImgsz(Number(e.target.value) || taskDefaults?.imgsz || 640)}
+                style={{ width: 80, marginLeft: 6 }}
+              />
+            </label>
+            <label>
+              Batch
+              <input
+                type="number"
+                min={1}
+                className={cn("training-page").elem("input").toClassName()}
+                value={batch}
+                onChange={(e) => setBatch(Number(e.target.value) || taskDefaults?.batch || 16)}
+                style={{ width: 80, marginLeft: 6 }}
+              />
+            </label>
+            <label>
+              Patience
+              <input
+                type="number"
+                min={1}
+                className={cn("training-page").elem("input").toClassName()}
+                value={patience}
+                onChange={(e) => setPatience(Number(e.target.value) || taskDefaults?.patience || 100)}
+                style={{ width: 80, marginLeft: 6 }}
+              />
+            </label>
+          </div>
+          <button
+            type="button"
+            className={cn("training-page").elem("hint").toClassName()}
+            style={{ marginTop: 8, background: "none", border: "none", cursor: "pointer", padding: 0, textAlign: "left" }}
+            onClick={() => setShowAdvancedParams((v) => !v)}
+          >
+            {showAdvancedParams ? "▾ 收合進階參數" : "▸ 進階參數（學習率、增強等）"}
+          </button>
+          {showAdvancedParams && (
+            <div className={cn("training-page").elem("stats").toClassName()} style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 8 }}>
+              <label>
+                Optimizer
+                <select
+                  className={cn("training-page").elem("input").toClassName()}
+                  value={optimizer}
+                  onChange={(e) => setOptimizer(e.target.value)}
+                  style={{ marginLeft: 6 }}
+                >
+                  {["auto", "SGD", "Adam", "AdamW", "NAdam", "RAdam", "RMSProp"].map((opt) => (
+                    <option key={opt} value={opt}>
+                      {opt}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                lr0
+                <input
+                  type="number"
+                  step="0.0001"
+                  className={cn("training-page").elem("input").toClassName()}
+                  value={lr0}
+                  placeholder={taskDefaults?.lr0 ?? "0.01"}
+                  onChange={(e) => setLr0(e.target.value)}
+                  style={{ width: 90, marginLeft: 6 }}
+                />
+              </label>
+              <label>
+                lrf
+                <input
+                  type="number"
+                  step="0.0001"
+                  className={cn("training-page").elem("input").toClassName()}
+                  value={lrf}
+                  placeholder={taskDefaults?.lrf ?? "0.01"}
+                  onChange={(e) => setLrf(e.target.value)}
+                  style={{ width: 90, marginLeft: 6 }}
+                />
+              </label>
+              <label>
+                mosaic
+                <input
+                  type="number"
+                  step="0.1"
+                  min={0}
+                  max={1}
+                  className={cn("training-page").elem("input").toClassName()}
+                  value={mosaic}
+                  placeholder="預設"
+                  onChange={(e) => setMosaic(e.target.value)}
+                  style={{ width: 80, marginLeft: 6 }}
+                />
+              </label>
+              <label>
+                mixup
+                <input
+                  type="number"
+                  step="0.1"
+                  min={0}
+                  max={1}
+                  className={cn("training-page").elem("input").toClassName()}
+                  value={mixup}
+                  placeholder="預設"
+                  onChange={(e) => setMixup(e.target.value)}
+                  style={{ width: 80, marginLeft: 6 }}
+                />
+              </label>
+            </div>
+          )}
+          {taskDefaults && (
+            <div className={cn("training-page").elem("hint").toClassName()} style={{ marginTop: 6 }}>
+              預設依 Ultralytics {taskDefaults.task ?? "detect"} 任務。參考{" "}
+              <a href="https://docs.ultralytics.com/zh/platform/train/cloud-training" target="_blank" rel="noreferrer">
+                官方訓練參數文件
+              </a>
             </div>
           )}
         </div>
@@ -401,7 +723,20 @@ export const TrainingPage = () => {
           </div>
         )}
 
-        {trainingState === "running" && (
+        {trainingState === "running" && jobId && (
+          <div className={cn("training-page").elem("hint").toClassName()} style={{ marginTop: 8 }}>
+            Job：{jobId}{" "}
+            <Button
+              look="string"
+              size="small"
+              onClick={() => history.push(`/projects/${pageParams.id}/data/training/progress/${jobId}`)}
+            >
+              查看訓練進度與即時效果 →
+            </Button>
+          </div>
+        )}
+
+        {trainingState === "running" && !jobId && (
           <div className={cn("training-page").elem("hint").toClassName()}>
             Job：{jobId ?? "建立中…"} {jobInfo?.meta?.message ? `— ${jobInfo.meta.message}` : ""}
           </div>
@@ -489,4 +824,5 @@ export const TrainingPage = () => {
 };
 
 TrainingPage.path = "/training";
+TrainingPage.exact = true;
 TrainingPage.modal = true;

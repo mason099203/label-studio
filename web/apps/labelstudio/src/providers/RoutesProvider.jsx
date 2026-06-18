@@ -48,7 +48,7 @@ export const RoutesProvider = ({ children }) => {
 
   const routesMap = useMemo(() => {
     return pageSetToRoutes(Pages, { config, store });
-  }, [location, config, store, history]);
+  }, [config, store]);
 
   const routesChain = useMemo(() => {
     return findMacthingComponents(location.pathname, routesMap);
@@ -122,11 +122,13 @@ export const useCurrentPath = () => {
 export const useParams = () => {
   const location = useFixedLocation();
   const currentPath = useCurrentPath();
+  const routesMap = useRoutesMap();
 
-  const match = useMemo(() => {
+  return useMemo(() => {
     const parsedLocation = location.search
       .replace(/^\?/, "")
       .split("&")
+      .filter(Boolean)
       .map((pair) => {
         const [key, value] = pair.split("=").map((p) => decodeURIComponent(p));
         return [key, value];
@@ -134,12 +136,22 @@ export const useParams = () => {
 
     const search = Object.fromEntries(parsedLocation);
 
+    let params = { ...search };
+    const chain = findMacthingComponents(location.pathname, routesMap);
+    for (const route of chain) {
+      const segment = matchPath(location.pathname, { path: route.path });
+      if (segment?.params) {
+        params = { ...params, ...segment.params };
+      }
+    }
+
     const urlParams = matchPath(location.pathname, currentPath ?? "");
+    if (urlParams?.params) {
+      params = { ...params, ...urlParams.params };
+    }
 
-    return { ...search, ...(urlParams?.params ?? {}) };
-  }, [location, currentPath]);
-
-  return match ?? {};
+    return params;
+  }, [location.pathname, location.search, currentPath, routesMap]);
 };
 
 export const useContextComponent = () => {

@@ -243,8 +243,14 @@
     }
 
     &_running,
-    &_starting {
+    &_starting,
+    &_queued,
+    &_preparing {
       color: var(--color-primary-content);
+    }
+
+    &_unknown {
+      color: var(--color-neutral-content-subtler);
     }
   }
 

@@ -67,6 +67,21 @@ _api_urlpatterns = [
         name='project-training-job-download',
     ),
     path(
+        '<int:pk>/training/jobs/<str:job_id>/progress/',
+        training_api.ProjectTrainingJobProgressAPI.as_view(),
+        name='project-training-job-progress',
+    ),
+    path(
+        '<int:pk>/training/jobs/<str:job_id>/preview/',
+        training_api.ProjectTrainingJobPreviewAPI.as_view(),
+        name='project-training-job-preview',
+    ),
+    path(
+        '<int:pk>/training/train-server/health/',
+        training_api.ProjectTrainingTrainServerHealthAPI.as_view(),
+        name='project-training-train-server-health',
+    ),
+    path(
         '<int:pk>/training/datasets/prepare/',
         training_api.ProjectTrainingDatasetPrepareAPI.as_view(),
         name='project-training-dataset-prepare',

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useHistory } from "react-router";
 import {
   IconAnalytics,
   IconFileDownload,
@@ -23,6 +24,36 @@ import {
   TRITON_PLAYGROUND_STATE_KEY,
 } from "../ModelDeployment/tritonUrlState";
 import "./ProjectModelsPage.scss";
+
+const ACTIVE_RUN_STATUSES = new Set(["queued", "preparing", "starting", "running", "started", "deferred"]);
+
+const RUN_STATUS_LABELS = {
+  queued: "排隊中",
+  preparing: "準備資料",
+  starting: "啟動中",
+  running: "訓練中",
+  started: "訓練中",
+  finished: "已完成",
+  failed: "失敗",
+  unknown: "未知",
+};
+
+/** @param {{ status?: string, epoch?: number, total_epochs?: number, progress_pct?: number }} run */
+function formatRunStatus(run) {
+  const key = run?.status ?? "unknown";
+  const label = RUN_STATUS_LABELS[key] ?? key;
+  if (run?.progress_pct != null && ACTIVE_RUN_STATUSES.has(key)) {
+    const epochPart =
+      run.epoch != null && run.total_epochs != null ? ` · Epoch ${run.epoch}/${run.total_epochs}` : "";
+    return `${label}${epochPart} · ${Math.round(run.progress_pct)}%`;
+  }
+  return label;
+}
+
+/** @param {{ status?: string }} run */
+function isActiveRun(run) {
+  return ACTIVE_RUN_STATUSES.has(run?.status ?? "");
+}
 
 /**
  * 將最新部署的 Triton 模型寫入 Playground 預設值。
@@ -56,6 +87,7 @@ function saveTritonPlaygroundState(projectId, modelName) {
  */
 export const ProjectModelsPage = () => {
   const api = useAPI();
+  const routerHistory = useHistory();
   const params = useParams();
   const { project } = useProject();
   const [history, setHistory] = useState(null);
@@ -171,14 +203,36 @@ export const ProjectModelsPage = () => {
 
   useEffect(() => {
     if (!params?.id) return;
-    api
-      .callApi("trainingHistory", {
-        params: { pk: params.id },
-        errorFilter: () => true,
-      })
-      .then((res) => setHistory(res ?? null))
-      .catch((err) => setError(err?.message ?? "Failed to load training history"));
-  }, [params?.id]);
+    let cancelled = false;
+    let timer = null;
+
+    const loadHistory = async () => {
+      try {
+        const res = await api.callApi("trainingHistory", {
+          params: { pk: params.id },
+          errorFilter: () => true,
+        });
+        if (!cancelled) setHistory(res ?? null);
+        return res;
+      } catch (err) {
+        if (!cancelled) setError(err?.message ?? "Failed to load training history");
+        return null;
+      }
+    };
+
+    const schedule = async () => {
+      const res = await loadHistory();
+      if (cancelled) return;
+      const active = (res?.runs ?? []).some((r) => isActiveRun(r));
+      timer = window.setTimeout(schedule, active ? 3000 : 15000);
+    };
+
+    schedule();
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [params?.id, api]);
 
   const runs = history?.runs ?? [];
   const datasets = history?.datasets ?? [];
@@ -714,7 +768,7 @@ export const ProjectModelsPage = () => {
                         .mod({ [run.status ?? "unknown"]: true })
                         .toClassName()}
                     >
-                      {run.status ?? "unknown"}
+                      {formatRunStatus(run)}
                     </div>
                     <div className={cn("project-models-page").elem("run-toggle").toClassName()}>
                       {isExpanded ? "收合" : "展開"}
@@ -778,6 +832,18 @@ export const ProjectModelsPage = () => {
                         )}
                       </div>
                       <div className={cn("project-models-page").elem("run-actions").toClassName()}>
+                        {isActiveRun(run) && (
+                          <Button
+                            look="outlined"
+                            size="small"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              routerHistory.push(`/projects/${params.id}/data/training/progress/${run.run_id}`);
+                            }}
+                          >
+                            查看進度
+                          </Button>
+                        )}
                         <a className="no-go" href={absoluteURL(run.best_download_url)} target="_blank" rel="noreferrer">
                           <IconFileDownload /> 模型
                         </a>

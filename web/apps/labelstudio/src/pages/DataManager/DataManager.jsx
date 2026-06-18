@@ -14,6 +14,7 @@ import { isDefined } from "../../utils/helpers";
 import { ImportModal } from "../CreateProject/Import/ImportModal";
 import { ExportPage } from "../ExportPage/ExportPage";
 import { TrainingPage } from "../TrainingPage/TrainingPage";
+import { TrainingProgressPage } from "../TrainingProgressPage/TrainingProgressPage";
 import { APIConfig } from "./api-config";
 
 import "./DataManager.scss";
@@ -247,6 +248,7 @@ DataManagerPage.pages = {
   ExportPage,
   ImportModal,
   TrainingPage,
+  TrainingProgressPage,
 };
 DataManagerPage.context = ({ dmRef }) => {
   const { project } = useProject();

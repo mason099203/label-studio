@@ -32,10 +32,12 @@ type UpdateProjectOptions = {
 export const ProjectProvider: React.FunctionComponent = ({ children }) => {
   const api = useAPI();
   const params = useParams();
+  const projectId = params.id;
   const { user } = useAuth();
   const { update: updateStore } = useAppStore();
-  // @todo use null for missed project data
-  const [projectData, _setProjectData] = useState<APIProject | Empty>(projectCache.get(+params.id) ?? {});
+  const [projectData, _setProjectData] = useState<APIProject | Empty>(
+    () => projectCache.get(+projectId) ?? {},
+  );
   const setProject = useSetAtom(projectAtom);
 
   const setProjectData = (project: APIProject | Empty) => {
@@ -45,12 +47,14 @@ export const ProjectProvider: React.FunctionComponent = ({ children }) => {
 
   const fetchProject: Context["fetchProject"] = useCallback(
     async (id, force = false) => {
-      const finalProjectId = +(id ?? params.id);
+      const finalProjectId = +(id ?? projectId);
 
       if (isNaN(finalProjectId)) return;
 
-      if (!force && projectCache.has(finalProjectId) && projectCache.get(finalProjectId) !== undefined) {
-        setProjectData({ ...projectCache.get(finalProjectId)! });
+      if (!force && projectCache.has(finalProjectId)) {
+        const cached = projectCache.get(finalProjectId)!;
+        setProjectData(cached);
+        return cached;
       }
 
       const result = await api.callApi<APIProject>("project", {
@@ -59,20 +63,24 @@ export const ProjectProvider: React.FunctionComponent = ({ children }) => {
       });
 
       const projectInfo = result as unknown as APIProject;
+      if (!projectInfo?.id) return;
 
-      if (shallowEqualObjects(projectData, projectInfo) === false) {
-        setProjectData(projectInfo);
-        updateStore({ project: projectInfo });
-        projectCache.set(projectInfo.id, projectInfo);
+      const existing = projectCache.get(finalProjectId);
+      if (existing && shallowEqualObjects(existing, projectInfo)) {
+        return existing;
       }
 
-      if (projectInfo?.id) {
+      projectCache.set(projectInfo.id, projectInfo);
+      setProjectData(projectInfo);
+      updateStore({ project: projectInfo });
+
+      if (projectInfo.id) {
         addVisitedProject(projectInfo.id, user?.id);
       }
 
       return projectInfo;
     },
-    [params],
+    [projectId, api, updateStore, user?.id],
   );
 
   const updateProject: Context["updateProject"] = useCallback(
@@ -100,15 +108,14 @@ export const ProjectProvider: React.FunctionComponent = ({ children }) => {
 
       return result;
     },
-    [projectData, setProjectData, updateStore],
+    [projectData, api, updateStore],
   );
 
   useEffect(() => {
-    if (+params.id !== projectData?.id) {
-      setProjectData({});
-    }
-    fetchProject();
-  }, [params]);
+    const id = +projectId;
+    if (isNaN(id)) return;
+    fetchProject(id);
+  }, [projectId, fetchProject]);
 
   useEffect(() => {
     return () => projectCache.clear();
@@ -131,7 +138,6 @@ export const ProjectProvider: React.FunctionComponent = ({ children }) => {
   );
 };
 
-// without this extra typing VSCode doesn't see the type after import :(
 export const useProject: () => Context = () => {
   return useContext(ProjectContext) ?? {};
 };

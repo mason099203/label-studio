@@ -1,0 +1,186 @@
+.training-progress {
+  &__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+
+  &__job-id {
+    font-size: 13px;
+    color: var(--color-neutral-content-subtle);
+  }
+
+  &__message {
+    font-size: 14px;
+    color: var(--color-neutral-content);
+    margin-top: 4px;
+  }
+
+  &__status {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: var(--color-neutral-surface-active);
+    color: var(--color-neutral-content-subtle);
+
+    &_active {
+      background: var(--color-primary-emphasis-subtle);
+      color: var(--color-primary-content);
+    }
+
+    &_done {
+      background: var(--color-positive-emphasis-subtle);
+      color: var(--color-positive-content);
+    }
+
+    &_failed {
+      background: var(--color-negative-emphasis-subtle);
+      color: var(--color-negative-content);
+    }
+  }
+
+  &__progress-bar-wrap {
+    margin-bottom: 20px;
+  }
+
+  &__progress-label {
+    font-size: 13px;
+    color: var(--color-neutral-content-subtle);
+    margin-bottom: 6px;
+  }
+
+  &__progress-track {
+    height: 8px;
+    border-radius: 999px;
+    background: var(--color-neutral-surface-active);
+    overflow: hidden;
+  }
+
+  &__progress-fill {
+    height: 100%;
+    background: var(--color-primary-surface);
+    transition: width 0.4s ease;
+  }
+
+  &__section {
+    margin-bottom: 20px;
+  }
+
+  &__section-title {
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--color-neutral-content);
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  &__metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 10px;
+  }
+
+  &__metric {
+    padding: 10px 12px;
+    border-radius: 6px;
+    background: var(--color-neutral-surface-active);
+    border: 1px solid var(--color-neutral-border-subtler);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  &__metric-label {
+    font-size: 11px;
+    color: var(--color-neutral-content-subtle);
+    word-break: break-all;
+  }
+
+  &__metric-value {
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--color-neutral-content);
+  }
+
+  &__previews {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 12px;
+  }
+
+  &__preview {
+    margin: 0;
+    border: 1px solid var(--color-neutral-border-subtler);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--color-neutral-surface);
+
+    img {
+      display: block;
+      width: 100%;
+      height: auto;
+      max-height: 240px;
+      object-fit: contain;
+      background: var(--color-neutral-surface-active);
+    }
+
+    figcaption {
+      padding: 6px 8px;
+      font-size: 12px;
+      color: var(--color-neutral-content-subtle);
+    }
+  }
+
+  &__history-scroll {
+    overflow-x: auto;
+  }
+
+  &__history-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+
+    th,
+    td {
+      padding: 6px 8px;
+      border-bottom: 1px solid var(--color-neutral-border-subtler);
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    th {
+      color: var(--color-neutral-content-subtle);
+      font-weight: 600;
+    }
+  }
+
+  &__error {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px;
+    border-radius: 6px;
+    background: var(--color-negative-background);
+    border: 1px solid var(--color-negative-border);
+    font-size: 14px;
+    color: var(--color-negative-content);
+    margin-bottom: 16px;
+  }
+
+  &__footer {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--color-neutral-border);
+  }
+
+  &__footer-hint {
+    font-size: 12px;
+    color: var(--color-neutral-content-subtle);
+  }
+}

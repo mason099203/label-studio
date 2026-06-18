@@ -105,6 +105,13 @@
     margin: 16px 0;
   }
 
+  &__train-server-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+  }
+
   &__error {
     display: flex;
     align-items: center;

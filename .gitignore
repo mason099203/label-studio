@@ -40,6 +40,7 @@ db/
 logfile
 venv/
 .venv
+.venv-train
 .vscode
 .autoenv
 .env

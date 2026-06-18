@@ -36,6 +36,7 @@ services:
       - db
       - redis
       - triton
+      - train-server
     environment:
       - DJANGO_DB=default
       - POSTGRE_NAME=postgres
@@ -59,6 +60,9 @@ services:
       # triton 容器內部監聽 8000，主機對外才是 18000（ports: "18000:8000"）
       - TRITON_SERVER_URL=http://triton:8000
       - TRITON_MODEL_REPOSITORY=/label-studio/data/triton_models
+      # 獨立 YOLO Train Server（compose 內 train-server:8011；未設定則走本機 RQ）
+      - TRAIN_SERVER_URL=${TRAIN_SERVER_URL:-http://train-server:8011}
+      - TRAIN_SERVER_API_KEY=${TRAIN_SERVER_API_KEY:-}
     #      - LOG_LEVEL=DEBUG
     volumes:
       - ./data:/label-studio/data:rw
@@ -72,6 +76,7 @@ services:
       - db
       - redis
       - triton
+      - train-server
     environment:
       - DJANGO_DB=default
       - POSTGRE_NAME=postgres
@@ -91,6 +96,9 @@ services:
       # triton 容器內部監聽 8000，主機對外才是 18000（ports: "18000:8000"）
       - TRITON_SERVER_URL=http://triton:8000
       - TRITON_MODEL_REPOSITORY=/label-studio/data/triton_models
+      # 獨立 YOLO Train Server（compose 內 train-server:8011；未設定則走本機 RQ）
+      - TRAIN_SERVER_URL=${TRAIN_SERVER_URL:-http://train-server:8011}
+      - TRAIN_SERVER_API_KEY=${TRAIN_SERVER_API_KEY:-}
     volumes:
       - ./data:/label-studio/data:rw
     command: python label_studio/manage.py rqworker low --worker-class rq.worker.SimpleWorker
@@ -140,6 +148,33 @@ services:
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis-data:/data
+
+  train-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.train-server
+    image: labelstudio-train-server:latest
+    hostname: train-server
+    restart: unless-stopped
+    ports:
+      - "8011:8011"
+    environment:
+      - TRAIN_SERVER_HOST=0.0.0.0
+      - TRAIN_SERVER_PORT=8011
+      - TRAIN_SERVER_OUTPUT_ROOT=/data/training/models/trained
+      - TRAIN_SERVER_MODELS_DIR=/data/training/models/original
+      - TRAIN_SERVER_MAX_WORKERS=1
+      - TRAIN_SERVER_API_KEY=${TRAIN_SERVER_API_KEY:-}
+    volumes:
+      - ./data:/data:rw
+    # GPU：取消下行註解並安裝 NVIDIA Container Toolkit
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
 
 
 volumes:

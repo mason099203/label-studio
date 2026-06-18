@@ -26,13 +26,36 @@ from rq.job import Job
 
 from .jobs import cnn_classification_train_job, yolo_classification_train_job, yolo_detect_train_job
 from .datasets import detect_training_interface, prepare_training_dataset_for_project
+from .train_client import (
+    TRAIN_SERVER_URL,
+    TrainServerConfig,
+    check_health,
+    create_remote_job,
+    download_remote_artifact,
+    fetch_remote_preview,
+    get_remote_job,
+    get_remote_job_progress,
+    list_remote_artifacts,
+    list_remote_models,
+    resolve_train_server_config,
+)
+from .progress import build_progress_snapshot
+from .yolo_catalog import (
+    YOLO_PRESET_MODELS,
+    YOLO_TASK_DEFAULTS,
+    get_preset_models_for_task,
+    get_task_defaults,
+    resolve_yolo_task,
+)
 from .monitoring import append_inference_event, append_metrics_snapshot, read_inference_events, read_metrics_snapshots
 from .triton_export import (
+    ensure_triton_model_loaded,
     export_torchscript_pt_to_triton,
     export_yolo_pt_to_triton,
     get_triton_model_repository_root,
     get_triton_server_url,
     list_triton_model_deployments,
+    request_triton_model_unload,
     sanitize_triton_model_name,
     _is_remote_triton,
     derive_upload_server_url,
@@ -54,6 +77,59 @@ def _sanitize_optional_http_url(raw: str | None) -> str | None:
     if not s.startswith(("http://", "https://")):
         return None
     return s.rstrip("/")
+
+
+def _resolve_train_server_config_from_request(
+    request,
+    body: Dict[str, Any] | None = None,
+) -> Tuple[TrainServerConfig, str | None]:
+    """
+    從請求 body / query 解析 Train Server URL；未提供則 fallback 至環境變數 TRAIN_SERVER_URL。
+    回傳 (config, error_message)。
+    """
+    payload = body or {}
+    raw_url = payload.get("train_server_url")
+    if raw_url is None:
+        raw_url = request.query_params.get("train_server_url")
+    raw_key = payload.get("train_server_api_key")
+    if raw_key is None:
+        raw_key = request.query_params.get("train_server_api_key")
+
+    if raw_url is not None and str(raw_url).strip():
+        sanitized = _sanitize_optional_http_url(str(raw_url))
+        if not sanitized:
+            return resolve_train_server_config(), "無效的 train_server_url：請使用 http:// 或 https:// 開頭的網址"
+        return resolve_train_server_config(url=sanitized, api_key=str(raw_key or "")), None
+
+    return resolve_train_server_config(), None
+
+
+def _fetch_train_server_health(config: TrainServerConfig) -> Dict[str, Any]:
+    if not config.enabled:
+        return {"ok": False, "detail": "未設定 Train Server URL", "base_url": ""}
+    try:
+        data = check_health(config)
+        return {
+            "ok": bool(data.get("ok")),
+            "base_url": config.base_url,
+            "status": data.get("status"),
+            "service": data.get("service"),
+            "detail": None if data.get("ok") else "Train Server 回應異常",
+        }
+    except requests.exceptions.ConnectionError:
+        return {
+            "ok": False,
+            "base_url": config.base_url,
+            "detail": f"無法連線至 Train Server：{config.base_url}",
+        }
+    except requests.exceptions.Timeout:
+        return {
+            "ok": False,
+            "base_url": config.base_url,
+            "detail": "連線 Train Server 逾時",
+        }
+    except Exception as exc:
+        return {"ok": False, "base_url": config.base_url, "detail": str(exc)}
 
 
 def _default_triton_metrics_url(triton_base: str) -> str:
@@ -334,6 +410,13 @@ def _fetch_triton_service_health(timeout: float = 1.5, base_url: str | None = No
         "status": "online" if live and ready else "degraded" if live or ready else "offline",
         "detail": detail,
     }
+
+
+def _parse_bool_query_param(request, key: str, default: bool = False) -> bool:
+    raw = request.query_params.get(key)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
 
 
 def _fetch_triton_model_ready_state(
@@ -625,36 +708,122 @@ def _build_model_usage_stats(
     }
 
 
+def _build_models_response(
+    project: Project,
+    task_filter: str | None = None,
+    train_config: TrainServerConfig | None = None,
+) -> Dict[str, Any]:
+    training_spec = None
+    try:
+        training_spec = detect_training_interface(project)
+    except Exception:
+        training_spec = None
+
+    default_task = resolve_yolo_task(
+        (training_spec or {}).get("training_model"),
+        (training_spec or {}).get("task_type"),
+    )
+    task = task_filter or default_task
+    cfg = train_config or resolve_train_server_config()
+
+    if cfg.enabled:
+        try:
+            remote = list_remote_models(task=task, config=cfg)
+            return {
+                "models": remote.get("models") or [],
+                "root": remote.get("root"),
+                "output_root": remote.get("output_root"),
+                "training_spec": training_spec,
+                "train_server": "remote",
+                "train_server_url": cfg.base_url,
+                "task": task,
+                "task_defaults": get_task_defaults(task),
+                "supported_tasks": list(YOLO_TASK_DEFAULTS.keys()),
+            }
+        except Exception as exc:
+            logger.warning("Train Server models list failed, falling back to local: %s", exc)
+
+    root = _get_original_models_dir()
+    root.mkdir(parents=True, exist_ok=True)
+    local_files = {p.name: p for p in root.glob("*.pt")}
+
+    models: List[Dict[str, Any]] = []
+    seen = set()
+    for item in get_preset_models_for_task(task):
+        name = item["name"]
+        local = local_files.get(name)
+        models.append(
+            {
+                **item,
+                "path": str(local) if local else name,
+                "size_bytes": local.stat().st_size if local else None,
+                "available": local is not None,
+                "source": "preset",
+            }
+        )
+        seen.add(name)
+
+    for p in sorted(root.glob("*.pt"), key=lambda x: x.name.lower()):
+        if p.name in seen:
+            continue
+        st = p.stat()
+        models.append(
+            {
+                "id": p.name,
+                "name": p.name,
+                "path": str(p),
+                "size_bytes": st.st_size,
+                "modified_at": st.st_mtime,
+                "available": True,
+                "source": "local",
+            }
+        )
+
+    return {
+        "models": models,
+        "root": str(root),
+        "training_spec": training_spec,
+        "train_server": "local",
+        "task": task,
+        "task_defaults": get_task_defaults(task),
+        "supported_tasks": list(YOLO_TASK_DEFAULTS.keys()),
+    }
+
+
 class ProjectTrainingModelsAPI(APIView):
     permission_required = ViewClassPermission(GET=all_permissions.projects_view)
 
     def get(self, request, pk: int, *args, **kwargs):
         project = _get_project_for_user(request, pk)
+        task_filter = request.query_params.get("task")
+        train_config, _err = _resolve_train_server_config_from_request(request)
+        return Response(_build_models_response(project, task_filter=task_filter, train_config=train_config))
 
-        root = _get_original_models_dir()
-        root.mkdir(parents=True, exist_ok=True)
 
-        models: List[Dict[str, Any]] = []
-        for ext in ["*.pt", "*.pth"]:
-            for p in sorted(root.glob(ext), key=lambda x: x.name.lower()):
-                st = p.stat()
-                models.append(
-                    {
-                        "id": p.name,
-                        "name": p.name,
-                        "path": str(p),
-                        "size_bytes": st.st_size,
-                        "modified_at": st.st_mtime,
-                    }
-                )
+class ProjectTrainingTrainServerHealthAPI(APIView):
+    """
+    驗證 Train Server 連線。查詢參數 train_server_url 選填；未帶則使用 TRAIN_SERVER_URL。
+    可選 train_server_api_key。
+    """
 
-        training_spec = None
-        try:
-            training_spec = detect_training_interface(project)
-        except Exception:
-            training_spec = None
+    permission_required = ViewClassPermission(GET=all_permissions.projects_view)
 
-        return Response({"models": models, "root": str(root), "training_spec": training_spec})
+    def get(self, request, pk: int, *args, **kwargs):
+        _get_project_for_user(request, pk)
+        train_config, err = _resolve_train_server_config_from_request(request)
+        if err:
+            return Response({"ok": False, "detail": err}, status=status.HTTP_400_BAD_REQUEST)
+        if not train_config.enabled:
+            return Response(
+                {
+                    "ok": False,
+                    "detail": "請提供 train_server_url（例如 http://192.168.1.10:8011）",
+                    "base_url": "",
+                },
+                status=status.HTTP_200_OK,
+            )
+        health = _fetch_train_server_health(train_config)
+        return Response(health, status=status.HTTP_200_OK)
 
 
 class ProjectTrainingJobsAPI(APIView):
@@ -669,6 +838,19 @@ class ProjectTrainingJobsAPI(APIView):
         epochs = int(payload.get("epochs", 50))
         imgsz = int(payload.get("imgsz", 640))
         batch = int(payload.get("batch", 16))
+        patience = payload.get("patience")
+        run_name = (payload.get("run_name") or payload.get("name") or "").strip() or None
+        optimizer = (payload.get("optimizer") or "").strip() or None
+        lr0 = payload.get("lr0")
+        lrf = payload.get("lrf")
+        extra_train_params = payload.get("train_params")
+        if isinstance(extra_train_params, str) and extra_train_params.strip():
+            try:
+                extra_train_params = json.loads(extra_train_params)
+            except json.JSONDecodeError:
+                return Response({"detail": "train_params must be valid JSON"}, status=status.HTTP_400_BAD_REQUEST)
+        if extra_train_params is not None and not isinstance(extra_train_params, dict):
+            return Response({"detail": "train_params must be a JSON object"}, status=status.HTTP_400_BAD_REQUEST)
 
         # 計算裝置設定：None 表示自動偵測（CUDA 優先），可明確指定 "cuda" 或 "cpu"
         raw_device = (payload.get("device") or "").strip().lower()
@@ -682,7 +864,15 @@ class ProjectTrainingJobsAPI(APIView):
             return Response({"detail": "dataset_config is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         # Fail fast with clear messages (so UI can show actionable errors)
-        if os.path.isabs(str(base_weights)) and not Path(str(base_weights)).exists():
+        train_config, train_url_err = _resolve_train_server_config_from_request(request, payload)
+        if train_url_err:
+            return Response({"detail": train_url_err}, status=status.HTTP_400_BAD_REQUEST)
+
+        if (
+            not train_config.enabled
+            and os.path.isabs(str(base_weights))
+            and not Path(str(base_weights)).exists()
+        ):
             return Response(
                 {"detail": f"base_weights not found on server: {base_weights}"},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -693,10 +883,48 @@ class ProjectTrainingJobsAPI(APIView):
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         training_model = payload.get("training_model") or dataset_meta.get("training_model")
-        if training_model not in {"yolo_detect", "yolo_classify", "cnn_classify"}:
+        if training_model not in {"yolo_detect", "yolo_classify", "yolo_segment", "yolo_pose", "yolo_obb", "cnn_classify"}:
             return Response(
                 {"detail": f"Unsupported training_model in dataset_config: {training_model}"},
                 status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # CNN 僅支援本機 RQ；YOLO 任務可轉發至獨立 Train Server
+        if train_config.enabled and training_model != "cnn_classify":
+            shared_dataset_path = payload.get("dataset_path") or payload.get("shared_dataset_path")
+            try:
+                remote = create_remote_job(
+                    project_id=project.id,
+                    base_weights=str(base_weights),
+                    dataset_config_path=str(dataset_config),
+                    dataset_meta=dataset_meta,
+                    training_model=training_model,
+                    epochs=epochs,
+                    imgsz=imgsz,
+                    batch=batch,
+                    patience=int(patience) if patience is not None else None,
+                    run_name=run_name,
+                    optimizer=optimizer,
+                    lr0=float(lr0) if lr0 is not None else None,
+                    lrf=float(lrf) if lrf is not None else None,
+                    train_params=extra_train_params,
+                    device=train_device,
+                    dataset_path=str(shared_dataset_path) if shared_dataset_path else None,
+                    config=train_config,
+                )
+            except Exception as exc:
+                return Response(
+                    {"detail": f"Failed to submit job to Train Server ({train_config.base_url}): {exc}"},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+            return Response(
+                {
+                    "job_id": remote.get("job_id"),
+                    "status": remote.get("status", "queued"),
+                    "training_model": training_model,
+                    "train_server": "remote",
+                    "train_server_url": train_config.base_url,
+                }
             )
 
         output_root = _get_training_output_root()
@@ -723,6 +951,18 @@ class ProjectTrainingJobsAPI(APIView):
                 "batch": batch,
                 "output_root": str(output_root),
             }
+            if patience is not None:
+                job_kwargs["patience"] = int(patience)
+            if run_name:
+                job_kwargs["run_name"] = run_name
+            if optimizer:
+                job_kwargs["optimizer"] = optimizer
+            if lr0 is not None:
+                job_kwargs["lr0"] = float(lr0)
+            if lrf is not None:
+                job_kwargs["lrf"] = float(lrf)
+            if extra_train_params:
+                job_kwargs["train_params"] = extra_train_params
             # CNN 訓練額外支援 device / use_amp 參數
             if training_model == "cnn_classify":
                 job_kwargs["device"] = train_device
@@ -768,6 +1008,25 @@ class ProjectTrainingJobDetailAPI(APIView):
 
     def get(self, request, pk: int, job_id: str, *args, **kwargs):
         project = _get_project_for_user(request, pk)
+        train_config, _err = _resolve_train_server_config_from_request(request)
+
+        if train_config.enabled:
+            try:
+                info = get_remote_job(job_id, config=train_config)
+                meta = info.get("meta") or {}
+                return Response(
+                    {
+                        "job_id": job_id,
+                        "status": info.get("status"),
+                        "meta": meta,
+                        "created_at": info.get("created_at"),
+                        "train_server": "remote",
+                        "train_server_url": train_config.base_url,
+                        "exc_info": info.get("error"),
+                    }
+                )
+            except Exception:
+                pass
 
         queue = django_rq.get_queue("low")
         try:
@@ -794,6 +1053,24 @@ class ProjectTrainingJobArtifactsAPI(APIView):
 
     def get(self, request, pk: int, job_id: str, *args, **kwargs):
         project = _get_project_for_user(request, pk)
+        train_config, _err = _resolve_train_server_config_from_request(request)
+
+        if train_config.enabled:
+            try:
+                remote = list_remote_artifacts(job_id, config=train_config)
+                artifacts = []
+                for item in remote.get("artifacts") or []:
+                    name = item.get("name")
+                    artifacts.append(
+                        {
+                            "name": name,
+                            "size_bytes": item.get("size_bytes"),
+                            "download_url": f"/api/projects/{project.id}/training/jobs/{job_id}/download?file={name}",
+                        }
+                    )
+                return Response({"artifacts": artifacts, "root": remote.get("root"), "train_server": "remote"})
+            except Exception:
+                pass
 
         queue = django_rq.get_queue("low")
         job = Job.fetch(job_id, connection=queue.connection)
@@ -831,6 +1108,18 @@ class ProjectTrainingJobDownloadAPI(APIView):
         if not file_name:
             return Response({"detail": "file query param is required"}, status=status.HTTP_400_BAD_REQUEST)
 
+        train_config, _err = _resolve_train_server_config_from_request(request)
+        if train_config.enabled:
+            try:
+                cache_dir = _get_training_output_root() / f"project_{project.id}" / job_id / "artifacts"
+                target = cache_dir / file_name
+                if not target.exists():
+                    download_remote_artifact(job_id, file_name, target, config=train_config)
+                if target.exists():
+                    return FileResponse(open(target, "rb"), as_attachment=True, filename=target.name)
+            except Exception as exc:
+                return Response({"detail": f"Failed to download from Train Server: {exc}"}, status=503)
+
         queue = django_rq.get_queue("low")
         job = Job.fetch(job_id, connection=queue.connection)
         artifacts_dir = (job.meta or {}).get("artifacts_dir")
@@ -842,6 +1131,215 @@ class ProjectTrainingJobDownloadAPI(APIView):
             raise Http404
 
         return FileResponse(open(target, "rb"), as_attachment=True, filename=target.name)
+
+
+class ProjectTrainingJobProgressAPI(APIView):
+    """訓練進度：epoch、metrics 曲線、預覽圖清單。"""
+
+    permission_required = ViewClassPermission(GET=all_permissions.projects_view)
+
+    def get(self, request, pk: int, job_id: str, *args, **kwargs):
+        project = _get_project_for_user(request, pk)
+        train_config, err = _resolve_train_server_config_from_request(request)
+        if err:
+            return Response({"detail": err}, status=status.HTTP_400_BAD_REQUEST)
+
+        if train_config.enabled:
+            try:
+                progress = get_remote_job_progress(job_id, config=train_config)
+                progress["train_server"] = "remote"
+                progress["train_server_url"] = train_config.base_url
+                progress["job_id"] = job_id
+                return Response(progress)
+            except Exception as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+
+        queue = django_rq.get_queue("low")
+        try:
+            job = Job.fetch(job_id, connection=queue.connection)
+        except Exception:
+            return Response({"detail": "Job not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        meta = dict(job.meta or {})
+        run_dir_str = meta.get("run_dir")
+        if not run_dir_str:
+            output_root = _get_training_output_root()
+            candidate = output_root / f"project_{project.id}" / job_id
+            run_dir_str = str(candidate) if candidate.exists() else None
+
+        if not run_dir_str:
+            return Response(
+                {
+                    "job_id": job_id,
+                    "status": job.get_status(),
+                    "message": meta.get("message", "Waiting to start"),
+                    "epoch": None,
+                    "total_epochs": (meta.get("params") or {}).get("epochs"),
+                    "progress_pct": 0,
+                    "history": [],
+                    "preview_images": [],
+                    "train_server": "local",
+                }
+            )
+
+        rq_status = job.get_status()
+        mapped_status = meta.get("status") or rq_status
+        if rq_status == "failed":
+            mapped_status = "failed"
+        elif rq_status == "finished":
+            mapped_status = "finished"
+
+        snapshot = build_progress_snapshot(
+            run_dir=Path(run_dir_str),
+            status=str(mapped_status),
+            message=meta.get("message"),
+            total_epochs=(meta.get("params") or {}).get("epochs"),
+            extra={"job_id": job_id, "train_server": "local", "error": meta.get("error")},
+        )
+        if meta.get("metrics"):
+            snapshot["final_metrics"] = meta.get("metrics")
+        return Response(snapshot)
+
+
+class ProjectTrainingJobPreviewAPI(APIView):
+    """訓練過程預覽圖（results.png、train_batch 等）。"""
+
+    permission_required = ViewClassPermission(GET=all_permissions.projects_view)
+
+    def get(self, request, pk: int, job_id: str, *args, **kwargs):
+        from django.http import FileResponse, Http404
+
+        project = _get_project_for_user(request, pk)
+        file_name = request.query_params.get("file")
+        if not file_name:
+            return Response({"detail": "file query param is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        safe_name = Path(file_name).name
+        train_config, _err = _resolve_train_server_config_from_request(request)
+
+        if train_config.enabled:
+            try:
+                cache_dir = _get_training_output_root() / f"project_{project.id}" / job_id / "live"
+                target = cache_dir / safe_name
+                if not target.exists():
+                    fetch_remote_preview(job_id, safe_name, target, config=train_config)
+                if target.exists():
+                    media = "image/png" if target.suffix.lower() == ".png" else "image/jpeg"
+                    return FileResponse(open(target, "rb"), filename=target.name, content_type=media)
+            except Exception as exc:
+                raise Http404(f"Preview not found: {exc}") from exc
+
+        queue = django_rq.get_queue("low")
+        try:
+            job = Job.fetch(job_id, connection=queue.connection)
+        except Exception:
+            raise Http404("Job not found")
+
+        meta = dict(job.meta or {})
+        run_dir = Path(meta.get("run_dir") or (_get_training_output_root() / f"project_{project.id}" / job_id))
+        for candidate in (
+            run_dir / "artifacts" / "live" / safe_name,
+            run_dir / "train" / safe_name,
+            run_dir / "artifacts" / safe_name,
+        ):
+            if candidate.exists():
+                media = "image/png" if candidate.suffix.lower() == ".png" else "image/jpeg"
+                return FileResponse(open(candidate, "rb"), filename=candidate.name, content_type=media)
+        raise Http404("Preview not found")
+
+
+ACTIVE_RUN_STATUSES = frozenset({"queued", "preparing", "starting", "running", "started", "deferred"})
+
+
+def _read_json_file(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _infer_run_status(run_meta: Dict[str, Any], run_dir: Path, metrics: Any) -> str:
+    status_value = run_meta.get("status")
+    if status_value:
+        return str(status_value)
+    job_state = _read_json_file(run_dir / "job_state.json")
+    if job_state.get("status"):
+        return str(job_state["status"])
+    if _read_json_file(run_dir / "progress.json"):
+        return "running"
+    if (run_dir / "train").exists() and not metrics:
+        return "running"
+    if metrics:
+        return "finished"
+    return "unknown"
+
+
+def _collect_run_progress(run_dir: Path, run_meta: Dict[str, Any]) -> Dict[str, Any]:
+    progress: Dict[str, Any] = {}
+    prog = _read_json_file(run_dir / "progress.json")
+    if prog:
+        for key in ("epoch", "total_epochs", "progress_pct", "message", "latest_metrics"):
+            if prog.get(key) is not None:
+                progress[key] = prog.get(key)
+    job_state = _read_json_file(run_dir / "job_state.json")
+    if job_state:
+        if not progress.get("message") and job_state.get("message"):
+            progress["message"] = job_state.get("message")
+        if run_meta.get("status") is None and job_state.get("status"):
+            progress.setdefault("status", job_state.get("status"))
+    for key in ("epoch", "total_epochs", "progress_pct", "message"):
+        if run_meta.get(key) is not None and progress.get(key) is None:
+            progress[key] = run_meta.get(key)
+    return progress
+
+
+def _build_training_run_entry(project_id: int, run_dir: Path) -> Dict[str, Any]:
+    run_meta = _read_json_file(run_dir / "run_meta.json")
+    metrics_path = run_dir / "metrics.json"
+    metrics = None
+    if metrics_path.exists():
+        try:
+            metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+        except Exception:
+            metrics = None
+    status_value = _infer_run_status(run_meta, run_dir, metrics)
+    progress = _collect_run_progress(run_dir, run_meta)
+    artifacts_dir = run_dir / "artifacts"
+    files = []
+    if artifacts_dir.exists():
+        for f in sorted(artifacts_dir.glob("*"), key=lambda p: p.name.lower()):
+            if f.is_file():
+                files.append(
+                    {
+                        "name": f.name,
+                        "size_bytes": f.stat().st_size,
+                        "download_url": f"/api/projects/{project_id}/training/runs/{run_dir.name}/download?file={f.name}",
+                    }
+                )
+    return {
+        "run_id": run_dir.name,
+        "run_dir": str(run_dir),
+        "name": run_meta.get("name", ""),
+        "status": status_value,
+        "message": progress.get("message") or run_meta.get("message"),
+        "params": run_meta.get("params"),
+        "task_type": (run_meta.get("params") or {}).get("task_type") or run_meta.get("task"),
+        "training_model": (run_meta.get("params") or {}).get("training_model") or run_meta.get("training_model"),
+        "error": run_meta.get("error"),
+        "metrics": metrics or run_meta.get("metrics"),
+        "artifacts": files,
+        "epoch": progress.get("epoch"),
+        "total_epochs": progress.get("total_epochs"),
+        "progress_pct": progress.get("progress_pct"),
+        "best_download_url": f"/api/projects/{project_id}/training/runs/{run_dir.name}/download?file=best.pt",
+        "last_download_url": f"/api/projects/{project_id}/training/runs/{run_dir.name}/download?file=last.pt",
+        "modified_at": run_dir.stat().st_mtime,
+        "created_at": run_meta.get("created_at"),
+        "finished_at": run_meta.get("finished_at"),
+    }
 
 
 class ProjectTrainingHistoryAPI(APIView):
@@ -864,50 +1362,7 @@ class ProjectTrainingHistoryAPI(APIView):
             for d in sorted(runs_root.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
                 if not d.is_dir():
                     continue
-                run_meta_path = d / "run_meta.json"
-                run_meta = {}
-                if run_meta_path.exists():
-                    try:
-                        run_meta = json.loads(run_meta_path.read_text(encoding="utf-8"))
-                    except Exception:
-                        run_meta = {}
-                metrics_path = d / "metrics.json"
-                metrics = None
-                if metrics_path.exists():
-                    try:
-                        metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
-                    except Exception:
-                        metrics = None
-                artifacts_dir = d / "artifacts"
-                files = []
-                if artifacts_dir.exists():
-                    for f in sorted(artifacts_dir.glob("*"), key=lambda p: p.name.lower()):
-                        if f.is_file():
-                            files.append(
-                                {
-                                    "name": f.name,
-                                    "size_bytes": f.stat().st_size,
-                                    "download_url": f"/api/projects/{project.id}/training/runs/{d.name}/download?file={f.name}",
-                                }
-                            )
-                runs.append(
-                    {
-                        "run_id": d.name,
-                        "run_dir": str(d),
-                        "name": run_meta.get("name", ""),
-                        "status": run_meta.get("status", "finished" if metrics else "unknown"),
-                        "message": run_meta.get("message"),
-                        "params": run_meta.get("params"),
-                        "task_type": (run_meta.get("params") or {}).get("task_type"),
-                        "training_model": (run_meta.get("params") or {}).get("training_model"),
-                        "error": run_meta.get("error"),
-                        "metrics": metrics,
-                        "artifacts": files,
-                        "best_download_url": f"/api/projects/{project.id}/training/runs/{d.name}/download?file=best.pt",
-                        "last_download_url": f"/api/projects/{project.id}/training/runs/{d.name}/download?file=last.pt",
-                        "modified_at": d.stat().st_mtime,
-                    }
-                )
+                runs.append(_build_training_run_entry(project.id, d))
 
         # Datasets are stored under:
         #   data/training/datasets/project_<id>/<timestamp>/
@@ -1314,6 +1769,8 @@ class ProjectTrainingTritonHealthAPI(APIView):
 class ProjectTrainingTritonInferAPI(APIView):
     """
     Proxy a Triton v2 infer request for a project-owned deployed model.
+
+    Query ``ephemeral=1`` (Playground 模型測試)：推論前檢查並載入模型，完成後 unload 釋放記憶體。
     """
 
     permission_required = ViewClassPermission(POST=all_permissions.projects_view)
@@ -1354,12 +1811,43 @@ class ProjectTrainingTritonInferAPI(APIView):
         triton_base = _resolve_triton_base_for_request(request)
         triton_url = f"{triton_base}/v2/models/{model_name}/infer"
         timeout = float(request.query_params.get("timeout", 60))
+        ephemeral = _parse_bool_query_param(request, "ephemeral")
         started_at = time.monotonic()
         deployment_meta = deployed_models[model_name]
+        lifecycle: Dict[str, Any] = {}
 
+        if ephemeral:
+            prepare = ensure_triton_model_loaded(model_name, triton_base, timeout=timeout)
+            lifecycle["was_ready"] = prepare.get("was_ready")
+            if prepare.get("load"):
+                lifecycle["load"] = prepare["load"]
+            if not prepare.get("ok"):
+                load_detail = (prepare.get("load") or {}).get("detail") or "Failed to load model on Triton"
+                return Response(
+                    {
+                        "model_name": model_name,
+                        "triton_url": triton_url,
+                        "ok": False,
+                        "status_code": status.HTTP_503_SERVICE_UNAVAILABLE,
+                        "lifecycle": lifecycle,
+                        "detail": f"模型尚未載入且自動 load 失敗：{load_detail}",
+                    },
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+
+        triton_response = None
+        infer_error: str | None = None
         try:
             triton_response = requests.post(triton_url, json=payload, timeout=timeout)
         except requests.RequestException as exc:
+            infer_error = str(exc)
+        finally:
+            if ephemeral:
+                lifecycle["unload"] = request_triton_model_unload(
+                    model_name, triton_base, timeout=min(timeout, 30)
+                )
+
+        if infer_error is not None:
             append_inference_event(
                 project.id,
                 {
@@ -1374,13 +1862,14 @@ class ProjectTrainingTritonInferAPI(APIView):
                     "status_code": status.HTTP_503_SERVICE_UNAVAILABLE,
                     "duration_ms": round((time.monotonic() - started_at) * 1000, 2),
                     "request": _build_inference_request_summary(payload),
-                    "error": str(exc),
+                    "error": infer_error,
                 },
             )
             return Response(
                 {
-                    "detail": f"Failed to reach Triton server: {exc}",
+                    "detail": f"Failed to reach Triton server: {infer_error}",
                     "triton_url": triton_url,
+                    "lifecycle": lifecycle if ephemeral else None,
                 },
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
@@ -1416,14 +1905,25 @@ class ProjectTrainingTritonInferAPI(APIView):
             },
         )
 
+        response_payload: Dict[str, Any] = {
+            "model_name": model_name,
+            "triton_url": triton_url,
+            "ok": triton_response.ok,
+            "status_code": triton_response.status_code,
+            "body": response_body,
+        }
+        if ephemeral:
+            response_payload["lifecycle"] = lifecycle
+        elif triton_response.status_code == status.HTTP_404_NOT_FOUND:
+            response_payload["detail"] = (
+                "Triton 回傳 404：模型檔案可能在倉庫中但尚未載入記憶體"
+                "（常見於 --model-control-mode=explicit）。"
+                "Playground 請加 ?ephemeral=1 自動載入／釋放，或手動 POST "
+                f"{triton_base}/v2/repository/models/{model_name}/load"
+            )
+
         return Response(
-            {
-                "model_name": model_name,
-                "triton_url": triton_url,
-                "ok": triton_response.ok,
-                "status_code": triton_response.status_code,
-                "body": response_body,
-            },
+            response_payload,
             status=status.HTTP_200_OK if triton_response.ok else triton_response.status_code,
         )
 

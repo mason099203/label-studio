@@ -101,6 +101,7 @@ def upload_model_to_remote_server(
     config_content: str,
     timeout: float = 60.0,
     version: int = 1,
+    triton_base_url: Optional[str] = None,
 ) -> dict:
     """
     透過 Upload Server REST API 將模型檔案與設定檔上傳到遠端 Triton 模型倉庫。
@@ -150,10 +151,136 @@ def upload_model_to_remote_server(
     except requests.RequestException as exc:
         return {"error": f"上傳 config.pbtxt 失敗：{exc}"}
 
-    return {
+    result = {
         "upload_server_url": base,
         "model_saved_to": model_result.get("saved_to"),
         "config_saved_to": config_result.get("saved_to"),
+    }
+
+    if triton_base_url:
+        load_result = request_triton_model_load(model_name, triton_base_url, timeout=timeout)
+        result["model_load"] = load_result
+        if not load_result.get("ok"):
+            result["load_warning"] = load_result.get("detail") or "Triton model load did not succeed"
+
+    return result
+
+
+def request_triton_model_load(
+    model_name: str,
+    triton_base_url: str,
+    timeout: float = 60.0,
+) -> dict:
+    """
+    Ask Triton to load a model from the repository into memory.
+
+    Required when Triton runs with ``--model-control-mode=explicit`` (common on
+    remote hosts). Uploading files alone leaves the model in the repository index
+    but infer returns 404 until load succeeds.
+    """
+    base = (triton_base_url or get_triton_server_url()).rstrip("/")
+    url = f"{base}/v2/repository/models/{model_name}/load"
+    try:
+        response = requests.post(url, json={}, timeout=timeout)
+    except requests.RequestException as exc:
+        return {"ok": False, "detail": str(exc), "triton_url": url}
+
+    detail = ""
+    if response.content:
+        try:
+            body = response.json()
+            detail = body.get("error") or body.get("message") or json.dumps(body, ensure_ascii=True)
+        except ValueError:
+            detail = response.text[:500]
+
+    if response.ok:
+        ready = False
+        try:
+            ready_resp = requests.get(f"{base}/v2/models/{model_name}/ready", timeout=min(timeout, 10))
+            ready = ready_resp.ok
+        except requests.RequestException:
+            pass
+        return {
+            "ok": True,
+            "ready": ready,
+            "status_code": response.status_code,
+            "triton_url": url,
+            "detail": detail or None,
+        }
+
+    return {
+        "ok": False,
+        "ready": False,
+        "status_code": response.status_code,
+        "triton_url": url,
+        "detail": detail or response.reason,
+    }
+
+
+def is_triton_model_ready(
+    model_name: str,
+    triton_base_url: str,
+    timeout: float = 5.0,
+) -> bool:
+    """Return True when Triton reports the model version is ready for infer."""
+    base = (triton_base_url or get_triton_server_url()).rstrip("/")
+    try:
+        response = requests.get(f"{base}/v2/models/{model_name}/ready", timeout=timeout)
+        return response.ok
+    except requests.RequestException:
+        return False
+
+
+def ensure_triton_model_loaded(
+    model_name: str,
+    triton_base_url: str,
+    timeout: float = 60.0,
+) -> dict:
+    """
+    Ensure a model is loaded in Triton before infer.
+
+    Returns ``was_ready`` when already loaded, otherwise attempts ``load``.
+    """
+    was_ready = is_triton_model_ready(
+        model_name, triton_base_url, timeout=min(timeout, 10.0)
+    )
+    if was_ready:
+        return {"ok": True, "was_ready": True, "load": None}
+
+    load_result = request_triton_model_load(model_name, triton_base_url, timeout=timeout)
+    return {
+        "ok": bool(load_result.get("ok")),
+        "was_ready": False,
+        "load": load_result,
+    }
+
+
+def request_triton_model_unload(
+    model_name: str,
+    triton_base_url: str,
+    timeout: float = 30.0,
+) -> dict:
+    """Unload a model from Triton memory (repository files remain)."""
+    base = (triton_base_url or get_triton_server_url()).rstrip("/")
+    url = f"{base}/v2/repository/models/{model_name}/unload"
+    try:
+        response = requests.post(url, json={}, timeout=timeout)
+    except requests.RequestException as exc:
+        return {"ok": False, "detail": str(exc), "triton_url": url}
+
+    detail = ""
+    if response.content:
+        try:
+            body = response.json()
+            detail = body.get("error") or body.get("message") or json.dumps(body, ensure_ascii=True)
+        except ValueError:
+            detail = response.text[:500]
+
+    return {
+        "ok": response.ok,
+        "status_code": response.status_code,
+        "triton_url": url,
+        "detail": detail or (None if response.ok else response.reason),
     }
 
 
@@ -399,6 +526,7 @@ def export_torchscript_pt_to_triton(
                 model_pt_path=best_pt_path,
                 config_content=config_content,
                 version=target_version,
+                triton_base_url=infer_base,
             )
             if upload_result.get("error"):
                 return upload_result
@@ -500,13 +628,17 @@ def export_torchscript_pt_to_triton(
             metadata["triton_public_base_url"] = _new_server_url
         metadata_path.write_text(json.dumps(metadata, ensure_ascii=True, indent=2), encoding="utf-8")
 
+        load_result = request_triton_model_load(model_name, infer_base)
         resp = {
             "model_name": model_name,
             "repo_path": str(repo_root),
             "model_dir": str(model_dir),
             "metadata_path": str(metadata_path),
             "infer_url": f"{infer_base}/v2/models/{model_name}/infer",
+            "model_load": load_result,
         }
+        if not load_result.get("ok"):
+            resp["load_warning"] = load_result.get("detail") or "Triton model load did not succeed"
         if _gpu_warning:
             resp["warning"] = _gpu_warning
         return resp
@@ -628,6 +760,7 @@ def export_yolo_pt_to_triton(
             model_pt_path=src_torchscript,
             config_content=config_content,
             version=target_version,
+            triton_base_url=infer_base,
         )
         if upload_result.get("error"):
             return upload_result
@@ -725,7 +858,8 @@ def export_yolo_pt_to_triton(
         metadata["triton_public_base_url"] = _new_server_url
     metadata_path.write_text(json.dumps(metadata, ensure_ascii=True, indent=2), encoding="utf-8")
 
-    return {
+    load_result = request_triton_model_load(model_name, infer_base)
+    resp = {
         "model_name": model_name,
         "repo_path": str(repo_root),
         "model_dir": str(model_dir),
@@ -735,7 +869,11 @@ def export_yolo_pt_to_triton(
         "legacy_bptxt_path": str(legacy_bptxt_path),
         "metadata_path": str(metadata_path),
         "infer_url": f"{infer_base}/v2/models/{model_name}/infer",
+        "model_load": load_result,
     }
+    if not load_result.get("ok"):
+        resp["load_warning"] = load_result.get("detail") or "Triton model load did not succeed"
+    return resp
 
 
 def _merge_deployed_versions(metadata_path: Path, new_version: int) -> list[int]:

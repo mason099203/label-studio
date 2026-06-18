@@ -69,6 +69,29 @@ function persistPlaygroundState(nextState) {
 const PLAYGROUND_INPUT_SIZE = 640;
 
 /**
+ * 將後端 ephemeral 生命週期（load → infer → unload）格式化成可讀摘要。
+ * @param {Record<string, unknown> | undefined} lifecycle
+ * @returns {string}
+ */
+function formatTritonLifecycleSummary(lifecycle) {
+  if (!lifecycle) return "";
+  const lines = [];
+  if (lifecycle.was_ready) {
+    lines.push("模型狀態：已載入（直接使用）");
+  } else if (lifecycle.load?.ok) {
+    lines.push("模型狀態：已自動載入");
+  } else if (lifecycle.load) {
+    lines.push(`模型載入：失敗 — ${lifecycle.load.detail || "未知錯誤"}`);
+  }
+  if (lifecycle.unload?.ok) {
+    lines.push("模型狀態：測試完成後已釋放記憶體");
+  } else if (lifecycle.unload) {
+    lines.push(`模型釋放：${lifecycle.unload.detail || "失敗或未執行"}`);
+  }
+  return lines.length ? `${lines.join("\n")}\n\n` : "";
+}
+
+/**
  * 組合 Label Studio 代理至 Triton 的推論 API URL（對應 `trainingTritonInfer`）。
  * @param {string} hostname 例如 `window.APP_SETTINGS.hostname`，不含結尾斜線
  * @param {string} projectId 專案主鍵
@@ -1084,12 +1107,13 @@ export function PlaygroundTab() {
       }
 
       const res = await api.callApi("trainingTritonInfer", {
-        params: { pk: projectId, ...tritonProxyQueryParams },
+        params: { pk: projectId, ephemeral: true, ...tritonProxyQueryParams },
         body: { model_name: modelName, api_key: apiKey, ...tensorPayloadRef.current },
         errorFilter: () => true,
       });
 
-      let summaryStr = "";
+      const lifecyclePrefix = formatTritonLifecycleSummary(res?.lifecycle);
+      let summaryStr = lifecyclePrefix;
       if (res?.body?.outputs) {
         summaryStr = res.body.outputs
           .map(
@@ -1106,6 +1130,9 @@ export function PlaygroundTab() {
       // 優先以 status_code（Triton 實際狀態）顯示，回退到 HTTP 包裹層 status，再回退 200
       const displayStatus = res?.status_code ?? res?.status ?? 200;
       const isOk = Boolean(res?.ok);
+      if (!isOk && res?.detail) {
+        summaryStr += `${res.detail}\n`;
+      }
       setResponse({
         status: displayStatus,
         statusText: isOk ? "OK" : "ERROR",
@@ -1172,7 +1199,7 @@ export function PlaygroundTab() {
         模型測試
       </Typography>
       <Typography variant="body" size="small" className="text-neutral-content-subtle mb-wide">
-        選擇已部署之模型，並上傳圖片來測試其效能與結果。
+        選擇已部署之模型，並上傳圖片來測試其效能與結果。測試時會自動檢查 Triton 是否已載入模型，必要時先載入，完成後釋放記憶體。
       </Typography>
 
       <div className={rootClass.elem("api-docs").toClassName()}>
