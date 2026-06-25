@@ -63,6 +63,11 @@ def _friendly_hint_for_yolo_error(exc: Exception, *, classification: bool = Fals
         )
     if classification:
         tl = text.lower()
+        if "classification datasets must be a directory" in tl:
+            return (
+                "分類訓練需要資料集根目錄（含 train/<類別>/ 與 val/<類別>/），"
+                "不可使用 data.yaml。若為偵測/分割專案，請改用 yolo11n.pt / yolo11n-seg.pt，勿用 *-cls.pt。"
+            )
         if "no labels" in tl or "found 0 images" in tl or "no images found" in tl:
             return (
                 "資料夾結構或影像數量可能有誤。YOLO 分類需：dataset_root/train/<類別名>/<圖片> 與 "
@@ -70,6 +75,12 @@ def _friendly_hint_for_yolo_error(exc: Exception, *, classification: bool = Fals
             )
         if "yaml" in tl and ("not found" in tl or "missing" in tl):
             return "分類訓練使用 ImageFolder 根目錄；請確認 dataset_config 的 dataset_root 指向正確目錄。"
+    tl = text.lower()
+    if "classification datasets must be a directory" in tl:
+        return (
+            "所選權重為分類模型（*-cls.pt），但資料集為偵測/分割格式（data.yaml）。"
+            "請改用 yolo11n.pt、yolo11n-seg.pt 等與專案任務一致的權重。"
+        )
     if "out of memory" in tl and ("cuda" in tl or "cudnn" in tl):
         return "GPU 記憶體不足，可嘗試調小 batch 或 imgsz，或改用 CPU 版 torch。"
     return None
@@ -175,6 +186,52 @@ def _disable_ultralytics_git_metadata() -> None:
         return
 
 
+def _collect_yolo_val_metrics(val_res, task: str) -> Dict[str, Any]:
+    metrics: Dict[str, Any] = {}
+    if task == "classify":
+        for key in ("top1", "top5", "fitness"):
+            val = getattr(val_res, key, None)
+            if val is not None:
+                try:
+                    f = float(val)
+                    metrics[key] = f if math.isfinite(f) else None
+                except Exception:
+                    metrics[key] = val
+        return metrics
+
+    metric_groups = []
+    if task in {"detect", "obb", "pose"}:
+        metric_groups.append(getattr(val_res, "box", None))
+    if task in {"segment", "semantic"}:
+        metric_groups.append(getattr(val_res, "seg", None) or getattr(val_res, "mask", None))
+    if task == "semantic":
+        metric_groups.append(getattr(val_res, "semantic", None))
+
+    for group in metric_groups:
+        if group is None:
+            continue
+        for key in ("map50", "map", "map75", "mp", "mr", "fitness"):
+            val = getattr(group, key, None)
+            if val is None:
+                continue
+            try:
+                f = float(val)
+                metrics[key] = f if math.isfinite(f) else None
+            except Exception:
+                metrics[key] = val
+
+    if not metrics:
+        for key in ("map50", "map", "map75", "mp", "mr", "fitness"):
+            val = getattr(val_res, key, None)
+            if val is not None:
+                try:
+                    f = float(val)
+                    metrics[key] = f if math.isfinite(f) else None
+                except Exception:
+                    metrics[key] = val
+    return metrics
+
+
 def yolo_detect_train_job(
     *,
     project_id: int,
@@ -199,14 +256,39 @@ def yolo_detect_train_job(
     job = get_current_job()
     now = datetime.now().isoformat()
 
+    dataset_meta: Dict[str, Any] = {}
+    if dataset_config:
+        try:
+            dataset_meta = _read_dataset_config(dataset_config)
+        except Exception:
+            dataset_meta = {}
+
+    training_model = dataset_meta.get("training_model") or "yolo_detect"
+    task_type = dataset_meta.get("task_type") or "detect"
+    from .yolo_catalog import reconcile_yolo_task, resolve_train_data_path, resolve_yolo_task, resolve_yolo_weights_name
+
+    yolo_task = resolve_yolo_task(training_model, task_type)
+    job_kind_map = {
+        "detect": "yolo_detect_train",
+        "classification": "yolo_classification_train",
+        "segmentation": "yolo_segmentation_train",
+        "semantic_segmentation": "yolo_semantic_segmentation_train",
+        "semantic": "yolo_semantic_segmentation_train",
+        "pose": "yolo_pose_train",
+        "obb": "yolo_obb_train",
+    }
+    job_kind = job_kind_map.get(task_type, f"yolo_{task_type}_train")
+
     if job is not None:
         job.meta.update(
             {
-                "kind": "yolo_detect_train",
+                "kind": job_kind,
                 "project_id": project_id,
                 "status": "starting",
                 "message": "Starting training job",
                 "created_at": now,
+                "training_model": training_model,
+                "task_type": task_type,
             }
         )
         job.save_meta()
@@ -222,12 +304,19 @@ def yolo_detect_train_job(
             "status": "starting",
             "message": "Starting training job",
             "created_at": now,
+            "kind": job_kind,
+            "training_model": training_model,
+            "task_type": task_type,
+            "task": yolo_task,
             "params": {
                 "base_weights": base_weights,
-                "data_yaml": str(data_yaml),
+                "data_yaml": str(dataset_meta.get("data_yaml") or data_yaml or ""),
+                "dataset_config": dataset_config,
                 "epochs": int(epochs),
                 "imgsz": int(imgsz),
                 "batch": int(batch),
+                "training_model": training_model,
+                "task_type": task_type,
             },
         },
     )
@@ -265,11 +354,19 @@ def yolo_detect_train_job(
         dataset_meta = _read_dataset_config(dataset_config)
         data_yaml = dataset_meta.get("data_yaml")
 
-    data_path = Path(str(data_yaml)) if data_yaml else None
-    if data_path is None or not data_path.exists():
-        msg = f"data.yaml not found: {data_yaml}"
-        _fail(msg)
-        raise FileNotFoundError(msg)
+    dataset_root = Path(str(dataset_meta.get("dataset_root") or ""))
+    data_path = None
+    if task_type == "classification" or yolo_task == "classify":
+        if not dataset_root.exists():
+            msg = f"classification dataset root not found: {dataset_root}"
+            _fail(msg)
+            raise FileNotFoundError(msg)
+    else:
+        data_path = Path(str(data_yaml)) if data_yaml else None
+        if data_path is None or not data_path.exists():
+            msg = f"data.yaml not found: {data_yaml}"
+            _fail(msg)
+            raise FileNotFoundError(msg)
 
     if job is not None:
         job.meta.update(
@@ -279,7 +376,7 @@ def yolo_detect_train_job(
                 "run_dir": str(run_dir),
                 "params": {
                     "base_weights": base_weights,
-                    "data_yaml": str(data_path),
+                    "data_yaml": str(data_path) if data_path else str(dataset_root),
                     "dataset_config": dataset_config,
                     "epochs": int(epochs),
                     "imgsz": int(imgsz),
@@ -300,18 +397,35 @@ def yolo_detect_train_job(
     try:
         # Prevent Ultralytics from reading `.git` refs when saving checkpoints.
         _disable_ultralytics_git_metadata()
-        model = YOLO(base_weights)
-        model.train(
-            data=str(data_path),
-            epochs=int(epochs),
-            imgsz=int(imgsz),
-            batch=int(batch),
-            workers=0,
-            project=str(run_dir),
-            name="train",
-        )
+        target_weights = resolve_yolo_weights_name(base_weights, yolo_task)
+        try:
+            p = Path(target_weights)
+            if p.suffix.lower() == ".pt" and not p.exists() and p.parent != Path("."):
+                alt = p.parent / p.name
+                target_weights = str(alt) if alt.exists() else p.name
+        except Exception:
+            pass
+
+        yolo_task = reconcile_yolo_task(training_model, task_type, target_weights)
+        if yolo_task == "classify":
+            train_data = resolve_train_data_path(yolo_task, dataset_meta, dataset_root)
+        else:
+            train_data = str(data_path)
+
+        model = YOLO(target_weights)
+        train_kwargs: Dict[str, Any] = {
+            "data": train_data,
+            "task": yolo_task,
+            "epochs": int(epochs),
+            "imgsz": int(imgsz),
+            "batch": int(batch),
+            "workers": 0,
+            "project": str(run_dir),
+            "name": "train",
+        }
+        model.train(**train_kwargs)
     except Exception as exc:
-        hint = _friendly_hint_for_yolo_error(exc, classification=False)
+        hint = _friendly_hint_for_yolo_error(exc, classification=(yolo_task == "classify"))
         msg = "Training failed."
         if hint:
             msg = f"{msg} {hint}"
@@ -346,18 +460,9 @@ def yolo_detect_train_job(
         "data_yaml": str(data_path),
     }
     try:
-        eval_weights = str(best_dst) if best_dst.exists() else (str(last_dst) if last_dst.exists() else base_weights)
-        val_res = YOLO(eval_weights).val(data=str(data_path), imgsz=int(imgsz), workers=0)
-        box = getattr(val_res, "box", None) or getattr(val_res, "metrics", None)
-        for key in ("map50", "map", "map75", "mp", "mr"):
-            val = getattr(box, key, None) if box is not None else getattr(val_res, key, None)
-            if val is None:
-                continue
-            try:
-                f = float(val)
-                metrics[key] = f if math.isfinite(f) else None
-            except Exception:
-                metrics[key] = val
+        eval_weights = str(best_dst) if best_dst.exists() else (str(last_dst) if last_dst.exists() else target_weights)
+        val_res = YOLO(eval_weights).val(data=str(data_path), imgsz=int(imgsz), workers=0, task=yolo_task)
+        metrics.update(_collect_yolo_val_metrics(val_res, yolo_task))
     except Exception as exc:
         metrics["val_error"] = str(exc)
 

@@ -87,6 +87,7 @@ export const API_CONFIG = {
     trainingJobPreview: "/projects/:pk/training/jobs/:job_id/preview/",
     trainingTrainServerHealth: "/projects/:pk/training/train-server/health/",
     trainingPrepareDataset: "POST:/projects/:pk/training/datasets/prepare/",
+    trainingInterface: "/projects/:pk/training/interface/",
     trainingHistory: "/projects/:pk/training/history/",
     trainingRunRename: "PATCH:/projects/:pk/training/runs/:run_id/rename/",
     trainingRunDelete: "DELETE:/projects/:pk/training/runs/:run_id/delete/",

@@ -82,6 +82,11 @@ _api_urlpatterns = [
         name='project-training-train-server-health',
     ),
     path(
+        '<int:pk>/training/interface/',
+        training_api.ProjectTrainingInterfaceAPI.as_view(),
+        name='project-training-interface',
+    ),
+    path(
         '<int:pk>/training/datasets/prepare/',
         training_api.ProjectTrainingDatasetPrepareAPI.as_view(),
         name='project-training-dataset-prepare',

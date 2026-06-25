@@ -25,7 +25,7 @@ from rest_framework.views import APIView
 from rq.job import Job
 
 from .jobs import cnn_classification_train_job, yolo_classification_train_job, yolo_detect_train_job
-from .datasets import detect_training_interface, prepare_training_dataset_for_project
+from .datasets import detect_training_interface, prepare_training_dataset_for_project, resolve_deploy_task_context
 from .train_client import (
     TRAIN_SERVER_URL,
     TrainServerConfig,
@@ -45,7 +45,9 @@ from .yolo_catalog import (
     YOLO_TASK_DEFAULTS,
     get_preset_models_for_task,
     get_task_defaults,
+    is_weight_compatible_with_task,
     resolve_yolo_task,
+    validate_yolo_training_request,
 )
 from .monitoring import append_inference_event, append_metrics_snapshot, read_inference_events, read_metrics_snapshots
 from .triton_export import (
@@ -729,8 +731,13 @@ def _build_models_response(
     if cfg.enabled:
         try:
             remote = list_remote_models(task=task, config=cfg)
+            remote_models = [
+                m
+                for m in (remote.get("models") or [])
+                if is_weight_compatible_with_task(m.get("name") or m.get("path"), task)
+            ]
             return {
-                "models": remote.get("models") or [],
+                "models": remote_models,
                 "root": remote.get("root"),
                 "output_root": remote.get("output_root"),
                 "training_spec": training_spec,
@@ -765,6 +772,8 @@ def _build_models_response(
 
     for p in sorted(root.glob("*.pt"), key=lambda x: x.name.lower()):
         if p.name in seen:
+            continue
+        if not is_weight_compatible_with_task(p.name, task):
             continue
         st = p.stat()
         models.append(
@@ -883,11 +892,22 @@ class ProjectTrainingJobsAPI(APIView):
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         training_model = payload.get("training_model") or dataset_meta.get("training_model")
-        if training_model not in {"yolo_detect", "yolo_classify", "yolo_segment", "yolo_pose", "yolo_obb", "cnn_classify"}:
+        if training_model not in {"yolo_detect", "yolo_classify", "yolo_segment", "yolo_pose", "yolo_obb", "yolo_semantic", "cnn_classify"}:
             return Response(
                 {"detail": f"Unsupported training_model in dataset_config: {training_model}"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        if training_model != "cnn_classify":
+            dataset_root = Path(str(dataset_meta.get("dataset_root") or ""))
+            compat_err = validate_yolo_training_request(
+                base_weights=str(base_weights),
+                dataset_meta=dataset_meta,
+                training_model=training_model,
+                dataset_root=dataset_root if dataset_root.exists() else None,
+            )
+            if compat_err:
+                return Response({"detail": compat_err}, status=status.HTTP_400_BAD_REQUEST)
 
         # CNN 僅支援本機 RQ；YOLO 任務可轉發至獨立 Train Server
         if train_config.enabled and training_model != "cnn_classify":
@@ -937,6 +957,8 @@ class ProjectTrainingJobsAPI(APIView):
                 job_func = yolo_detect_train_job
             elif training_model == "yolo_classify":
                 job_func = yolo_classification_train_job
+            elif training_model in {"yolo_segment", "yolo_pose", "yolo_obb", "yolo_semantic"}:
+                job_func = yolo_detect_train_job
             elif training_model == "cnn_classify":
                 job_func = cnn_classification_train_job
             else:
@@ -980,6 +1002,29 @@ class ProjectTrainingJobsAPI(APIView):
             )
 
         return Response({"job_id": job.id, "status": job.get_status(), "training_model": training_model})
+
+
+class ProjectTrainingInterfaceAPI(APIView):
+    """Return detected training interface for the current project's label config."""
+
+    permission_required = ViewClassPermission(GET=all_permissions.projects_view)
+
+    def get(self, request, pk: int, *args, **kwargs):
+        project = _get_project_for_user(request, pk)
+        try:
+            spec = detect_training_interface(project)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        yolo_task = resolve_yolo_task(spec.get("training_model"), spec.get("task_type"))
+        return Response(
+            {
+                **spec,
+                "yolo_task": yolo_task,
+                "task_defaults": get_task_defaults(yolo_task),
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class ProjectTrainingDatasetPrepareAPI(APIView):
@@ -1594,12 +1639,11 @@ class ProjectTrainingRunDeployToTritonAPI(APIView):
         except Exception:
             pass
 
-        is_cnn = run_meta.get("kind") == "cnn_classification_train" or \
-                 run_meta.get("params", {}).get("training_model") == "cnn_classify"
+        deploy_ctx = resolve_deploy_task_context(project, run_dir, run_meta)
+        is_cnn = deploy_ctx["is_cnn"]
 
         if is_cnn:
-            # CNN trainer always uses imgsz=224 for ResNet18
-            imgsz = int(payload.get("imgsz", 224))
+            imgsz = int(payload.get("imgsz", deploy_ctx["default_imgsz"]))
             result = export_torchscript_pt_to_triton(
                 best_pt_path=str(best_pt),
                 model_name=model_name,
@@ -1620,7 +1664,7 @@ class ProjectTrainingRunDeployToTritonAPI(APIView):
                 custom_pbtxt=custom_pbtxt,
             )
         else:
-            imgsz = int(payload.get("imgsz", 640))
+            imgsz = int(payload.get("imgsz", deploy_ctx["default_imgsz"]))
             result = export_yolo_pt_to_triton(
                 best_pt_path=str(best_pt),
                 model_name=model_name,
@@ -1639,6 +1683,9 @@ class ProjectTrainingRunDeployToTritonAPI(APIView):
                 export_device=export_device,
                 target_version=target_version,
                 custom_pbtxt=custom_pbtxt,
+                task_type=deploy_ctx.get("task_type"),
+                training_model=deploy_ctx.get("training_model"),
+                kpt_shape=deploy_ctx.get("kpt_shape"),
             )
 
         if result.get("error"):
@@ -1651,8 +1698,10 @@ class ProjectTrainingRunDeployToTritonAPI(APIView):
             "message": "Model copied to Triton repository.",
             "triton_repo_root": str(get_triton_model_repository_root()),
             "triton_server_url": (public_triton_base or get_triton_server_url()).rstrip("/"),
-            # 回傳實際寫入的版本號，讓前端可更新顯示（auto_version 模式下特別有用）
             "deployed_version": target_version,
+            "task_type": deploy_ctx.get("task_type"),
+            "training_model": deploy_ctx.get("training_model"),
+            "imgsz": imgsz,
             **result,
         }
         # 若 GPU 不可用而自動降級為 AUTO，警告訊息傳給前端顯示

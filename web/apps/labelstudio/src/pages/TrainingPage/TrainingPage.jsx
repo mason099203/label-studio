@@ -15,6 +15,7 @@ import {
   normalizeTrainServerUrl,
   setTrainServerSettings,
 } from "./trainServerStorage";
+import { toUltralyticsTaskKey } from "../ModelDeployment/trainingTaskTypes";
 import "./TrainingPage.scss";
 
 /**
@@ -68,11 +69,14 @@ export const TrainingPage = () => {
   const [trainServerVerifyDetail, setTrainServerVerifyDetail] = useState(null);
   const [verifyingTrainServer, setVerifyingTrainServer] = useState(false);
 
-  const loadModels = useCallback(async () => {
+  const loadModels = useCallback(async (taskOverride) => {
     if (!pageParams?.id) return;
     const query = getTrainServerQueryParams(pageParams.id);
+    const taskKey =
+      taskOverride ??
+      (trainingSpec?.task_type ? toUltralyticsTaskKey(trainingSpec.task_type) : undefined);
     const res = await api.callApi("trainingLocalModels", {
-      params: { pk: pageParams.id, ...query },
+      params: { pk: pageParams.id, ...query, ...(taskKey ? { task: taskKey } : {}) },
       errorFilter: () => true,
     });
     if (!res) {
@@ -93,7 +97,7 @@ export const TrainingPage = () => {
       const preferred = models.find((m) => m.available) ?? models[0];
       setSelectedBaseWeights(preferred.path ?? preferred.name);
     }
-  }, [api, pageParams?.id]);
+  }, [api, pageParams?.id, trainingSpec?.task_type]);
 
   const verifyTrainServer = useCallback(async () => {
     if (!pageParams?.id) return;
@@ -265,12 +269,15 @@ export const TrainingPage = () => {
       });
       setDatasetMeta(meta);
       if (meta?.dataset_config) setDatasetConfigPath(meta.dataset_config);
+      if (meta?.task_type) {
+        await loadModels(toUltralyticsTaskKey(meta.task_type));
+      }
     } catch (err) {
       setErrorMessage(err?.message ?? "Dataset preparation failed");
     } finally {
       setPreparingDataset(false);
     }
-  }, [pageParams?.id, exportFormat, api]);
+  }, [pageParams?.id, exportFormat, api, loadModels]);
 
   const hasSelectableModel = localModels.some(
     (m) => m.path === selectedBaseWeights || m.name === selectedBaseWeights,
@@ -637,9 +644,11 @@ export const TrainingPage = () => {
               onChange={(e) => setExportFormat(e.target.value)}
             >
               <option value="">依專案預設</option>
-              <option value="YOLO_WITH_IMAGES">YOLO_WITH_IMAGES (YOLO v8/v11 偵測)</option>
-              <option value="JSON_MIN">JSON_MIN (輕量 / 分類資料結構)</option>
-              <option value="YOLO">YOLO (僅座標，無圖片)</option>
+              <option value="YOLO_WITH_IMAGES">YOLO_WITH_IMAGES（偵測 / 分割 / 姿態）</option>
+              <option value="YOLO_OBB_WITH_IMAGES">YOLO_OBB_WITH_IMAGES（旋轉框 OBB）</option>
+              <option value="JSON_MIN">JSON_MIN（分類資料結構）</option>
+              <option value="YOLO">YOLO（僅座標，無圖片）</option>
+              <option value="YOLO_OBB">YOLO_OBB（僅 OBB 座標，無圖片）</option>
               <option value="COCO">COCO</option>
             </select>
             <Button

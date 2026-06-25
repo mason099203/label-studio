@@ -9,6 +9,14 @@ import {
   buildTritonBaseUrl,
   buildTritonMetricsUrl,
 } from "./tritonUrlState";
+import {
+  inferPlaygroundTaskTypeFromLabelConfig,
+  isSpatialYoloTaskType,
+  normalizePlaygroundTaskType,
+  playgroundInputSizeForTask,
+  playgroundTaskTypeLabel,
+  PLAYGROUND_TASK_TYPES,
+} from "./trainingTaskTypes";
 import "./ModelDeployment.scss";
 
 const rootClass = cn("playground-tab");
@@ -33,7 +41,7 @@ function readSavedPlaygroundState() {
       projectId: parsed?.projectId ? String(parsed.projectId) : "",
       modelName: parsed?.modelName ?? "",
       apiKey: parsed?.apiKey ?? "",
-      taskType: parsed?.taskType === "classification" ? "classification" : "detect",
+      taskType: normalizePlaygroundTaskType(parsed?.taskType),
       tritonServerUrl: typeof parsed?.tritonServerUrl === "string" ? parsed.tritonServerUrl : "",
       tritonMetricsUrl: typeof parsed?.tritonMetricsUrl === "string" ? parsed.tritonMetricsUrl : "",
     };
@@ -130,12 +138,13 @@ function readSessionIdFromCookie() {
  *   apiKey: string,
  *   sessionId?: string,
  *   tritonServerUrl?: string,
+ *   inputSize?: number,
  * }} opts
  * @returns {{ js: string, curl: string, py: string }}
  */
 function buildPlaygroundApiExampleSnippets(opts) {
-  const { inferUrl, modelName, apiKey, sessionId, tritonServerUrl } = opts;
-  const SIZE = PLAYGROUND_INPUT_SIZE;
+  const { inferUrl, modelName, apiKey, sessionId, tritonServerUrl, inputSize } = opts;
+  const SIZE = inputSize ?? 640;
   const modelJson = JSON.stringify(modelName || "YOUR_MODEL_NAME");
   const apiKeyJson = JSON.stringify(apiKey && String(apiKey).trim() ? String(apiKey).trim() : "");
   const sid = sessionId && String(sessionId).trim() ? String(sessionId).trim() : "YOUR_SESSION";
@@ -404,35 +413,6 @@ function buildProjectSelectLabelsById(projectList) {
   return map;
 }
 
-function inferPlaygroundTaskTypeFromLabelConfig(labelConfig) {
-  if (typeof labelConfig !== "string" || !labelConfig.trim()) return null;
-  const xml = labelConfig.replace(/<!--[\s\S]*?-->/g, " ");
-
-  const spatialMatch = xml.match(
-    /<(RectangleLabels|PolygonLabels|KeyPointLabels|EllipseLabels|BrushLabels|MaskLabels|MagicWand)\b/i,
-  );
-  if (spatialMatch) {
-    return {
-      taskType: "detect",
-      detail: `偵測／區域標註（${spatialMatch[1]}）`,
-    };
-  }
-
-  const hasImageLike = /<Image\b/i.test(xml) || /<Video\b/i.test(xml);
-  const hasChoices = /<Choices\b/i.test(xml);
-  const hasHyperText = /<HyperText\b/i.test(xml);
-
-  if (hasImageLike && hasChoices) {
-    return { taskType: "classification", detail: "影像／影片分類（Image 或 Video + Choices）" };
-  }
-
-  if (hasChoices && !hasHyperText) {
-    return { taskType: "classification", detail: "分類介面（Choices）" };
-  }
-
-  return null;
-}
-
 /**
  * 自 label_config 中第一個 Choices 區塊依序取得 Choice 的 value（對應分類輸出之類別索引）。
  * @param {string | null | undefined} labelConfig
@@ -649,6 +629,249 @@ function drawDetectionsOnCtx(ctx, detections, interfaceClassNames = []) {
   }
 }
 
+const SEMANTIC_OVERLAY_COLORS = [
+  [255, 99, 71, 120],
+  [65, 105, 225, 120],
+  [50, 205, 50, 120],
+  [255, 165, 0, 120],
+  [186, 85, 211, 120],
+  [64, 224, 208, 120],
+  [255, 105, 180, 120],
+  [154, 205, 50, 120],
+];
+
+/**
+ * 是否像語意分割的空間網格（排除偵測張量 [1, attrs, anchors]）。
+ * @param {number} h
+ * @param {number} w
+ * @returns {boolean}
+ */
+function isLikelySemanticSpatialGrid(h, w) {
+  if (!Number.isFinite(h) || !Number.isFinite(w) || h < 8 || w < 8) return false;
+  const ratio = Math.max(h, w) / Math.min(h, w);
+  return ratio <= 4;
+}
+
+/**
+ * 對 NCHW logits 做 per-pixel argmax。
+ * @param {number[]} data
+ * @param {number} numClasses
+ * @param {number} height
+ * @param {number} width
+ * @returns {Int32Array}
+ */
+function argmaxClassMapNCHW(data, numClasses, height, width) {
+  const plane = height * width;
+  const classMap = new Int32Array(plane);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const offset = y * width + x;
+      let bestClass = 0;
+      let bestVal = -Infinity;
+      for (let c = 0; c < numClasses; c++) {
+        const val = Number(data[c * plane + offset]);
+        if (val > bestVal) {
+          bestVal = val;
+          bestClass = c;
+        }
+      }
+      classMap[offset] = bestClass;
+    }
+  }
+  return classMap;
+}
+
+/**
+ * 對 NHWC logits 做 per-pixel argmax。
+ * @param {number[]} data
+ * @param {number} height
+ * @param {number} width
+ * @param {number} numClasses
+ * @returns {Int32Array}
+ */
+function argmaxClassMapNHWC(data, height, width, numClasses) {
+  const classMap = new Int32Array(height * width);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const base = (y * width + x) * numClasses;
+      let bestClass = 0;
+      let bestVal = -Infinity;
+      for (let c = 0; c < numClasses; c++) {
+        const val = Number(data[base + c]);
+        if (val > bestVal) {
+          bestVal = val;
+          bestClass = c;
+        }
+      }
+      classMap[y * width + x] = bestClass;
+    }
+  }
+  return classMap;
+}
+
+/**
+ * 將整數或機率值轉成 class id。
+ * @param {number[]} data
+ * @returns {Int32Array}
+ */
+function toIntClassMap(data) {
+  return Int32Array.from(data.map((v) => Math.round(Number(v))));
+}
+
+/**
+ * 解析語意分割輸出：class map 或 per-class logits。
+ * 支援 [H,W]、[1,H,W]、[C,H,W]、[1,C,H,W]、[1,H,W,C]。
+ * @param {{ shape?: number[], data?: number[] }} output
+ * @returns {{ classMap: Int32Array, width: number, height: number, layout: string } | null}
+ */
+function parseSemanticClassMapOutput(output) {
+  if (!output?.shape?.length || !Array.isArray(output.data)) return null;
+  const { shape, data } = output;
+  const expected = shape.reduce((a, b) => a * b, 1);
+  if (expected !== data.length || expected === 0) return null;
+
+  if (shape.length === 2) {
+    const [height, width] = shape;
+    if (!isLikelySemanticSpatialGrid(height, width)) return null;
+    return {
+      classMap: toIntClassMap(data),
+      width,
+      height,
+      layout: `[${height}, ${width}]`,
+    };
+  }
+
+  if (shape.length === 3) {
+    const [d0, d1, d2] = shape;
+    if (d0 === 1 && isLikelySemanticSpatialGrid(d1, d2)) {
+      return {
+        classMap: toIntClassMap(data),
+        width: d2,
+        height: d1,
+        layout: `[1, ${d1}, ${d2}]`,
+      };
+    }
+    if (d0 <= 512 && isLikelySemanticSpatialGrid(d1, d2)) {
+      return {
+        classMap: argmaxClassMapNCHW(data, d0, d1, d2),
+        width: d2,
+        height: d1,
+        layout: `[${d0}, ${d1}, ${d2}] logits→argmax`,
+      };
+    }
+    if (isLikelySemanticSpatialGrid(d0, d1) && d2 <= 512) {
+      return {
+        classMap: argmaxClassMapNHWC(data, d0, d1, d2),
+        width: d1,
+        height: d0,
+        layout: `[${d0}, ${d1}, ${d2}] NHWC logits→argmax`,
+      };
+    }
+    return null;
+  }
+
+  if (shape.length === 4) {
+    const [n, d1, d2, d3] = shape;
+    if (n !== 1) return null;
+    if (d1 <= 512 && isLikelySemanticSpatialGrid(d2, d3)) {
+      return {
+        classMap: argmaxClassMapNCHW(data, d1, d2, d3),
+        width: d3,
+        height: d2,
+        layout: `[1, ${d1}, ${d2}, ${d3}] logits→argmax`,
+      };
+    }
+    if (isLikelySemanticSpatialGrid(d1, d2) && d3 <= 512) {
+      return {
+        classMap: argmaxClassMapNHWC(data, d1, d2, d3),
+        width: d2,
+        height: d1,
+        layout: `[1, ${d1}, ${d2}, ${d3}] NHWC logits→argmax`,
+      };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * 從 Triton 多個輸出中解析語意分割 class map。
+ * @param {Array<{ name?: string, shape?: number[], data?: number[] }>} outputs
+ * @returns {{ parsed: ReturnType<typeof parseSemanticClassMapOutput>, outputName: string | null }}
+ */
+function parseSemanticFromOutputs(outputs) {
+  if (!Array.isArray(outputs)) return { parsed: null, outputName: null };
+  const preferred = outputs.find((o) => o.name === "output0") ?? outputs[0];
+  const ordered = preferred ? [preferred, ...outputs.filter((o) => o !== preferred)] : outputs;
+  for (const out of ordered) {
+    const parsed = parseSemanticClassMapOutput(out);
+    if (parsed) return { parsed, outputName: out.name ?? null };
+  }
+  return { parsed: null, outputName: preferred?.name ?? null };
+}
+
+/**
+ * 在 canvas 上疊加語意分割色塊（letterbox 640×640 空間）。
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {Int32Array} classMap
+ * @param {number} width
+ * @param {number} height
+ * @param {string[]} [interfaceClassNames]
+ */
+function drawSemanticOverlayOnCtx(ctx, classMap, width, height, interfaceClassNames = []) {
+  const target = ctx.canvas.width;
+  const scale = Math.min(target / width, target / height);
+  const scaledW = width * scale;
+  const scaledH = height * scale;
+  const offsetX = (target - scaledW) / 2;
+  const offsetY = (target - scaledH) / 2;
+
+  const overlay = document.createElement("canvas");
+  overlay.width = target;
+  overlay.height = target;
+  const octx = overlay.getContext("2d");
+  if (!octx) return;
+
+  const imgData = octx.createImageData(target, target);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const cls = classMap[y * width + x];
+      if (!cls || cls === 255) continue;
+      const color = SEMANTIC_OVERLAY_COLORS[(cls - 1) % SEMANTIC_OVERLAY_COLORS.length];
+      const tx0 = Math.floor(offsetX + x * scale);
+      const ty0 = Math.floor(offsetY + y * scale);
+      const tx1 = Math.min(target, Math.ceil(offsetX + (x + 1) * scale));
+      const ty1 = Math.min(target, Math.ceil(offsetY + (y + 1) * scale));
+      for (let ty = ty0; ty < ty1; ty++) {
+        for (let tx = tx0; tx < tx1; tx++) {
+          if (tx < 0 || ty < 0 || tx >= target || ty >= target) continue;
+          const idx = (ty * target + tx) * 4;
+          imgData.data[idx] = color[0];
+          imgData.data[idx + 1] = color[1];
+          imgData.data[idx + 2] = color[2];
+          imgData.data[idx + 3] = color[3];
+        }
+      }
+    }
+  }
+  octx.putImageData(imgData, 0, 0);
+  ctx.drawImage(overlay, 0, 0);
+
+  const present = new Set(Array.from(classMap).filter((v) => v > 0 && v !== 255));
+  const legendY = target - 8 - present.size * 18;
+  ctx.font = "13px Arial";
+  let row = 0;
+  for (const cls of present) {
+    const color = SEMANTIC_OVERLAY_COLORS[(cls - 1) % SEMANTIC_OVERLAY_COLORS.length];
+    const name = resolveInterfaceLabelName(interfaceClassNames, cls - 1) || `class ${cls}`;
+    ctx.fillStyle = `rgba(${color[0]}, ${color[1]}, ${color[2]}, 0.95)`;
+    ctx.fillRect(8, legendY + row * 18, 12, 12);
+    ctx.fillStyle = "white";
+    ctx.fillText(`${name} (#${cls})`, 24, legendY + row * 18 + 11);
+    row += 1;
+  }
+}
+
 /**
  * 對 logits 做數值穩定的 softmax。
  * @param {number[]} values
@@ -765,7 +988,7 @@ export function PlaygroundTab() {
   const [tritonVerifyLoading, setTritonVerifyLoading] = useState(false);
   const [tritonVerifyResult, setTritonVerifyResult] = useState(null);
   /** 與後端模型任務對齊：偵測畫框；分類顯示每類分數。 */
-  const [taskType, setTaskType] = useState(savedState.taskType ?? "detect");
+  const [taskType, setTaskType] = useState(normalizePlaygroundTaskType(savedState.taskType));
   const [models, setModels] = useState([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState(null);
@@ -820,6 +1043,11 @@ export function PlaygroundTab() {
   const selectedDeployedModelMeta = useMemo(
     () => models.find((m) => m.model_name === modelName) ?? null,
     [models, modelName],
+  );
+
+  const playgroundInputSize = useMemo(
+    () => playgroundInputSizeForTask(taskType, selectedDeployedModelMeta?.imgsz),
+    [taskType, selectedDeployedModelMeta],
   );
 
   useEffect(() => {
@@ -902,11 +1130,10 @@ export function PlaygroundTab() {
         modelName,
         apiKey,
         sessionId: readSessionIdFromCookie(),
+        tritonServerUrl,
+        inputSize: playgroundInputSize,
       }),
-    // readSessionIdFromCookie() 為純同步讀取，不需列入 deps；
-    // 每次 inferProxyUrl / modelName / apiKey 任一改變時重算即已涵蓋頁面設定變更。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [inferProxyUrl, modelName, apiKey],
+    [inferProxyUrl, modelName, apiKey, tritonServerUrl, playgroundInputSize],
   );
 
   useEffect(() => {
@@ -967,6 +1194,14 @@ export function PlaygroundTab() {
       cancelled = true;
     };
   }, [api, projectId]);
+
+  useEffect(() => {
+    if (taskTypeManualRef.current) return;
+    const fromModel = selectedDeployedModelMeta?.task_type;
+    if (fromModel) {
+      setTaskType(normalizePlaygroundTaskType(fromModel));
+    }
+  }, [selectedDeployedModelMeta]);
 
   useEffect(() => {
     if (!projectId) {
@@ -1045,7 +1280,7 @@ export function PlaygroundTab() {
       paintLetterboxToCanvas(canvas, img);
 
       // 取得影像像素，並轉為 [1, 3, 640, 640] 的一維陣列 (FP32, normalized to 0-1)
-      const TARGET_SIZE = PLAYGROUND_INPUT_SIZE;
+      const TARGET_SIZE = playgroundInputSize;
       const imageData = ctx.getImageData(0, 0, TARGET_SIZE, TARGET_SIZE).data;
       const numPixels = TARGET_SIZE * TARGET_SIZE;
 
@@ -1154,11 +1389,34 @@ export function PlaygroundTab() {
           } else {
             setOutputParseHint("分類：無法從主要輸出解析一維類別向量，請確認 shape（如 [1,C]）與輸出名稱");
           }
-        } else if (ctx && taskType === "detect") {
+        } else if (ctx && taskType === "semantic_segmentation") {
+          const { parsed, outputName } = parseSemanticFromOutputs(res.body.outputs);
+          if (parsed) {
+            const unique = new Set(Array.from(parsed.classMap).filter((v) => v > 0 && v !== 255));
+            const outLabel = outputName ? ` · ${outputName}` : "";
+            setOutputParseHint(`語意分割 ${parsed.layout}${outLabel} · ${unique.size} 個類別`);
+            setDetectionRows([]);
+            drawSemanticOverlayOnCtx(ctx, parsed.classMap, parsed.width, parsed.height, interfaceDetectionLabels);
+          } else {
+            const primary = res.body.outputs.find((o) => o.name === "output0") ?? res.body.outputs[0];
+            const shapeStr = primary?.shape?.length ? `[${primary.shape.join(", ")}]` : "未知";
+            setOutputParseHint(
+              `語意分割：無法解析 class map（實際 shape ${shapeStr}；支援 [H,W]、[1,H,W]、[1,C,H,W] logits 等）`,
+            );
+          }
+        } else if (ctx && isSpatialYoloTaskType(taskType)) {
           const output0 = res.body.outputs.find((o) => o.name === "output0");
           if (output0) {
             const { detections, layout } = parseYoloLikeOutput0(output0);
-            setOutputParseHint(layout);
+            const hintPrefix =
+              taskType === "segmentation"
+                ? "實例分割（以偵測張量示意解析）"
+                : taskType === "pose"
+                  ? "姿態（以偵測張量示意解析，完整關鍵點需專用後處理）"
+                  : taskType === "obb"
+                    ? "OBB（以偵測張量示意解析，旋轉角需專用後處理）"
+                    : playgroundTaskTypeLabel(taskType);
+            setOutputParseHint(`${hintPrefix}：${layout}`);
             setDetectionRows(detections);
             if (detections.length > 0) {
               drawDetectionsOnCtx(ctx, detections, interfaceDetectionLabels);
@@ -1168,7 +1426,7 @@ export function PlaygroundTab() {
               ctx.fillText("未偵測到超過門檻的物體（仍可依下方表格／輸出摘要檢查張量）", 10, 24);
             }
           } else {
-            setOutputParseHint("偵測：找不到名為 output0 的輸出");
+            setOutputParseHint(`${playgroundTaskTypeLabel(taskType)}：找不到名為 output0 的輸出`);
           }
         }
       }
@@ -1191,6 +1449,7 @@ export function PlaygroundTab() {
     interfaceClassificationLabels,
     interfaceDetectionLabels,
     tritonProxyQueryParams,
+    playgroundInputSize,
   ]);
 
   return (
@@ -1457,17 +1716,26 @@ export function PlaygroundTab() {
             onChange={(e) => {
               taskTypeManualRef.current = true;
               setTaskTypeUserOverridden(true);
-              const next = e.target.value === "classification" ? "classification" : "detect";
-              setTaskType(next);
+              setTaskType(normalizePlaygroundTaskType(e.target.value));
               setDetectionRows([]);
               setClassificationRows([]);
               setOutputParseHint(null);
+              tensorPayloadRef.current = null;
             }}
             style={{ width: "100%", padding: "8px", borderRadius: "4px", border: "1px solid #ccc", height: "36px" }}
           >
-            <option value="detect">物件偵測（框、類別索引、座標與信心）</option>
-            <option value="classification">影像分類（每個類別的原始分數與機率）</option>
+            {Object.entries(PLAYGROUND_TASK_TYPES).map(([key, meta]) => (
+              <option key={key} value={key}>
+                {meta.label}
+              </option>
+            ))}
           </select>
+          {selectedDeployedModelMeta?.task_type && (
+            <Typography variant="body" size="small" className="text-neutral-content-subtle mt-tightest block">
+              已部署模型任務：{playgroundTaskTypeLabel(selectedDeployedModelMeta.task_type)}
+              {selectedDeployedModelMeta.imgsz ? ` · 輸入 ${selectedDeployedModelMeta.imgsz}px` : ""}
+            </Typography>
+          )}
           {labelInterfaceHint && (
             <Typography variant="body" size="small" className="text-neutral-content-subtle mt-tightest block">
               {labelInterfaceHint}
@@ -1518,15 +1786,17 @@ export function PlaygroundTab() {
                 style={{ textAlign: "left" }}
               >
                 輸出解析：{outputParseHint}
-                {taskType === "detect"
-                  ? `（座標為 letterbox ${PLAYGROUND_INPUT_SIZE}×${PLAYGROUND_INPUT_SIZE} 模型空間；無 NMS，框可能重疊）`
-                  : "（機率欄：若輸出已近似機率分佈則沿用；否則以 softmax(logits) 計算）"}
+                {taskType === "semantic_segmentation"
+                  ? `（class map 依 letterbox ${playgroundInputSize}×${playgroundInputSize} 疊加；解析度可低於輸入尺寸）`
+                  : isSpatialYoloTaskType(taskType)
+                    ? `（座標為 letterbox ${playgroundInputSize}×${playgroundInputSize} 模型空間；無 NMS，框可能重疊）`
+                    : "（機率欄：若輸出已近似機率分佈則沿用；否則以 softmax(logits) 計算）"}
               </Typography>
             )}
-            {taskType === "detect" && detectionRows.length > 0 && (
+            {isSpatialYoloTaskType(taskType) && detectionRows.length > 0 && (
               <div style={{ marginTop: "16px", overflowX: "auto", textAlign: "left" }}>
                 <Typography variant="title" size="small" className="mb-tight block">
-                  偵測數值（前 {detectionRows.length} 筆；標籤來自 RectangleLabels 等之 Label 順序）
+                  {playgroundTaskTypeLabel(taskType)}數值（前 {detectionRows.length} 筆；標籤來自 Labeling Interface）
                 </Typography>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", fontFamily: "monospace" }}>
                   <thead>

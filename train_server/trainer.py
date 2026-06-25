@@ -13,7 +13,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict
 
-from .yolo_catalog import build_training_params, resolve_yolo_task
+from .yolo_catalog import (
+    build_training_params,
+    reconcile_yolo_task,
+    resolve_train_data_path,
+    resolve_yolo_task,
+    resolve_yolo_weights_name,
+)
 from .progress import collect_preview_images
 
 logger = logging.getLogger(__name__)
@@ -161,18 +167,6 @@ def ensure_yolo_weights(model_name: str, models_dir: Path) -> Path:
     return local
 
 
-def _resolve_train_data_path(task: str, dataset_meta: Dict[str, Any], dataset_root: Path) -> str:
-    if task == "classify":
-        return str(dataset_root)
-    data_yaml = dataset_meta.get("data_yaml")
-    if data_yaml and Path(str(data_yaml)).exists():
-        return str(data_yaml)
-    candidate = dataset_root / "data.yaml"
-    if candidate.exists():
-        return str(candidate)
-    raise FileNotFoundError("data.yaml not found for detection/segment/pose/obb training")
-
-
 def _patch_dataset_paths(dataset_root: Path, dataset_meta: Dict[str, Any]) -> None:
     """解壓後更新 dataset_config / data.yaml 中的絕對路徑。"""
     dataset_config = dataset_root / "dataset_config.json"
@@ -181,6 +175,10 @@ def _patch_dataset_paths(dataset_root: Path, dataset_meta: Dict[str, Any]) -> No
         meta["dataset_root"] = str(dataset_root)
         if meta.get("data_yaml"):
             meta["data_yaml"] = str(dataset_root / "data.yaml")
+        if meta.get("train_dir"):
+            meta["train_dir"] = str(dataset_root / "train")
+        if meta.get("val_dir"):
+            meta["val_dir"] = str(dataset_root / "val")
         _write_json(dataset_config, meta)
         dataset_meta.update(meta)
 
@@ -213,7 +211,7 @@ def run_yolo_training(
         or "yolo_detect"
     )
     task_type = dataset_meta.get("task_type")
-    task = resolve_yolo_task(training_model, task_type)
+    task = reconcile_yolo_task(training_model, task_type, base_weights)
     train_params = build_training_params(task=task, overrides=param_overrides)
 
     _patch_dataset_paths(dataset_root, dataset_meta)
@@ -275,23 +273,19 @@ def run_yolo_training(
     YOLO = _get_ultralytics_yolo()
     _disable_ultralytics_git_metadata()
 
-    weights_path = base_weights
-    if not Path(base_weights).exists():
-        weights_path = str(ensure_yolo_weights(Path(base_weights).name, output_root.parent / "original"))
+    weights_path = resolve_yolo_weights_name(base_weights, task)
+    if not Path(weights_path).exists():
+        weights_path = str(ensure_yolo_weights(Path(weights_path).name, output_root.parent / "original"))
 
-    if task == "classify":
-        p = Path(weights_path)
-        if p.suffix.lower() == ".pt" and not p.name.endswith("-cls.pt"):
-            cls_name = p.stem + "-cls.pt"
-            alt = p.parent / cls_name
-            weights_path = str(alt) if alt.exists() else cls_name
-
-    data_path = _resolve_train_data_path(task, dataset_meta, dataset_root)
+    task = reconcile_yolo_task(training_model, task_type, weights_path)
+    train_params = build_training_params(task=task, overrides=param_overrides)
+    data_path = resolve_train_data_path(task, dataset_meta, dataset_root)
 
     _emit({"status": "running", "message": "Training in progress", "run_dir": str(run_dir)})
 
     train_kwargs: Dict[str, Any] = {
         "data": data_path,
+        "task": task,
         "epochs": int(train_params.get("epochs", 100)),
         "imgsz": int(train_params.get("imgsz", 640)),
         "batch": int(train_params.get("batch", 16)),
@@ -401,7 +395,7 @@ def run_yolo_training(
 
     try:
         eval_weights = str(best_dst) if best_dst.exists() else (str(last_dst) if last_dst.exists() else weights_path)
-        val_res = YOLO(eval_weights).val(data=data_path, imgsz=int(train_params.get("imgsz", 640)), workers=0)
+        val_res = YOLO(eval_weights).val(data=data_path, imgsz=int(train_params.get("imgsz", 640)), workers=0, task=task)
         if task == "classify":
             for key in ("top1", "top5", "fitness"):
                 val = getattr(val_res, key, None)

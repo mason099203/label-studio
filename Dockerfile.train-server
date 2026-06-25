@@ -21,8 +21,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY train_server/requirements.txt /app/train_server/requirements.txt
-RUN pip install --upgrade pip && pip install -r /app/train_server/requirements.txt
+COPY train_server/requirements-train.txt /app/train_server/requirements-train.txt
+# CPU 版 torch（避免 pip 預設拉取含 CUDA 的完整 torch，映像可小數 GB）
+RUN pip install --upgrade pip \
+    && pip install "numpy>=1.26.4,<2.0" \
+        "torch>=2.0.1" "torchvision>=0.15.2" \
+        --index-url https://download.pytorch.org/whl/cpu \
+    && pip install -r /app/train_server/requirements-train.txt
 
 COPY train_server /app/train_server
 

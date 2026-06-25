@@ -2,6 +2,8 @@
 
 獨立 YOLO 訓練服務，與 Label Studio 主應用分離部署。參考 [Ultralytics 文件](https://docs.ultralytics.com/zh)。
 
+**完整指南（架構、部署、測試）：** [`docs/source/guide/train_server_deploy.md`](../docs/source/guide/train_server_deploy.md)
+
 ## 功能
 
 - 支援 YOLO 任務：`detect`、`segment`、`classify`、`pose`、`obb`

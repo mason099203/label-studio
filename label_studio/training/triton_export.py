@@ -651,6 +651,23 @@ def export_torchscript_pt_to_triton(
                 pass
 
 
+def _task_metadata_fields(
+    *,
+    task_type: Optional[str] = None,
+    training_model: Optional[str] = None,
+    kpt_shape: Optional[list] = None,
+    model_type: str = "yolo_torchscript",
+) -> dict:
+    fields: dict = {"model_type": model_type}
+    if task_type:
+        fields["task_type"] = task_type
+    if training_model:
+        fields["training_model"] = training_model
+    if kpt_shape:
+        fields["kpt_shape"] = kpt_shape
+    return fields
+
+
 def export_yolo_pt_to_triton(
     best_pt_path: str | Path,
     model_name: str,
@@ -669,6 +686,9 @@ def export_yolo_pt_to_triton(
     export_device: Optional[str] = None,
     target_version: int = 1,
     custom_pbtxt: Optional[str] = None,
+    task_type: Optional[str] = None,
+    training_model: Optional[str] = None,
+    kpt_shape: Optional[list] = None,
 ) -> dict:
     """
     Export a trained YOLO checkpoint into Triton's libtorch model layout.
@@ -789,6 +809,11 @@ def export_yolo_pt_to_triton(
             "gpu_ids": gpu_ids or [],
             "instance_count": instance_count,
             "always_in_memory": always_in_memory,
+            **_task_metadata_fields(
+                task_type=task_type,
+                training_model=training_model,
+                kpt_shape=kpt_shape,
+            ),
             # 累積多台 Triton 伺服器記錄（同 URL 去重；遷移舊格式自動合併）
             "triton_servers": _merge_triton_servers(
                 metadata_path, _new_server_url, _deployed_at,
@@ -847,6 +872,11 @@ def export_yolo_pt_to_triton(
         "gpu_ids": gpu_ids or [],
         "instance_count": instance_count,
         "always_in_memory": always_in_memory,
+        **_task_metadata_fields(
+            task_type=task_type,
+            training_model=training_model,
+            kpt_shape=kpt_shape,
+        ),
         # 累積多台 Triton 伺服器記錄（同 URL 去重；遷移舊格式自動合併；本機模式無 upload_server_url）
         "triton_servers": _merge_triton_servers(
             metadata_path, _new_server_url, _deployed_at, upload_server_url=None,

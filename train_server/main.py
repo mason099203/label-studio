@@ -25,6 +25,8 @@ from .yolo_catalog import (
     YOLO_TASK_DEFAULTS,
     get_preset_models_for_task,
     get_task_defaults,
+    is_weight_compatible_with_task,
+    validate_yolo_training_request,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -91,6 +93,8 @@ def list_models(
     cached = []
     for p in sorted(TRAIN_SERVER_MODELS_DIR.glob("*.pt"), key=lambda x: x.name.lower()):
         if any(m["name"] == p.name for m in preset_models):
+            continue
+        if task and not is_weight_compatible_with_task(p.name, task):
             continue
         cached.append(
             {
@@ -161,6 +165,14 @@ async def create_job(
 
     if training_model:
         dataset_meta["training_model"] = training_model
+
+    compat_err = validate_yolo_training_request(
+        base_weights=base_weights,
+        dataset_meta=dataset_meta,
+        training_model=training_model,
+    )
+    if compat_err:
+        raise HTTPException(status_code=400, detail=compat_err)
 
     model_name = Path(base_weights).name if not Path(base_weights).is_absolute() else Path(base_weights).name
     try:

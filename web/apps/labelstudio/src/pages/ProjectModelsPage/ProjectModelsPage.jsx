@@ -59,8 +59,9 @@ function isActiveRun(run) {
  * 將最新部署的 Triton 模型寫入 Playground 預設值。
  * @param {string | number} projectId
  * @param {string} modelName
+ * @param {{ taskType?: string, imgsz?: number }} [extra]
  */
-function saveTritonPlaygroundState(projectId, modelName) {
+function saveTritonPlaygroundState(projectId, modelName, extra = {}) {
   if (typeof window === "undefined") return;
   let existing = {};
   try {
@@ -75,6 +76,7 @@ function saveTritonPlaygroundState(projectId, modelName) {
       ...existing,
       projectId: String(projectId),
       modelName,
+      ...(extra.taskType ? { taskType: extra.taskType } : {}),
     }),
   );
 }
@@ -441,7 +443,10 @@ export const ProjectModelsPage = () => {
           setLastDeployedVersion(deployedVer);
           if (!autoVersion) setTargetVersion(deployedVer);
         }
-        saveTritonPlaygroundState(params.id, res.model_name);
+        saveTritonPlaygroundState(params.id, res.model_name, {
+          taskType: res.task_type,
+          imgsz: res.imgsz,
+        });
         const verLabel = deployedVer ? `（版本 ${deployedVer}）` : "";
         if (res.model_name) {
           // eslint-disable-next-line no-alert
