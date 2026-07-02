@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useHistory } from "react-router";
 import { IconAnalytics, IconFileDownload, IconWarningCircleFilled } from "@humansignal/icons";
 import { Button } from "@humansignal/ui";
@@ -63,6 +63,46 @@ const pickDisplayMetrics = (latestMetrics = {}) => {
   return entries;
 };
 
+/** 從 API 回應取出 payload；errorFilter 時失敗回應也會被回傳而非 null */
+const parseTrainingApiResponse = (res) => {
+  if (!res) return { ok: false, error: "無回應" };
+
+  if (res.$meta) {
+    if (!res.$meta.ok) {
+      const body = res.response;
+      const detail =
+        (typeof body === "object" && body !== null && (body.detail ?? body.message)) ||
+        res.detail ||
+        (typeof res.error === "string" ? res.error : null);
+      return {
+        ok: false,
+        error: typeof detail === "string" ? detail : "無法取得訓練狀態",
+      };
+    }
+    // HTTP 200：頂層 error 可能是訓練失敗訊息，不是 API 錯誤
+    return { ok: true, data: res };
+  }
+
+  if (typeof res.detail === "string" && !res.job_id && !Array.isArray(res.history)) {
+    return { ok: false, error: res.detail };
+  }
+
+  if (res.job_id || res.status != null || res.epoch != null || res.meta || Array.isArray(res.history)) {
+    return { ok: true, data: res };
+  }
+
+  if (typeof res.error === "string" && res.error) {
+    return { ok: false, error: res.error };
+  }
+
+  return { ok: true, data: res };
+};
+
+const parseProjectIdFromPath = (pathname) => {
+  const match = pathname.match(/\/projects\/(\d+)/);
+  return match?.[1] ?? null;
+};
+
 /** 訓練進度與即時效果頁面 */
 export const TrainingProgressPage = () => {
   const history = useHistory();
@@ -70,58 +110,97 @@ export const TrainingProgressPage = () => {
   const pageParams = useParams();
   const api = useAPI();
 
-  const jobId = pageParams?.job_id;
-  const projectId = pageParams?.id;
-  const missingJobId = !jobId;
+  const resolvedJobId = pageParams?.job_id ?? (() => {
+    const m = location.pathname.match(/\/training\/progress\/([^/]+)/);
+    return m?.[1] ?? null;
+  })();
+  const projectId = pageParams?.id ?? parseProjectIdFromPath(location.pathname);
+  const missingJobId = !resolvedJobId;
 
   const [progress, setProgress] = useState(null);
   const [jobInfo, setJobInfo] = useState(null);
   const [errorMessage, setErrorMessage] = useState(null);
-  const [previewVersion, setPreviewVersion] = useState(0);
+  const [resolvedTrainServerUrl, setResolvedTrainServerUrl] = useState(null);
+  const pollFailStreakRef = useRef(0);
 
-  const trainServerParams = useMemo(
-    () => (projectId ? getTrainServerQueryParams(projectId) : {}),
-    [projectId],
-  );
+  const trainServerParams = useMemo(() => {
+    const base = projectId ? getTrainServerQueryParams(projectId) : {};
+    if (resolvedTrainServerUrl && !base.train_server_url) {
+      return { ...base, train_server_url: resolvedTrainServerUrl };
+    }
+    return base;
+  }, [projectId, resolvedTrainServerUrl]);
 
   const closeAndBack = useCallback(() => {
-    const suffix = `/training/progress/${jobId ?? ""}`;
+    const suffix = `/training/progress/${resolvedJobId ?? ""}`;
     const path = location.pathname.replace(suffix, "");
     const search = location.search;
     history.replace(`${path}${search !== "?" ? search : ""}`);
-  }, [history, location.pathname, location.search, jobId]);
+  }, [history, location.pathname, location.search, resolvedJobId]);
 
-  const status = progress?.status ?? jobInfo?.status ?? "unknown";
+  const status =
+    progress?.status ?? jobInfo?.status ?? jobInfo?.meta?.status ?? (errorMessage ? "failed" : "unknown");
   const isActive = ACTIVE_STATUSES.has(status);
   const isFinished = status === "finished";
   const isFailed = status === "failed" || Boolean(progress?.error || jobInfo?.exc_info);
 
   useEffect(() => {
-    if (!projectId || !jobId) return;
+    if (!projectId || !resolvedJobId) return;
     let cancelled = false;
     let timer = null;
 
     const poll = async () => {
       try {
+        const query = { pk: projectId, job_id: resolvedJobId, ...trainServerParams };
         const [progRes, jobRes] = await Promise.all([
           api.callApi("trainingJobProgress", {
-            params: { pk: projectId, job_id: jobId, ...trainServerParams },
+            params: query,
             errorFilter: () => true,
+            suppressError: true,
           }),
           api.callApi("trainingJob", {
-            params: { pk: projectId, job_id: jobId, ...trainServerParams },
+            params: query,
             errorFilter: () => true,
+            suppressError: true,
           }),
         ]);
         if (cancelled) return;
-        if (progRes) {
-          setProgress(progRes);
-          setPreviewVersion((v) => v + 1);
-        }
-        if (jobRes) setJobInfo(jobRes);
-        setErrorMessage(null);
 
-        const st = progRes?.status ?? jobRes?.status;
+        const prog = parseTrainingApiResponse(progRes);
+        const job = parseTrainingApiResponse(jobRes);
+        const errors = [prog.error, job.error].filter(Boolean);
+
+        if (prog.ok) {
+          setProgress(prog.data);
+        }
+        if (job.ok) {
+          setJobInfo(job.data);
+          if (job.data?.train_server_url) {
+            setResolvedTrainServerUrl(job.data.train_server_url);
+          }
+        }
+
+        const trainingError =
+          (prog.ok ? prog.data?.error : null) ??
+          (job.ok ? job.data?.exc_info ?? job.data?.error : null);
+
+        if (!prog.ok && !job.ok && !trainingError) {
+          pollFailStreakRef.current += 1;
+          if (pollFailStreakRef.current >= 3) {
+            const hint =
+              errors[0] === "無回應" || errors[1] === "無回應" || String(errors[0] ?? "").includes("503")
+                ? "。請確認 Train Server 容器正在執行（docker ps）且防火牆已開放 8011。"
+                : "";
+            setErrorMessage(
+              errors[0] + (errors[0] !== errors[1] && errors[1] ? `；${errors[1]}` : "") + hint,
+            );
+          }
+        } else {
+          pollFailStreakRef.current = 0;
+          setErrorMessage(null);
+        }
+
+        const st = (prog.ok ? prog.data?.status : null) ?? (job.ok ? job.data?.status ?? job.data?.meta?.status : null);
         if (st === "finished" || st === "failed") return;
       } catch (err) {
         if (!cancelled) setErrorMessage(err?.message ?? "無法取得訓練進度");
@@ -135,28 +214,45 @@ export const TrainingProgressPage = () => {
       cancelled = true;
       if (timer) window.clearTimeout(timer);
     };
-  }, [api, projectId, jobId, trainServerParams]);
+  }, [api, projectId, resolvedJobId, trainServerParams]);
 
-  const progressPct = progress?.progress_pct ?? 0;
-  const epoch = progress?.epoch ?? "—";
-  const totalEpochs = progress?.total_epochs ?? "—";
+  const totalEpochs =
+    progress?.total_epochs ??
+    jobInfo?.meta?.total_epochs ??
+    jobInfo?.meta?.params?.epochs ??
+    jobInfo?.params?.epochs ??
+    null;
+
+  const epochRaw = progress?.epoch;
+  const epoch =
+    epochRaw != null && epochRaw !== ""
+      ? epochRaw
+      : ACTIVE_STATUSES.has(status) && totalEpochs != null
+        ? 0
+        : "—";
+
+  const progressPct = useMemo(() => {
+    if (progress?.progress_pct != null && progress.progress_pct > 0) {
+      return progress.progress_pct;
+    }
+    if (typeof epochRaw === "number" && typeof totalEpochs === "number" && totalEpochs > 0) {
+      return Math.min(100, Math.round((epochRaw / totalEpochs) * 1000) / 10);
+    }
+    return 0;
+  }, [progress?.progress_pct, epochRaw, totalEpochs]);
+
+  const totalEpochsLabel = totalEpochs ?? "—";
   const displayMetrics = pickDisplayMetrics(progress?.latest_metrics ?? progress?.final_metrics ?? {});
-  const previewImages = progress?.preview_images ?? [];
   const historyRows = (progress?.history ?? []).slice(-12);
 
-  const previewUrl = (name) => {
-    const qs = new URLSearchParams({ ...trainServerParams, file: name, _: String(previewVersion) });
-    return absoluteURL(`/api/projects/${projectId}/training/jobs/${jobId}/preview/?${qs.toString()}`);
-  };
-
   const downloadUrl = (file) =>
-    absoluteURL(`/api/projects/${projectId}/training/jobs/${jobId}/download?file=${file}`);
+    absoluteURL(`/api/projects/${projectId}/training/jobs/${resolvedJobId}/download?file=${file}`);
 
   return (
     <Modal
       onHide={closeAndBack}
       title="訓練進度"
-      style={{ width: 920 }}
+      style={{ width: 640 }}
       closeOnClickOutside={!isActive}
       allowClose={!isActive}
       visible
@@ -164,9 +260,9 @@ export const TrainingProgressPage = () => {
       <div className={cn("training-progress").toClassName()}>
         <div className={cn("training-progress").elem("header").toClassName()}>
           <div>
-            <div className={cn("training-progress").elem("job-id").toClassName()}>Job：{jobId}</div>
+            <div className={cn("training-progress").elem("job-id").toClassName()}>Job：{resolvedJobId}</div>
             <div className={cn("training-progress").elem("message").toClassName()}>
-              {progress?.message ?? jobInfo?.meta?.message ?? "—"}
+            {progress?.message ?? jobInfo?.meta?.message ?? jobInfo?.message ?? "—"}
             </div>
           </div>
           <span
@@ -181,16 +277,34 @@ export const TrainingProgressPage = () => {
 
         <div className={cn("training-progress").elem("progress-bar-wrap").toClassName()}>
           <div className={cn("training-progress").elem("progress-label").toClassName()}>
-            Epoch {epoch} / {totalEpochs}
-            {progressPct ? ` · ${progressPct}%` : ""}
+            Epoch {epoch} / {totalEpochsLabel}
+            {progressPct > 0 ? ` · ${progressPct}%` : isActive ? " · 0%" : ""}
           </div>
-          <div className={cn("training-progress").elem("progress-track").toClassName()}>
+          <div
+            className={cn("training-progress")
+              .elem("progress-track")
+              .mod({ queued: status === "queued" || status === "preparing" })
+              .toClassName()}
+          >
             <div
-              className={cn("training-progress").elem("progress-fill").toClassName()}
-              style={{ width: `${Math.min(100, Math.max(0, progressPct || 0))}%` }}
+              className={cn("training-progress")
+                .elem("progress-fill")
+                .mod({ queued: status === "queued" || status === "preparing" })
+                .toClassName()}
+              style={
+                status === "queued" || status === "preparing"
+                  ? undefined
+                  : { width: `${Math.min(100, Math.max(0, progressPct || 0))}%` }
+              }
             />
           </div>
         </div>
+
+        {!missingJobId && !projectId && (
+          <div className={cn("training-progress").elem("error").toClassName()}>
+            <IconWarningCircleFilled /> 無法讀取專案 ID，請從專案內 Training 或 Models 頁重新進入。
+          </div>
+        )}
 
         {missingJobId && (
           <div className={cn("training-progress").elem("error").toClassName()}>
@@ -206,7 +320,9 @@ export const TrainingProgressPage = () => {
 
         {isFailed && (progress?.error || jobInfo?.exc_info) && (
           <div className={cn("training-progress").elem("error").toClassName()}>
-            <IconWarningCircleFilled /> {progress?.error ?? jobInfo?.exc_info}
+            <IconWarningCircleFilled />{" "}
+            {String(progress?.error ?? jobInfo?.exc_info).slice(0, 1200)}
+            {String(progress?.error ?? jobInfo?.exc_info).length > 1200 ? "…" : ""}
           </div>
         )}
 
@@ -223,20 +339,6 @@ export const TrainingProgressPage = () => {
                     {formatMetricValue(value)}
                   </span>
                 </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {previewImages.length > 0 && (
-          <div className={cn("training-progress").elem("section").toClassName()}>
-            <div className={cn("training-progress").elem("section-title").toClassName()}>訓練即時效果</div>
-            <div className={cn("training-progress").elem("previews").toClassName()}>
-              {previewImages.map((name) => (
-                <figure key={`${name}-${previewVersion}`} className={cn("training-progress").elem("preview").toClassName()}>
-                  <img src={previewUrl(name)} alt={name} loading="lazy" />
-                  <figcaption>{name}</figcaption>
-                </figure>
               ))}
             </div>
           </div>
@@ -309,7 +411,7 @@ export const TrainingProgressPage = () => {
         <div className={cn("training-progress").elem("footer").toClassName()}>
           <Space spread style={{ width: "100%" }}>
             <span className={cn("training-progress").elem("footer-hint").toClassName()}>
-              {isActive ? "頁面會自動更新進度與預覽圖" : ""}
+              {isActive ? "頁面會自動更新進度與訓練數值" : ""}
             </span>
             <Button onClick={closeAndBack} look="outlined" size="small">
               關閉

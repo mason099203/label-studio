@@ -25,7 +25,7 @@ from rest_framework.views import APIView
 from rq.job import Job
 
 from .jobs import cnn_classification_train_job, yolo_classification_train_job, yolo_detect_train_job
-from .datasets import detect_training_interface, prepare_training_dataset_for_project, resolve_deploy_task_context
+from .datasets import detect_training_interface, prepare_training_dataset_for_project, resolve_deploy_task_context, validate_yolo_dataset_files
 from .train_client import (
     TRAIN_SERVER_URL,
     TrainServerConfig,
@@ -38,6 +38,7 @@ from .train_client import (
     list_remote_artifacts,
     list_remote_models,
     resolve_train_server_config,
+    is_train_server_connection_error,
 )
 from .progress import build_progress_snapshot
 from .yolo_catalog import (
@@ -65,6 +66,36 @@ from .triton_export import (
 
 
 _TRITON_COUNTER_CACHE: Dict[str, Dict[str, float]] = {}
+
+
+def _remote_train_server_error_response(
+    exc: Exception,
+    *,
+    train_config: TrainServerConfig,
+    job_id: str | None = None,
+    action: str = "取得訓練狀態",
+) -> Response:
+    if is_train_server_connection_error(exc):
+        job_hint = f" job {job_id}" if job_id else ""
+        return Response(
+            {
+                "detail": (
+                    f"無法連線至 Train Server（{train_config.base_url}）{job_hint}：{exc}。"
+                    "請確認容器正在執行且防火牆已開放 8011。"
+                ),
+                "retryable": True,
+                "train_server_url": train_config.base_url,
+            },
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+    job_hint = f" job {job_id}" if job_id else ""
+    return Response(
+        {
+            "detail": f"無法從 Train Server（{train_config.base_url}）{action}{job_hint}：{exc}",
+            "train_server_url": train_config.base_url,
+        },
+        status=status.HTTP_404_NOT_FOUND,
+    )
 
 
 def _sanitize_optional_http_url(raw: str | None) -> str | None:
@@ -908,6 +939,11 @@ class ProjectTrainingJobsAPI(APIView):
             )
             if compat_err:
                 return Response({"detail": compat_err}, status=status.HTTP_400_BAD_REQUEST)
+            if dataset_root.exists():
+                try:
+                    validate_yolo_dataset_files(dataset_root)
+                except FileNotFoundError as exc:
+                    return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         # CNN 僅支援本機 RQ；YOLO 任務可轉發至獨立 Train Server
         if train_config.enabled and training_model != "cnn_classify":
@@ -1063,6 +1099,7 @@ class ProjectTrainingJobDetailAPI(APIView):
                     {
                         "job_id": job_id,
                         "status": info.get("status"),
+                        "params": info.get("params") or meta.get("params") or {},
                         "meta": meta,
                         "created_at": info.get("created_at"),
                         "train_server": "remote",
@@ -1070,8 +1107,13 @@ class ProjectTrainingJobDetailAPI(APIView):
                         "exc_info": info.get("error"),
                     }
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                return _remote_train_server_error_response(
+                    exc,
+                    train_config=train_config,
+                    job_id=job_id,
+                    action="取得",
+                )
 
         queue = django_rq.get_queue("low")
         try:
@@ -1197,7 +1239,12 @@ class ProjectTrainingJobProgressAPI(APIView):
                 progress["job_id"] = job_id
                 return Response(progress)
             except Exception as exc:
-                return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+                return _remote_train_server_error_response(
+                    exc,
+                    train_config=train_config,
+                    job_id=job_id,
+                    action="取得進度",
+                )
 
         queue = django_rq.get_queue("low")
         try:

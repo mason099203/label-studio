@@ -11,26 +11,35 @@ export const RoutesContext = createContext();
 const findMacthingComponents = (path, routesMap, parentPath = "") => {
   const result = [];
 
-  const match =
-    path === "/"
-      ? routesMap.at(0)
-      : routesMap.find((route) => {
-          // if (route.path === "/") return false;
+  if (path === "/") {
+    const root = routesMap.at(0);
+    if (root) {
+      result.push({ ...root, path: root.path });
+      if (root.routes) {
+        result.push(...findMacthingComponents(path, root.routes, root.path));
+      }
+    }
+    return result;
+  }
 
-          const isRoot = route.path === "/";
-          const matchingPath = `${parentPath}${route.path}`;
-          const match = matchPath(path, { path: matchingPath, exact: isRoot });
+  const candidates = routesMap
+    .map((route) => {
+      const isRoot = route.path === "/";
+      const matchingPath = `${parentPath}${route.path}`;
+      // Match prefix like react-router parent routes; only the root path uses exact.
+      const segment = matchPath(path, { path: matchingPath, exact: isRoot });
+      return segment ? { route, routePath: matchingPath } : null;
+    })
+    .filter(Boolean);
 
-          return match;
-        });
+  // Prefer the most specific (longest) matching route at this level.
+  candidates.sort((a, b) => b.routePath.length - a.routePath.length);
 
-  if (match) {
-    const routePath = `${parentPath}${match.path}`;
-
-    result.push({ ...match, path: routePath });
-
-    if (match.routes) {
-      result.push(...findMacthingComponents(path, match.routes, routePath));
+  const best = candidates[0];
+  if (best) {
+    result.push({ ...best.route, path: best.routePath });
+    if (best.route.routes) {
+      result.push(...findMacthingComponents(path, best.route.routes, best.routePath));
     }
   }
 

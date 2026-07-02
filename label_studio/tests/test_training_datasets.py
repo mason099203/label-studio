@@ -284,3 +284,65 @@ def test_validate_yolo_training_accepts_cls_weights_with_classify_layout(tmp_pat
         "val_dir": str(ds / "val"),
     }
     assert validate_yolo_training_request(base_weights="yolo11n-cls.pt", dataset_meta=meta) is None
+
+
+def test_validate_yolo_dataset_files_requires_exact_paths(tmp_path):
+    from PIL import Image
+
+    from training.datasets import validate_yolo_dataset_files
+
+    ds = tmp_path / "ds"
+    images = ds / "images"
+    images.mkdir(parents=True)
+    jpg = images / "a.jpg"
+    Image.new("RGB", (4, 4)).save(jpg, format="JPEG")
+    (ds / "train.txt").write_text("images/a.jpg\nimages/missing.jpg\n", encoding="utf-8")
+
+    with pytest.raises(FileNotFoundError, match="missing.jpg"):
+        validate_yolo_dataset_files(ds)
+
+
+def test_verify_zip_includes_split_images(tmp_path):
+    import io
+    import zipfile
+
+    from training.train_client import _verify_zip_includes_split_images
+
+    ds = tmp_path / "ds"
+    images = ds / "images"
+    images.mkdir(parents=True)
+    (images / "a.jpg").write_bytes(b"img")
+    (ds / "train.txt").write_text("images/a.jpg\nimages/missing.jpg\n", encoding="utf-8")
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zf:
+        zf.writestr("images/a.jpg", b"img")
+        zf.writestr("train.txt", (ds / "train.txt").read_text(encoding="utf-8"))
+
+    with pytest.raises(FileNotFoundError, match="missing.jpg"):
+        _verify_zip_includes_split_images(buffer, ds)
+
+
+def test_canonicalize_yolo_images_dir_converts_png(tmp_path):
+    from PIL import Image
+
+    from training.yolo_images import canonicalize_yolo_images_dir, decodable_image_path
+
+    images = tmp_path / "images"
+    images.mkdir()
+    png = images / "sample.png"
+    Image.new("RGB", (8, 8), color=(255, 0, 0)).save(png, format="PNG")
+
+    count = canonicalize_yolo_images_dir(images)
+    assert count == 1
+    assert not png.exists()
+    jpg = images / "sample.jpg"
+    assert jpg.is_file()
+    assert decodable_image_path(jpg) is not None
+
+
+def test_is_probably_html():
+    from training.yolo_images import is_probably_html
+
+    assert is_probably_html(b"<!DOCTYPE html><html>") is True
+    assert is_probably_html(b"\xff\xd8\xff\xe0") is False

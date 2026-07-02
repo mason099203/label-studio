@@ -167,8 +167,129 @@ def ensure_yolo_weights(model_name: str, models_dir: Path) -> Path:
     return local
 
 
+def _resolve_split_line(root: Path, raw: str, image_exts: set[str]) -> Path | None:
+    """Resolve one train/val line to an existing image file under dataset root."""
+    line = raw.strip().replace("\\", "/")
+    if not line:
+        return None
+    p = Path(line)
+    candidate = p if p.is_absolute() else root / line
+    if candidate.is_file():
+        return candidate
+    stem = p.stem
+    parent = p.parent if str(p.parent) not in {"", "."} else Path("images")
+    for ext in (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff", ".heic", ".heif"):
+        alt = root / parent / f"{stem}{ext}"
+        if alt.is_file():
+            return alt
+    matches = [
+        m
+        for m in root.rglob(f"{stem}.*")
+        if m.is_file() and m.suffix.lower() in image_exts
+    ]
+    if matches:
+        return next((m for m in matches if "images" in m.parts), matches[0])
+    matches = [m for m in root.rglob(p.name) if m.is_file()]
+    if matches:
+        return next((m for m in matches if "images" in m.parts), matches[0])
+    return None
+
+
+def _normalize_split_files(dataset_root: Path) -> None:
+    """Rewrite train.txt / val.txt so paths resolve under dataset_root (remote Train Server)."""
+    root = dataset_root.resolve()
+    image_exts = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp", ".heic", ".heif"}
+
+    for name in ("train.txt", "val.txt"):
+        split_file = root / name
+        if not split_file.exists():
+            continue
+        resolved: list[str] = []
+        for raw in split_file.read_text(encoding="utf-8").splitlines():
+            match = _resolve_split_line(root, raw, image_exts)
+            if match is None:
+                continue
+            try:
+                resolved.append(match.resolve().relative_to(root).as_posix())
+            except ValueError:
+                resolved.append(str(match.resolve()))
+        split_file.write_text("\n".join(resolved) + ("\n" if resolved else ""), encoding="utf-8")
+
+
+def _absolutize_split_files(dataset_root: Path) -> None:
+    """Rewrite train/val lists with absolute paths so Ultralytics finds files regardless of cwd."""
+    root = dataset_root.resolve()
+    image_exts = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp", ".heic", ".heif"}
+
+    for name in ("train.txt", "val.txt"):
+        split_file = root / name
+        if not split_file.exists():
+            continue
+        abs_lines: list[str] = []
+        for raw in split_file.read_text(encoding="utf-8").splitlines():
+            match = _resolve_split_line(root, raw, image_exts)
+            if match is None or not match.is_file():
+                continue
+            try:
+                if match.stat().st_size <= 0:
+                    continue
+            except OSError:
+                continue
+            abs_lines.append(str(match.resolve()))
+        if split_file.read_text(encoding="utf-8").strip() and not abs_lines:
+            raise FileNotFoundError(
+                f"No resolvable image paths in {split_file.name} under {root}. "
+                "The dataset zip may be missing images/ — regenerate in Label Studio."
+            )
+        split_file.write_text("\n".join(abs_lines) + ("\n" if abs_lines else ""), encoding="utf-8")
+
+
+def _clear_ultralytics_caches(dataset_root: Path) -> None:
+    for cache in dataset_root.rglob("*.cache"):
+        try:
+            cache.unlink()
+        except OSError:
+            pass
+
+
+def _validate_dataset_images(dataset_root: Path) -> None:
+    root = dataset_root.resolve()
+    missing: list[str] = []
+    total = 0
+    for name in ("train.txt", "val.txt"):
+        split_file = root / name
+        if not split_file.exists():
+            continue
+        for raw in split_file.read_text(encoding="utf-8").splitlines():
+            line = raw.strip().replace("\\", "/")
+            if not line:
+                continue
+            total += 1
+            p = Path(line)
+            candidate = p if p.is_absolute() else root / line
+            if candidate.is_file():
+                try:
+                    if candidate.stat().st_size > 0:
+                        continue
+                except OSError:
+                    pass
+            missing.append(line)
+    if missing:
+        sample = ", ".join(missing[:3])
+        raise FileNotFoundError(
+            f"{len(missing)}/{total} training images are missing under {root} (e.g. {sample}). "
+            "Regenerate the dataset in Label Studio (Training → 生成訓練資料集) and retry."
+        )
+
+
 def _patch_dataset_paths(dataset_root: Path, dataset_meta: Dict[str, Any]) -> None:
     """解壓後更新 dataset_config / data.yaml 中的絕對路徑。"""
+    from .dataset_images import canonicalize_yolo_images_dir
+
+    images_dir = dataset_root / "images"
+    if images_dir.is_dir():
+        canonicalize_yolo_images_dir(images_dir)
+
     dataset_config = dataset_root / "dataset_config.json"
     if dataset_config.exists():
         meta = json.loads(dataset_config.read_text(encoding="utf-8"))
@@ -192,6 +313,20 @@ def _patch_dataset_paths(dataset_root: Path, dataset_meta: Dict[str, Any]) -> No
             else:
                 lines.append(line)
         data_yaml.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    _clear_ultralytics_caches(dataset_root)
+    _normalize_split_files(dataset_root)
+    _absolutize_split_files(dataset_root)
+    _validate_dataset_images(dataset_root)
+
+    images_dir = dataset_root / "images"
+    if images_dir.is_dir():
+        image_count = sum(1 for p in images_dir.rglob("*.jpg") if p.is_file())
+        logger.info("Dataset ready: %s JPEG images under %s", image_count, images_dir)
+        if image_count == 0:
+            raise FileNotFoundError(
+                f"No JPEG images under {images_dir}. Regenerate the training dataset in Label Studio."
+            )
 
 
 def run_yolo_training(

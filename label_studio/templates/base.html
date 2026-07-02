@@ -16,11 +16,25 @@
   <meta name="msapplication-navbutton-color" content="#272727">  <!-- Windows Phone -->
   <meta name="apple-mobile-web-app-status-bar-style" content="#272727">  <!-- iOS Safari -->
 
-  <!-- Preload fonts -->
-  <link rel="preload" href="{{ settings.HOSTNAME }}/static/fonts/Figtree-Regular.ttf" as="font" type="font/ttf"
-    crossorigin="anonymous">
-  <link rel="preload" href="{{ settings.HOSTNAME }}/static/fonts/Figtree-SemiBold.ttf" as="font" type="font/ttf"
-    crossorigin="anonymous">
+  <!-- Preload fonts (same URL as @font-face below so the browser can match preload → use) -->
+  <link rel="preload" href="{% static 'fonts/Figtree-Regular.ttf' %}" as="font" type="font/ttf" crossorigin>
+  <link rel="preload" href="{% static 'fonts/Figtree-SemiBold.ttf' %}" as="font" type="font/ttf" crossorigin>
+  <style>
+    @font-face {
+      font-family: Figtree;
+      src: url("{% static 'fonts/Figtree-Regular.ttf' %}") format("truetype");
+      font-weight: normal;
+      font-style: normal;
+      font-display: swap;
+    }
+    @font-face {
+      font-family: Figtree;
+      src: url("{% static 'fonts/Figtree-SemiBold.ttf' %}") format("truetype");
+      font-weight: 500;
+      font-style: normal;
+      font-display: swap;
+    }
+  </style>
 
 
   <!-- CSS -->

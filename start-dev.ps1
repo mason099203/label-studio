@@ -67,6 +67,11 @@ if (-not (Test-PortListening -Port 8080)) {
         $(if ($LanAccess) {
             "`$env:TRAIN_SERVER_URL='$trainServerUrl'; `$env:CSRF_TRUSTED_ORIGINS='$csrfOrigins'; "
         } else { '' }) +
+        $(if ($env:TRAIN_SERVER_SHARED_DATA_ROOT) {
+            "`$env:TRAIN_SERVER_SHARED_DATA_ROOT='$($env:TRAIN_SERVER_SHARED_DATA_ROOT)'; "
+        } elseif (-not $LanAccess -and (docker ps --format '{{.Names}}' 2>$null | Select-String -Pattern 'train-server' -Quiet)) {
+            "`$env:TRAIN_SERVER_SHARED_DATA_ROOT='/data'; "
+        } else { '' }) +
         $runBackendCmd
     )
     Write-Host "Backend starting on $djangoBind ..."

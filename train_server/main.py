@@ -235,11 +235,14 @@ def get_job(job_id: str, _: None = Depends(_verify_api_key)) -> Dict[str, Any]:
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     meta = job.get("meta") or {}
+    job_params = job.get("params") or {}
     return {
         "job_id": job_id,
         "status": job.get("status"),
+        "params": job_params,
         "meta": {
             **meta,
+            "params": job_params or meta.get("params") or {},
             "status": job.get("status"),
             "message": job.get("message"),
             "error": job.get("error"),

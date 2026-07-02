@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import random
 import shutil
 import zipfile
@@ -15,6 +16,16 @@ from django.conf import settings
 from django.db.models import Prefetch
 from projects.models import Project
 from tasks.models import Annotation, Task
+
+from .yolo_images import (
+    _IMAGE_EXTS,
+    canonicalize_image_to_jpeg,
+    canonicalize_yolo_images_dir,
+    decodable_image_path,
+    is_probably_html,
+)
+
+logger = logging.getLogger(__name__)
 
 
 def get_repo_root() -> Path:
@@ -50,6 +61,216 @@ def _read_lines_if_exists(path: Path) -> List[str]:
     if not path.exists():
         return []
     return [ln.strip() for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+
+
+def _basename_from_image_value(value: str) -> str:
+    parsed = urlparse(value)
+    if parsed.scheme in {"http", "https"}:
+        return Path(unquote(parsed.path)).name
+    return Path(value.replace("\\", "/")).name
+
+
+def _real_image_file(path: Path) -> Path | None:
+    """Return path when PIL can decode the file as an image."""
+    return decodable_image_path(path)
+
+
+def _download_image_url(url: str, dest: Path) -> bool:
+    try:
+        import requests
+
+        resp = requests.get(url, timeout=60, stream=True)
+        resp.raise_for_status()
+        data = bytearray()
+        for chunk in resp.iter_content(chunk_size=1024 * 256):
+            if chunk:
+                data.extend(chunk)
+        if len(data) < 128 or is_probably_html(bytes(data)):
+            return False
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        raw = dest.with_suffix(dest.suffix + ".raw")
+        raw.write_bytes(data)
+        jpeg_dest = dest.with_suffix(".jpg")
+        if not canonicalize_image_to_jpeg(raw, jpeg_dest):
+            raw.unlink(missing_ok=True)
+            return False
+        if raw.exists() and raw.resolve() != jpeg_dest.resolve():
+            raw.unlink(missing_ok=True)
+        return decodable_image_path(jpeg_dest) is not None
+    except Exception as exc:
+        logger.debug("Failed to download image %s: %s", url, exc)
+        return False
+
+
+def _find_image_for_stem(images_dir: Path, stem: str) -> Path | None:
+    stem_lower = stem.lower()
+    for ext in _IMAGE_EXTS:
+        candidate = images_dir / f"{stem}{ext}"
+        real = _real_image_file(candidate)
+        if real:
+            return candidate
+    for path in images_dir.rglob("*"):
+        if path.is_file() and path.stem.lower() == stem_lower:
+            real = _real_image_file(path)
+            if real:
+                return path
+    return None
+
+
+def _copy_tree_files(src_dir: Path, dst_dir: Path) -> None:
+    """Copy files from src_dir into dst_dir, following symlinks."""
+    if not src_dir.exists():
+        return
+    for src in src_dir.rglob("*"):
+        if not src.is_file():
+            continue
+        rel = src.relative_to(src_dir)
+        dst = dst_dir / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        real = src.resolve() if src.is_symlink() else src
+        if not real.is_file():
+            continue
+        try:
+            if real.stat().st_size <= 0:
+                continue
+        except OSError:
+            continue
+        shutil.copy2(real, dst)
+
+
+def _materialize_yolo_layout(ds_root: Path, images_dir: Path, labels_dir: Path) -> Tuple[Path, Path]:
+    """
+    Copy export images/labels into ds_root/images and ds_root/labels so the
+    dataset is self-contained for zip upload or shared-volume training.
+    """
+    canon_images = ds_root / "images"
+    canon_labels = ds_root / "labels"
+    if canon_images.exists():
+        shutil.rmtree(canon_images)
+    if canon_labels.exists():
+        shutil.rmtree(canon_labels)
+    canon_images.mkdir(parents=True)
+    canon_labels.mkdir(parents=True)
+    _copy_tree_files(images_dir, canon_images)
+    _copy_tree_files(labels_dir, canon_labels)
+    return canon_images, canon_labels
+
+
+def _hydrate_yolo_images_from_project(
+    project: Project,
+    images_dir: Path,
+    labels_dir: Path,
+) -> int:
+    """Fill missing YOLO images from project task storage or remote URLs when export download failed."""
+    spec = detect_training_interface(project)
+    data_key = spec.get("data_key")
+    if not data_key:
+        return 0
+
+    label_files = list(labels_dir.rglob("*.txt"))
+    if not label_files:
+        return 0
+
+    existing_stems = {
+        p.stem.lower()
+        for p in images_dir.rglob("*")
+        if _real_image_file(p) is not None
+    }
+    missing = {lp.stem.lower(): lp for lp in label_files if lp.stem.lower() not in existing_stems}
+    if not missing:
+        return 0
+
+    stem_to_source: Dict[str, Path] = {}
+    stem_to_url: Dict[str, str] = {}
+    for task in Task.objects.filter(project_id=project.id).only("id", "data"):
+        if not isinstance(task.data, dict):
+            continue
+        image_value = task.data.get(data_key)
+        if image_value is None:
+            image_value = task.data.get("$undefined$") or task.data.get("image")
+        if not isinstance(image_value, str):
+            continue
+
+        source = _resolve_local_image_path(image_value)
+        if source is not None and source.is_file():
+            for key in (str(task.id), source.stem.lower(), source.name.lower()):
+                stem_to_source.setdefault(key, source)
+            base = _basename_from_image_value(image_value).lower()
+            if base:
+                stem_to_source.setdefault(Path(base).stem.lower(), source)
+                stem_to_source.setdefault(base, source)
+        elif image_value.startswith(("http://", "https://")):
+            base = _basename_from_image_value(image_value)
+            for key in (str(task.id), Path(base).stem.lower(), base.lower()):
+                stem_to_url.setdefault(key, image_value)
+
+    added = 0
+    for stem_lower, label_path in missing.items():
+        source = stem_to_source.get(stem_lower)
+        if source is None:
+            for key, candidate in stem_to_source.items():
+                if stem_lower in key or key in stem_lower:
+                    source = candidate
+                    break
+        if source is not None:
+            target = images_dir / f"{label_path.stem}.jpg"
+            if _real_image_file(target) is None:
+                src = source.resolve() if source.is_symlink() else source
+                if not canonicalize_image_to_jpeg(src, target):
+                    continue
+                added += 1
+            continue
+
+        url = stem_to_url.get(stem_lower)
+        if url is None:
+            for key, candidate in stem_to_url.items():
+                if stem_lower in key or key in stem_lower:
+                    url = candidate
+                    break
+        if not url:
+            continue
+        ext = Path(_basename_from_image_value(url)).suffix.lower()
+        if ext not in _IMAGE_EXTS:
+            ext = ".jpg"
+        target = images_dir / f"{label_path.stem}{ext}"
+        if ext not in {".jpg", ".jpeg"}:
+            target = images_dir / f"{label_path.stem}.jpg"
+        if _real_image_file(target) is None and _download_image_url(url, target):
+            added += 1
+
+    return added
+
+
+def _split_list_path(image_path: Path, ds_root: Path) -> str:
+    try:
+        return image_path.resolve().relative_to(ds_root.resolve()).as_posix()
+    except ValueError:
+        return image_path.name
+
+
+def validate_yolo_dataset_files(dataset_root: Path) -> None:
+    """Raise FileNotFoundError when train/val split files reference missing images."""
+    root = Path(dataset_root).resolve()
+    missing: List[str] = []
+    total = 0
+    for name in ("train.txt", "val.txt"):
+        split_file = root / name
+        if not split_file.exists():
+            continue
+        for raw in _read_lines_if_exists(split_file):
+            total += 1
+            line = raw.replace("\\", "/")
+            candidate = root / line
+            if decodable_image_path(candidate) is not None:
+                continue
+            missing.append(line)
+    if missing:
+        sample = ", ".join(missing[:3])
+        raise FileNotFoundError(
+            f"{len(missing)}/{total} images in train/val splits are missing under {root} (e.g. {sample}). "
+            "Regenerate the training dataset on Label Studio (Training → 生成訓練資料集). "
+            "If tasks use remote URLs, ensure Label Studio can reach them or set CONVERTER_DOWNLOAD_RESOURCES=true."
+        )
 
 
 def _find_export_dirs(root: Path) -> Tuple[Path, Path]:
@@ -375,6 +596,12 @@ def _prepare_yolo_zip_dataset(
         raise ValueError(f"Unexpected export file type: {export_file.name}")
 
     images_dir, labels_dir = _find_export_dirs(extracted_root)
+    images_dir, labels_dir = _materialize_yolo_layout(ds_root, images_dir, labels_dir)
+    hydrated = _hydrate_yolo_images_from_project(project, images_dir, labels_dir)
+    if hydrated:
+        logger.info("Hydrated %s YOLO images from project tasks into %s", hydrated, images_dir)
+
+    canonicalize_yolo_images_dir(images_dir)
 
     classes = []
     for candidate in ["classes.txt", "class_names.txt", "labels.txt"]:
@@ -394,13 +621,38 @@ def _prepare_yolo_zip_dataset(
         if max_cls >= 0:
             classes = [f"class_{i}" for i in range(max_cls + 1)]
 
-    exts = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
-    image_files = [p for p in images_dir.rglob("*") if p.is_file() and p.suffix.lower() in exts]
+    label_files = [p for p in labels_dir.rglob("*.txt") if p.is_file()]
+    image_files: List[Path] = []
+    missing_labels: List[str] = []
+    seen: set[str] = set()
+    for label_path in sorted(label_files, key=lambda p: p.name.lower()):
+        img = _find_image_for_stem(images_dir, label_path.stem)
+        if img is None:
+            missing_labels.append(label_path.stem)
+            continue
+        key = str(img.resolve()).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        image_files.append(img)
+
+    if missing_labels:
+        sample = ", ".join(missing_labels[:3])
+        raise FileNotFoundError(
+            f"{len(missing_labels)}/{len(label_files)} label files have no matching image under {images_dir} "
+            f"(e.g. {sample}). Regenerate the training dataset; ensure images are local or reachable URLs."
+        )
+
     image_files.sort(key=lambda p: p.name.lower())
 
     rnd = random.Random(int(seed))
     rnd.shuffle(image_files)
     n = len(image_files)
+    if n == 0:
+        raise FileNotFoundError(
+            "No image files found in the prepared dataset. "
+            "Ensure tasks use downloadable images (CONVERTER_DOWNLOAD_RESOURCES) and re-export."
+        )
     cut = int(n * float(train_ratio))
     if n >= 2:
         cut = max(1, min(cut, n - 1))
@@ -409,8 +661,8 @@ def _prepare_yolo_zip_dataset(
 
     train_txt = ds_root / "train.txt"
     val_txt = ds_root / "val.txt"
-    train_txt.write_text("\n".join(str(p.resolve()) for p in train_imgs), encoding="utf-8")
-    val_txt.write_text("\n".join(str(p.resolve()) for p in val_imgs), encoding="utf-8")
+    train_txt.write_text("\n".join(_split_list_path(p, ds_root) for p in train_imgs), encoding="utf-8")
+    val_txt.write_text("\n".join(_split_list_path(p, ds_root) for p in val_imgs), encoding="utf-8")
 
     names_map = ", ".join(f"{i}: '{name}'" for i, name in enumerate(classes)) if classes else ""
     yaml_lines = [
@@ -453,6 +705,21 @@ def _prepare_yolo_zip_dataset(
         dataset_manifest["kpt_shape"] = [kpt_count, kpt_dims]
 
     _write_json(dataset_config, dataset_manifest)
+
+    if extracted_root.exists():
+        shutil.rmtree(extracted_root, ignore_errors=True)
+
+    validate_yolo_dataset_files(ds_root)
+
+    images_count = sum(1 for p in (ds_root / "images").rglob("*.jpg") if p.is_file())
+    logger.info(
+        "Prepared YOLO dataset at %s: %s images, train=%s val=%s",
+        ds_root,
+        images_count,
+        len(train_imgs),
+        len(val_imgs),
+    )
+
     return dataset_manifest | {
         "dataset_config": str(dataset_config),
         "export_file": str(export_file),

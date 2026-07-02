@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import uuid
 import zipfile
@@ -12,6 +13,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 from .trainer import run_yolo_training
+
+logger = logging.getLogger(__name__)
 
 
 class JobManager:
@@ -129,6 +132,19 @@ class JobManager:
         extract_root = self.output_root / f"project_{project_id}" / job_id / "dataset"
         extract_root.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(dataset_zip_path, "r") as zf:
+            names = zf.namelist()
+            image_entries = [n for n in names if n.lower().startswith("images/") and not n.endswith("/")]
+            logger.info(
+                "Extracting dataset zip for job %s: %s files (%s under images/)",
+                job_id,
+                len(names),
+                len(image_entries),
+            )
+            if not image_entries:
+                raise FileNotFoundError(
+                    "Uploaded dataset zip contains no files under images/. "
+                    "Regenerate the training dataset in Label Studio and resubmit."
+                )
             zf.extractall(extract_root)
 
         # 若 zip 只有一層目錄，進入該目錄

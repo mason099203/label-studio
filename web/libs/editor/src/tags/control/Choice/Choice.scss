@@ -1,3 +1,5 @@
+@use "sass:selector";
+
 .choice_leaf.choice_layout,
 .choice {
   line-height: 40px;
@@ -18,8 +20,8 @@
     line-height: 40px;
   }
 
-  @at-root #{selector-append(&,_leaf,&,_hidden)},
-  #{selector-append(&,_notLeaf,&,_hidden)} {
+  @at-root #{selector.append(&, _leaf, &, _hidden)},
+  #{selector.append(&, _notLeaf, &, _hidden)} {
     display: none;
   }
 

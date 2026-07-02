@@ -64,6 +64,21 @@
     height: 100%;
     background: var(--color-primary-surface);
     transition: width 0.4s ease;
+
+    &_queued {
+      width: 30% !important;
+      animation: training-progress-pulse 1.5s ease-in-out infinite;
+    }
+  }
+
+  @keyframes training-progress-pulse {
+    0%,
+    100% {
+      opacity: 0.45;
+    }
+    50% {
+      opacity: 1;
+    }
   }
 
   &__section {
