@@ -20,6 +20,7 @@ from .yolo_catalog import (
     resolve_yolo_task,
     resolve_yolo_weights_name,
 )
+from .metrics_utils import collect_yolo_val_metrics, json_safe, normalize_trainer_metrics
 from .progress import collect_preview_images
 
 logger = logging.getLogger(__name__)
@@ -62,7 +63,8 @@ def _copy_if_exists(src: Path, dst: Path) -> bool:
 
 def _write_json(path: Path, data: Dict[str, Any]) -> None:
     _safe_mkdir(path.parent)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    safe = json_safe(data)
+    path.write_text(json.dumps(safe, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _merge_run_meta(run_dir: Path, payload: Dict[str, Any]) -> None:
@@ -468,7 +470,7 @@ def run_yolo_training(
     progress_path = run_dir / "progress.json"
 
     def _write_progress(epoch: int, trainer_metrics: Dict[str, Any] | None = None) -> None:
-        metrics_dict = dict(trainer_metrics or {})
+        metrics_dict = normalize_trainer_metrics(trainer_metrics)
         progress_pct = round(epoch / total_epochs * 100, 1) if total_epochs else 0
         payload = {
             "epoch": epoch,
@@ -489,12 +491,8 @@ def run_yolo_training(
     def on_train_epoch_end(trainer) -> None:
         try:
             epoch = int(getattr(trainer, "epoch", 0)) + 1
-            raw_metrics = getattr(trainer, "metrics", None) or {}
-            if hasattr(raw_metrics, "items"):
-                metrics_dict = dict(raw_metrics)
-            else:
-                metrics_dict = {}
-            _write_progress(epoch, metrics_dict)
+            raw_metrics = getattr(trainer, "metrics", None)
+            _write_progress(epoch, normalize_trainer_metrics(raw_metrics))
         except Exception as exc:
             logger.debug("Progress callback error: %s", exc)
 
@@ -517,7 +515,24 @@ def run_yolo_training(
     last_dst = artifacts_dir / "last.pt"
     _copy_if_exists(weights_dir / "best.pt", best_dst)
     _copy_if_exists(weights_dir / "last.pt", last_dst)
+    if not best_dst.exists():
+        for candidate in sorted(save_dir.rglob("best.pt")):
+            if candidate.is_file():
+                _copy_if_exists(candidate, best_dst)
+                break
+    if not last_dst.exists():
+        for candidate in sorted(save_dir.rglob("last.pt")):
+            if candidate.is_file():
+                _copy_if_exists(candidate, last_dst)
+                break
     _copy_common_artifacts(save_dir, artifacts_dir)
+    logger.info(
+        "Training artifacts for job %s: best=%s last=%s dir=%s",
+        job_id,
+        best_dst.exists(),
+        last_dst.exists(),
+        artifacts_dir,
+    )
 
     metrics: Dict[str, Any] = {
         "timestamp": datetime.now().isoformat(),
@@ -531,28 +546,7 @@ def run_yolo_training(
     try:
         eval_weights = str(best_dst) if best_dst.exists() else (str(last_dst) if last_dst.exists() else weights_path)
         val_res = YOLO(eval_weights).val(data=data_path, imgsz=int(train_params.get("imgsz", 640)), workers=0, task=task)
-        if task == "classify":
-            for key in ("top1", "top5", "fitness"):
-                val = getattr(val_res, key, None)
-                if val is not None:
-                    try:
-                        f = float(val)
-                        metrics[key] = f if math.isfinite(f) else None
-                    except Exception:
-                        metrics[key] = val
-        else:
-            for key in ("map50", "map", "map75", "mp", "mr", "fitness"):
-                box = getattr(val_res, "box", None)
-                if box is not None and hasattr(box, key):
-                    val = getattr(box, key)
-                else:
-                    val = getattr(val_res, key, None)
-                if val is not None:
-                    try:
-                        f = float(val)
-                        metrics[key] = f if math.isfinite(f) else None
-                    except Exception:
-                        metrics[key] = val
+        metrics.update(collect_yolo_val_metrics(val_res, task))
     except Exception as exc:
         metrics["val_error"] = str(exc)
         logger.warning("Validation after training failed: %s", exc)

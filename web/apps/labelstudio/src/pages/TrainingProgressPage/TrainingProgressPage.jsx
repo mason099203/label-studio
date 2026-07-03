@@ -8,7 +8,7 @@ import { useAPI } from "../../providers/ApiProvider";
 import { useFixedLocation, useParams } from "../../providers/RoutesProvider";
 import { absoluteURL } from "../../utils/helpers";
 import { cn } from "../../utils/bem";
-import { getTrainServerQueryParams } from "../TrainingPage/trainServerStorage";
+import { appendTrainServerToApiPath, getTrainServerQueryParams } from "../TrainingPage/trainServerStorage";
 import "./TrainingProgressPage.scss";
 
 const ACTIVE_STATUSES = new Set(["queued", "preparing", "starting", "running", "started"]);
@@ -140,9 +140,6 @@ export const TrainingProgressPage = () => {
 
   const status =
     progress?.status ?? jobInfo?.status ?? jobInfo?.meta?.status ?? (errorMessage ? "failed" : "unknown");
-  const isActive = ACTIVE_STATUSES.has(status);
-  const isFinished = status === "finished";
-  const isFailed = status === "failed" || Boolean(progress?.error || jobInfo?.exc_info);
 
   useEffect(() => {
     if (!projectId || !resolvedJobId) return;
@@ -201,7 +198,14 @@ export const TrainingProgressPage = () => {
         }
 
         const st = (prog.ok ? prog.data?.status : null) ?? (job.ok ? job.data?.status ?? job.data?.meta?.status : null);
-        if (st === "finished" || st === "failed") return;
+        const progEpoch = prog.ok ? prog.data?.epoch : null;
+        const progTotal = prog.ok ? prog.data?.total_epochs : null;
+        const epochDone =
+          typeof progEpoch === "number" &&
+          typeof progTotal === "number" &&
+          progTotal > 0 &&
+          progEpoch >= progTotal;
+        if (st === "finished" || epochDone || (st === "failed" && epochDone)) return;
       } catch (err) {
         if (!cancelled) setErrorMessage(err?.message ?? "無法取得訓練進度");
       } finally {
@@ -245,8 +249,28 @@ export const TrainingProgressPage = () => {
   const displayMetrics = pickDisplayMetrics(progress?.latest_metrics ?? progress?.final_metrics ?? {});
   const historyRows = (progress?.history ?? []).slice(-12);
 
+  const epochNum = typeof epochRaw === "number" ? epochRaw : null;
+  const totalNum = typeof totalEpochs === "number" ? totalEpochs : null;
+  const trainingComplete =
+    status === "finished" ||
+    (totalNum != null && epochNum != null && epochNum >= totalNum && progressPct >= 99);
+
+  const isFinished = trainingComplete;
+  const isFailed =
+    (status === "failed" || Boolean(progress?.error || jobInfo?.exc_info)) && !trainingComplete;
+  const isActive = ACTIVE_STATUSES.has(status) && !trainingComplete;
+  const statusLabel =
+    trainingComplete && status === "failed" ? "已完成" : STATUS_LABELS[status] ?? status;
+  const completionWarning =
+    trainingComplete && (progress?.error || jobInfo?.exc_info || jobInfo?.warning);
+
   const downloadUrl = (file) =>
-    absoluteURL(`/api/projects/${projectId}/training/jobs/${resolvedJobId}/download?file=${file}`);
+    absoluteURL(
+      appendTrainServerToApiPath(
+        `/api/projects/${projectId}/training/jobs/${resolvedJobId}/download?file=${file}`,
+        projectId,
+      ),
+    );
 
   return (
     <Modal
@@ -271,7 +295,7 @@ export const TrainingProgressPage = () => {
               .mod({ active: isActive, done: isFinished, failed: isFailed })
               .toClassName()}
           >
-            {STATUS_LABELS[status] ?? status}
+            {statusLabel}
           </span>
         </div>
 
@@ -323,6 +347,14 @@ export const TrainingProgressPage = () => {
             <IconWarningCircleFilled />{" "}
             {String(progress?.error ?? jobInfo?.exc_info).slice(0, 1200)}
             {String(progress?.error ?? jobInfo?.exc_info).length > 1200 ? "…" : ""}
+          </div>
+        )}
+
+        {completionWarning && (
+          <div className={cn("training-progress").elem("warning").toClassName()}>
+            訓練已完成，但狀態儲存時發生警告（模型權重應仍可下載）：
+            {" "}
+            {String(completionWarning).slice(0, 400)}
           </div>
         )}
 

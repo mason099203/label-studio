@@ -72,3 +72,26 @@ export function getTrainServerBodyFields(projectId) {
   if (apiKey) body.train_server_api_key = apiKey;
   return body;
 }
+
+/**
+ * Append Train Server query params to a relative API path (e.g. download URLs).
+ * @param {string} path
+ * @param {number|string} projectId
+ * @param {{ train_server_url?: string }} [run]
+ */
+export function appendTrainServerToApiPath(path, projectId, run = {}) {
+  if (!path) return path;
+  const params = new URLSearchParams(path.includes("?") ? path.split("?")[1] : "");
+  const stored = getTrainServerQueryParams(projectId);
+  const serverUrl = run.train_server_url || stored.train_server_url;
+  if (serverUrl && !params.has("train_server_url")) {
+    params.set("train_server_url", serverUrl);
+  }
+  const apiKey = stored.train_server_api_key;
+  if (apiKey && !params.has("train_server_api_key")) {
+    params.set("train_server_api_key", apiKey);
+  }
+  const base = path.split("?")[0];
+  const qs = params.toString();
+  return qs ? `${base}?${qs}` : base;
+}

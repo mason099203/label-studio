@@ -258,14 +258,10 @@ def get_job(job_id: str, _: None = Depends(_verify_api_key)) -> Dict[str, Any]:
 
 @app.get("/jobs/{job_id}/artifacts")
 def list_artifacts(job_id: str, _: None = Depends(_verify_api_key)) -> Dict[str, Any]:
-    artifacts_dir = job_manager.get_artifacts_dir(job_id)
-    if not artifacts_dir:
-        return {"artifacts": []}
-    artifacts = []
-    for p in sorted(artifacts_dir.glob("*"), key=lambda x: x.name.lower()):
-        if p.is_file():
-            artifacts.append({"name": p.name, "size_bytes": p.stat().st_size})
-    return {"artifacts": artifacts, "root": str(artifacts_dir)}
+    artifacts = job_manager.list_artifact_files(job_id)
+    run_dir = job_manager.get_run_dir(job_id)
+    root = str(run_dir / "artifacts") if run_dir else ""
+    return {"artifacts": artifacts, "root": root}
 
 
 @app.get("/jobs/{job_id}/download")
@@ -274,11 +270,8 @@ def download_artifact(
     file: str = Query(...),
     _: None = Depends(_verify_api_key),
 ):
-    artifacts_dir = job_manager.get_artifacts_dir(job_id)
-    if not artifacts_dir:
-        raise HTTPException(status_code=404, detail="Artifacts not found")
-    target = artifacts_dir / file
-    if not target.exists() or not target.is_file():
+    target = job_manager.resolve_artifact_path(job_id, file)
+    if not target:
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(path=str(target), filename=target.name, media_type="application/octet-stream")
 

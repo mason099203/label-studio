@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
+from .metrics_utils import json_safe
 from .trainer import run_yolo_training
 
 logger = logging.getLogger(__name__)
@@ -31,7 +32,7 @@ class JobManager:
             return
         path = self.output_root / f"project_{job['project_id']}" / job_id / "job_state.json"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(job, ensure_ascii=False, indent=2), encoding="utf-8")
+        path.write_text(json.dumps(json_safe(job), ensure_ascii=False, indent=2), encoding="utf-8")
 
     def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
         with self._lock:
@@ -55,9 +56,32 @@ class JobManager:
             meta_path = d / "run_meta.json"
             if meta_path.exists():
                 try:
-                    runs.append(json.loads(meta_path.read_text(encoding="utf-8")))
-                except Exception:
+                    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                    if not meta.get("job_id"):
+                        meta["job_id"] = d.name
+                    if not meta.get("status") or str(meta.get("status")).strip() in ("", "unknown"):
+                        best_pt = d / "train" / "weights" / "best.pt"
+                        last_pt = d / "train" / "weights" / "last.pt"
+                        if best_pt.is_file() or last_pt.is_file():
+                            meta["status"] = "finished"
+                            meta.setdefault("message", "Training finished")
+                    runs.append(meta)
                     continue
+                except Exception:
+                    pass
+            best_pt = d / "train" / "weights" / "best.pt"
+            if best_pt.is_file():
+                runs.append(
+                    {
+                        "job_id": d.name,
+                        "project_id": project_id,
+                        "status": "finished",
+                        "message": "Training finished",
+                        "run_dir": str(d),
+                        "best_path": str(best_pt),
+                        "finished_at": datetime.fromtimestamp(best_pt.stat().st_mtime).isoformat(),
+                    }
+                )
         return runs
 
     def create_job(
@@ -170,7 +194,9 @@ class JobManager:
                     return
                 job["status"] = payload.get("status", job.get("status"))
                 job["message"] = payload.get("message", job.get("message"))
-                job["meta"] = {**job.get("meta", {}), **payload}
+                safe_payload = json_safe(payload)
+                if isinstance(safe_payload, dict):
+                    job["meta"] = {**job.get("meta", {}), **safe_payload}
             self._save_job(job_id)
 
         try:
@@ -195,21 +221,31 @@ class JobManager:
                     job["message"] = "Training finished"
             self._save_job(job_id)
         except Exception as exc:
+            run_dir = self.output_root / f"project_{project_id}" / job_id
+            best_pt = run_dir / "artifacts" / "best.pt"
+            last_pt = run_dir / "artifacts" / "last.pt"
+            weights_done = best_pt.is_file() or last_pt.is_file()
             with self._lock:
                 job = self._jobs.get(job_id)
                 if job:
-                    job["status"] = "failed"
-                    job["message"] = "Training failed"
-                    job["error"] = str(exc)
+                    if weights_done:
+                        job["status"] = "finished"
+                        job["message"] = "Training finished"
+                        job["warning"] = str(exc)
+                    else:
+                        job["status"] = "failed"
+                        job["message"] = "Training failed"
+                        job["error"] = str(exc)
             self._save_job(job_id)
             run_dir = self.output_root / f"project_{project_id}" / job_id
             run_meta_path = run_dir / "run_meta.json"
             failed_meta = {
                 "job_id": job_id,
                 "project_id": project_id,
-                "status": "failed",
-                "message": "Training failed",
-                "error": str(exc),
+                "status": "finished" if weights_done else "failed",
+                "message": "Training finished" if weights_done else "Training failed",
+                "error": None if weights_done else str(exc),
+                "warning": str(exc) if weights_done else None,
                 "failed_at": datetime.now().isoformat(),
             }
             if run_meta_path.exists():
@@ -220,7 +256,7 @@ class JobManager:
                 except Exception:
                     pass
             run_meta_path.parent.mkdir(parents=True, exist_ok=True)
-            run_meta_path.write_text(json.dumps(failed_meta, ensure_ascii=False, indent=2), encoding="utf-8")
+            run_meta_path.write_text(json.dumps(json_safe(failed_meta), ensure_ascii=False, indent=2), encoding="utf-8")
 
     def get_artifacts_dir(self, job_id: str) -> Optional[Path]:
         job = self.get_job(job_id)
@@ -255,6 +291,63 @@ class JobManager:
             if candidate.exists():
                 return candidate
         return None
+
+    def resolve_artifact_path(self, job_id: str, file_name: str) -> Optional[Path]:
+        """Find artifact under artifacts/ or train/weights/ (YOLO default layout)."""
+        safe_name = Path(file_name).name
+        run_dir = self.get_run_dir(job_id)
+        if not run_dir:
+            return None
+
+        candidates = [
+            run_dir / "artifacts" / safe_name,
+            run_dir / "train" / "weights" / safe_name,
+            run_dir / "train" / safe_name,
+        ]
+        for path in candidates:
+            if path.is_file():
+                return path
+
+        if safe_name.endswith(".pt"):
+            for path in sorted(run_dir.rglob(safe_name)):
+                if path.is_file():
+                    return path
+        return None
+
+    def list_artifact_files(self, job_id: str) -> list[Dict[str, Any]]:
+        run_dir = self.get_run_dir(job_id)
+        if not run_dir:
+            return []
+
+        seen: set[str] = set()
+        artifacts: list[Dict[str, Any]] = []
+
+        def _add(path: Path) -> None:
+            if not path.is_file() or path.name in seen:
+                return
+            seen.add(path.name)
+            artifacts.append({"name": path.name, "size_bytes": path.stat().st_size})
+
+        artifacts_dir = run_dir / "artifacts"
+        if artifacts_dir.is_dir():
+            for p in sorted(artifacts_dir.glob("*"), key=lambda x: x.name.lower()):
+                _add(p)
+
+        weights_dir = run_dir / "train" / "weights"
+        if weights_dir.is_dir():
+            for name in ("best.pt", "last.pt"):
+                _add(weights_dir / name)
+
+        for name in (
+            "results.csv",
+            "results.png",
+            "confusion_matrix.png",
+            "args.yaml",
+        ):
+            _add(run_dir / "train" / name)
+            _add(artifacts_dir / name)
+
+        return artifacts
 
     def get_progress(self, job_id: str) -> Optional[Dict[str, Any]]:
         from .progress import build_progress_snapshot

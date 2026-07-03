@@ -371,6 +371,13 @@
     color: var(--color-neutral-content-subtle);
   }
 
+  &__empty-hint {
+    margin-top: 8px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--color-neutral-content-subtle);
+  }
+
   &__error {
     display: flex;
     align-items: center;

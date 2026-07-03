@@ -16,6 +16,7 @@ import { useParams } from "../../providers/RoutesProvider";
 import { useProject } from "../../providers/ProjectProvider";
 import { cn } from "../../utils/bem";
 import { absoluteURL } from "../../utils/helpers";
+import { appendTrainServerToApiPath, getTrainServerQueryParams } from "../TrainingPage/trainServerStorage";
 import {
   readTritonUrlState,
   persistTritonUrlFields,
@@ -211,7 +212,7 @@ export const ProjectModelsPage = () => {
     const loadHistory = async () => {
       try {
         const res = await api.callApi("trainingHistory", {
-          params: { pk: params.id },
+          params: { pk: params.id, ...getTrainServerQueryParams(params.id) },
           errorFilter: () => true,
         });
         if (!cancelled) setHistory(res ?? null);
@@ -745,7 +746,14 @@ export const ProjectModelsPage = () => {
         </div>
         <div className={cn("project-models-page").elem("run-list").toClassName()}>
           {runs.length === 0 && (
-            <div className={cn("project-models-page").elem("empty").toClassName()}>尚無歷史模型紀錄。</div>
+            <div className={cn("project-models-page").elem("empty").toClassName()}>
+              尚無歷史模型紀錄。
+              {!getTrainServerQueryParams(params.id).train_server_url && (
+                <div className={cn("project-models-page").elem("empty-hint").toClassName()}>
+                  若使用遠端 Train Server，請先在 Training 頁設定並驗證 Train Server URL，再重新整理本頁。
+                </div>
+              )}
+            </div>
           )}
 
           {runs.map((run) => {
@@ -849,13 +857,18 @@ export const ProjectModelsPage = () => {
                             查看進度
                           </Button>
                         )}
-                        <a className="no-go" href={absoluteURL(run.best_download_url)} target="_blank" rel="noreferrer">
+                        <a
+                          className="no-go"
+                          href={absoluteURL(appendTrainServerToApiPath(run.best_download_url, params.id, run))}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
                           <IconFileDownload /> 模型
                         </a>
                         {/* <a className="no-go" href={absoluteURL(run.last_download_url)} target="_blank" rel="noreferrer">
                           <IconFileDownload /> last.pt
                         </a> */}
-                        {run.status === "finished" && (
+                        {(run.status === "finished" || run.train_server === "remote") && (
                           <Button
                             look="outlined"
                             size="small"

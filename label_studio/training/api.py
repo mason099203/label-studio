@@ -37,6 +37,7 @@ from .train_client import (
     get_remote_job_progress,
     list_remote_artifacts,
     list_remote_models,
+    list_remote_runs,
     resolve_train_server_config,
     is_train_server_connection_error,
 )
@@ -1355,18 +1356,42 @@ def _read_json_file(path: Path) -> Dict[str, Any]:
 
 def _infer_run_status(run_meta: Dict[str, Any], run_dir: Path, metrics: Any) -> str:
     status_value = run_meta.get("status")
-    if status_value:
+    if status_value and str(status_value).strip() not in ("", "unknown"):
         return str(status_value)
     job_state = _read_json_file(run_dir / "job_state.json")
     if job_state.get("status"):
         return str(job_state["status"])
+    if _run_dir_has_weights(run_dir):
+        return "finished"
     if _read_json_file(run_dir / "progress.json"):
         return "running"
     if (run_dir / "train").exists() and not metrics:
         return "running"
-    if metrics:
+    if metrics or run_meta.get("metrics"):
         return "finished"
-    return "unknown"
+    if run_meta.get("finished_at") or run_meta.get("progress_pct") == 100:
+        return "finished"
+    return str(status_value) if status_value else "unknown"
+
+
+def _infer_remote_run_status(meta: Dict[str, Any], artifacts: list[Dict[str, Any]]) -> str:
+    status_value = meta.get("status")
+    if status_value and str(status_value).strip() not in ("", "unknown"):
+        status = str(status_value)
+    else:
+        status = "unknown"
+
+    has_weights = any(a.get("name") in ("best.pt", "last.pt") for a in artifacts)
+    if meta.get("best_path"):
+        has_weights = True
+    if meta.get("metrics") or meta.get("finished_at") or meta.get("progress_pct") == 100:
+        has_weights = True
+
+    if status == "failed" and has_weights:
+        return "finished"
+    if status == "unknown" and has_weights:
+        return "finished"
+    return status
 
 
 def _collect_run_progress(run_dir: Path, run_meta: Dict[str, Any]) -> Dict[str, Any]:
@@ -1388,6 +1413,92 @@ def _collect_run_progress(run_dir: Path, run_meta: Dict[str, Any]) -> Dict[str, 
     return progress
 
 
+def _find_local_run_artifact(run_root: Path, file_name: str) -> Path | None:
+    """Resolve a run artifact on local disk (artifacts/ or train/weights/)."""
+    safe_name = Path(file_name).name
+    if not safe_name:
+        return None
+    for candidate in (
+        run_root / "artifacts" / safe_name,
+        run_root / "train" / "weights" / safe_name,
+    ):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _run_dir_has_weights(run_dir: Path) -> bool:
+    return _find_local_run_artifact(run_dir, "best.pt") is not None
+
+
+def _build_remote_training_run_entry(
+    project_id: int,
+    meta: Dict[str, Any],
+    train_config: TrainServerConfig,
+) -> Dict[str, Any] | None:
+    job_id = str(meta.get("job_id") or meta.get("run_id") or "")
+    if not job_id:
+        return None
+
+    artifacts: list[Dict[str, Any]] = []
+    try:
+        remote = list_remote_artifacts(job_id, config=train_config)
+        for item in remote.get("artifacts") or []:
+            name = item.get("name")
+            if not name:
+                continue
+            qs = f"file={name}&train_server_url={train_config.base_url}"
+            artifacts.append(
+                {
+                    "name": name,
+                    "size_bytes": item.get("size_bytes"),
+                    "download_url": f"/api/projects/{project_id}/training/jobs/{job_id}/download?{qs}",
+                }
+            )
+    except Exception:
+        pass
+
+    status = _infer_remote_run_status(meta, artifacts)
+
+    params = meta.get("params") or {}
+    metrics = meta.get("metrics")
+    ts = meta.get("finished_at") or meta.get("created_at")
+    modified_at = 0.0
+    if ts:
+        try:
+            from datetime import datetime
+
+            modified_at = datetime.fromisoformat(str(ts).replace("Z", "+00:00")).timestamp()
+        except Exception:
+            modified_at = 0.0
+
+    job_qs = f"train_server_url={train_config.base_url}"
+    return {
+        "run_id": job_id,
+        "run_dir": meta.get("run_dir") or f"train-server://{train_config.base_url}/project_{project_id}/{job_id}",
+        "name": meta.get("name", ""),
+        "status": status,
+        "message": meta.get("message"),
+        "params": params,
+        "task_type": params.get("task_type") or meta.get("task"),
+        "training_model": params.get("training_model") or meta.get("training_model"),
+        "error": meta.get("error"),
+        "warning": meta.get("warning"),
+        "metrics": metrics,
+        "artifacts": artifacts,
+        "epoch": meta.get("epoch"),
+        "total_epochs": meta.get("total_epochs") or params.get("epochs"),
+        "progress_pct": meta.get("progress_pct"),
+        "best_download_url": f"/api/projects/{project_id}/training/jobs/{job_id}/download?file=best.pt&{job_qs}",
+        "last_download_url": f"/api/projects/{project_id}/training/jobs/{job_id}/download?file=last.pt&{job_qs}",
+        "modified_at": modified_at,
+        "created_at": meta.get("created_at"),
+        "finished_at": meta.get("finished_at"),
+        "train_server": "remote",
+        "train_server_url": train_config.base_url,
+    }
+
+
 def _build_training_run_entry(project_id: int, run_dir: Path) -> Dict[str, Any]:
     run_meta = _read_json_file(run_dir / "run_meta.json")
     metrics_path = run_dir / "metrics.json"
@@ -1400,17 +1511,31 @@ def _build_training_run_entry(project_id: int, run_dir: Path) -> Dict[str, Any]:
     status_value = _infer_run_status(run_meta, run_dir, metrics)
     progress = _collect_run_progress(run_dir, run_meta)
     artifacts_dir = run_dir / "artifacts"
+    weights_dir = run_dir / "train" / "weights"
     files = []
-    if artifacts_dir.exists():
-        for f in sorted(artifacts_dir.glob("*"), key=lambda p: p.name.lower()):
-            if f.is_file():
-                files.append(
-                    {
-                        "name": f.name,
-                        "size_bytes": f.stat().st_size,
-                        "download_url": f"/api/projects/{project_id}/training/runs/{run_dir.name}/download?file={f.name}",
-                    }
-                )
+    seen_names: set[str] = set()
+    for scan_dir in (artifacts_dir, weights_dir):
+        if not scan_dir.exists():
+            continue
+        for f in sorted(scan_dir.glob("*"), key=lambda p: p.name.lower()):
+            if not f.is_file() or f.name in seen_names:
+                continue
+            seen_names.add(f.name)
+            files.append(
+                {
+                    "name": f.name,
+                    "size_bytes": f.stat().st_size,
+                    "download_url": f"/api/projects/{project_id}/training/runs/{run_dir.name}/download?file={f.name}",
+                }
+            )
+    train_server_url = run_meta.get("train_server_url") or ""
+    if train_server_url:
+        job_qs = f"train_server_url={train_server_url}"
+        best_download_url = f"/api/projects/{project_id}/training/jobs/{run_dir.name}/download?file=best.pt&{job_qs}"
+        last_download_url = f"/api/projects/{project_id}/training/jobs/{run_dir.name}/download?file=last.pt&{job_qs}"
+    else:
+        best_download_url = f"/api/projects/{project_id}/training/runs/{run_dir.name}/download?file=best.pt"
+        last_download_url = f"/api/projects/{project_id}/training/runs/{run_dir.name}/download?file=last.pt"
     return {
         "run_id": run_dir.name,
         "run_dir": str(run_dir),
@@ -1426,11 +1551,13 @@ def _build_training_run_entry(project_id: int, run_dir: Path) -> Dict[str, Any]:
         "epoch": progress.get("epoch"),
         "total_epochs": progress.get("total_epochs"),
         "progress_pct": progress.get("progress_pct"),
-        "best_download_url": f"/api/projects/{project_id}/training/runs/{run_dir.name}/download?file=best.pt",
-        "last_download_url": f"/api/projects/{project_id}/training/runs/{run_dir.name}/download?file=last.pt",
+        "best_download_url": best_download_url,
+        "last_download_url": last_download_url,
         "modified_at": run_dir.stat().st_mtime,
         "created_at": run_meta.get("created_at"),
         "finished_at": run_meta.get("finished_at"),
+        "train_server": "remote" if train_server_url else "local",
+        **({"train_server_url": train_server_url} if train_server_url else {}),
     }
 
 
@@ -1450,11 +1577,44 @@ class ProjectTrainingHistoryAPI(APIView):
         #   data/training/models/trained/project_<id>/<job_id>/
         runs_root = _get_training_output_root() / f"project_{project.id}"
         runs = []
+        local_run_dirs: Dict[str, Path] = {}
         if runs_root.exists():
             for d in sorted(runs_root.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
                 if not d.is_dir():
                     continue
+                local_run_dirs[d.name] = d
                 runs.append(_build_training_run_entry(project.id, d))
+
+        train_config, _train_err = _resolve_train_server_config_from_request(request)
+        if train_config.enabled:
+            try:
+                for meta in list_remote_runs(project.id, config=train_config):
+                    job_id = str(meta.get("job_id") or "")
+                    if not job_id:
+                        continue
+                    entry = _build_remote_training_run_entry(project.id, meta, train_config)
+                    if not entry:
+                        continue
+                    local_dir = local_run_dirs.get(job_id)
+                    if local_dir is not None:
+                        if _run_dir_has_weights(local_dir):
+                            continue
+                        local_entry = next((r for r in runs if r.get("run_id") == job_id), None)
+                        if local_entry:
+                            if entry.get("status") in (None, "", "unknown") and local_entry.get("status") not in (
+                                None,
+                                "",
+                                "unknown",
+                            ):
+                                entry["status"] = local_entry["status"]
+                            if not entry.get("metrics") and local_entry.get("metrics"):
+                                entry["metrics"] = local_entry["metrics"]
+                        runs = [entry if r.get("run_id") == job_id else r for r in runs]
+                    else:
+                        runs.append(entry)
+                runs.sort(key=lambda r: float(r.get("modified_at") or 0), reverse=True)
+            except Exception as exc:
+                logger.warning("Failed to list remote training runs: %s", exc)
 
         # Datasets are stored under:
         #   data/training/datasets/project_<id>/<timestamp>/
@@ -1508,12 +1668,29 @@ class ProjectTrainingRunDownloadAPI(APIView):
         if not file_name:
             return Response({"detail": "file query param is required"}, status=status.HTTP_400_BAD_REQUEST)
 
-        base = _get_training_output_root() / f"project_{project.id}" / run_id / "artifacts"
-        target = base / file_name
-        if not target.exists():
-            raise Http404
+        safe_name = Path(file_name).name
+        run_root = _get_training_output_root() / f"project_{project.id}" / run_id
+        target = _find_local_run_artifact(run_root, safe_name)
+        if target is not None:
+            return FileResponse(open(target, "rb"), as_attachment=True, filename=target.name)
 
-        return FileResponse(open(target, "rb"), as_attachment=True, filename=target.name)
+        train_config, _err = _resolve_train_server_config_from_request(request)
+        if train_config.enabled:
+            try:
+                cache_dir = run_root / "artifacts"
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                target = cache_dir / safe_name
+                if not target.exists():
+                    download_remote_artifact(run_id, safe_name, target, config=train_config)
+                if target.exists():
+                    return FileResponse(open(target, "rb"), as_attachment=True, filename=target.name)
+            except Exception as exc:
+                return Response(
+                    {"detail": f"Failed to download from Train Server: {exc}"},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+
+        raise Http404
 
 
 class ProjectTrainingRunRenameAPI(APIView):

@@ -191,7 +191,7 @@ def _collect_yolo_val_metrics(val_res, task: str) -> Dict[str, Any]:
     if task == "classify":
         for key in ("top1", "top5", "fitness"):
             val = getattr(val_res, key, None)
-            if val is not None:
+            if val is not None and not callable(val):
                 try:
                     f = float(val)
                     metrics[key] = f if math.isfinite(f) else None
@@ -212,7 +212,7 @@ def _collect_yolo_val_metrics(val_res, task: str) -> Dict[str, Any]:
             continue
         for key in ("map50", "map", "map75", "mp", "mr", "fitness"):
             val = getattr(group, key, None)
-            if val is None:
+            if val is None or callable(val):
                 continue
             try:
                 f = float(val)
@@ -223,7 +223,7 @@ def _collect_yolo_val_metrics(val_res, task: str) -> Dict[str, Any]:
     if not metrics:
         for key in ("map50", "map", "map75", "mp", "mr", "fitness"):
             val = getattr(val_res, key, None)
-            if val is not None:
+            if val is not None and not callable(val):
                 try:
                     f = float(val)
                     metrics[key] = f if math.isfinite(f) else None
