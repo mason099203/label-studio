@@ -273,6 +273,43 @@ def validate_yolo_dataset_files(dataset_root: Path) -> None:
         )
 
 
+def validate_classification_dataset_files(dataset_root: Path) -> None:
+    """Raise FileNotFoundError when YOLO classify train/val folders are missing images."""
+    root = Path(dataset_root).resolve()
+    train_dir = root / "train"
+    val_dir = root / "val"
+    if not train_dir.is_dir() or not val_dir.is_dir():
+        raise FileNotFoundError(
+            f"Classification dataset at {root} must contain train/ and val/ subdirectories. "
+            "Regenerate the training dataset on Label Studio (Training → 生成訓練資料集)."
+        )
+
+    def _count_images(directory: Path) -> int:
+        exts = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
+        return sum(1 for p in directory.rglob("*") if p.is_file() and p.suffix.lower() in exts)
+
+    train_count = _count_images(train_dir)
+    val_count = _count_images(val_dir)
+    if train_count == 0 or val_count == 0:
+        raise FileNotFoundError(
+            f"Classification dataset at {root} has no images in train/ or val/ "
+            f"(train={train_count}, val={val_count}). "
+            "Ensure project tasks have local/downloadable images, then regenerate the dataset."
+        )
+
+
+def validate_dataset_for_training(dataset_root: Path, dataset_meta: Dict[str, Any] | None = None) -> None:
+    meta = dataset_meta or {}
+    if meta.get("training_model") == "yolo_classify" or meta.get("task_type") == "classification":
+        validate_classification_dataset_files(dataset_root)
+        return
+    root = Path(dataset_root).resolve()
+    if (root / "train").is_dir() and (root / "val").is_dir() and not (root / "images").is_dir():
+        validate_classification_dataset_files(dataset_root)
+        return
+    validate_yolo_dataset_files(dataset_root)
+
+
 def _find_export_dirs(root: Path) -> Tuple[Path, Path]:
     """
     Attempt to find images/labels directories in extracted export.

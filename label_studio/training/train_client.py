@@ -96,13 +96,79 @@ def _count_images_under(root: Path) -> int:
     )
 
 
-def _verify_zip_includes_split_images(buffer: io.BytesIO, dataset_root: Path) -> None:
+def _list_zip_image_entries(names: List[str]) -> List[str]:
+    entries: List[str] = []
+    for raw in names:
+        norm = raw.replace("\\", "/").lstrip("./")
+        if not norm or norm.endswith("/"):
+            continue
+        lower = norm.lower()
+        if lower.startswith("images/"):
+            entries.append(raw)
+            continue
+        if "/images/" in lower:
+            parts = lower.split("/")
+            if "images" in parts and parts.index("images") < len(parts) - 1:
+                entries.append(raw)
+    return entries
+
+
+def _zip_entry_matches_split_line(entry: str, line: str) -> bool:
+    norm_entry = entry.replace("\\", "/").lstrip("./")
+    norm_line = line.replace("\\", "/").lstrip("./")
+    return norm_entry == norm_line or norm_entry.endswith(f"/{norm_line}")
+
+
+def _is_classification_dataset(dataset_meta: Dict[str, Any] | None, dataset_root: Path) -> bool:
+    meta = dataset_meta or {}
+    if meta.get("training_model") == "yolo_classify" or meta.get("task_type") == "classification":
+        return True
+    root = Path(dataset_root)
+    return (root / "train").is_dir() and (root / "val").is_dir() and not (root / "images").is_dir()
+
+
+def _list_zip_classification_image_entries(names: List[str]) -> List[str]:
+    entries: List[str] = []
+    for raw in names:
+        norm = raw.replace("\\", "/").lstrip("./")
+        if not norm or norm.endswith("/"):
+            continue
+        lower = norm.lower()
+        if lower.startswith("train/") or lower.startswith("val/"):
+            if Path(norm).suffix.lower() in _IMAGE_EXTS:
+                entries.append(raw)
+    return entries
+
+
+def _list_zip_dataset_image_entries(names: List[str], *, classification: bool) -> List[str]:
+    if classification:
+        return _list_zip_classification_image_entries(names)
+    return _list_zip_image_entries(names)
+
+
+def _verify_zip_includes_split_images(
+    buffer: io.BytesIO,
+    dataset_root: Path,
+    *,
+    classification: bool = False,
+) -> None:
     """Ensure every path listed in train/val.txt is present in the zip archive."""
     buffer.seek(0)
     missing: List[str] = []
     total = 0
     with zipfile.ZipFile(buffer, "r") as zf:
-        names = set(zf.namelist())
+        names = list(zf.namelist())
+        image_entries = _list_zip_dataset_image_entries(names, classification=classification)
+        if not image_entries:
+            sample = ", ".join(names[:8])
+            layout = "train/ and val/" if classification else "images/"
+            raise FileNotFoundError(
+                f"Dataset zip contains no image files under {layout} "
+                f"Sample zip entries: {sample}. Regenerate the training dataset before submitting."
+            )
+        if classification:
+            buffer.seek(0)
+            return
         for split in ("train.txt", "val.txt"):
             split_path = dataset_root / split
             if not split_path.exists():
@@ -112,7 +178,7 @@ def _verify_zip_includes_split_images(buffer: io.BytesIO, dataset_root: Path) ->
                 if not line:
                     continue
                 total += 1
-                if line in names:
+                if line in names or any(_zip_entry_matches_split_line(n, line) for n in names):
                     continue
                 missing.append(line)
     buffer.seek(0)
@@ -124,10 +190,14 @@ def _verify_zip_includes_split_images(buffer: io.BytesIO, dataset_root: Path) ->
         )
 
 
-def _zip_dataset_dir(dataset_root: Path) -> io.BytesIO:
-    image_count = _count_images_under(dataset_root / "images")
-    if image_count == 0:
-        image_count = _count_images_under(dataset_root)
+def _zip_dataset_dir(dataset_root: Path, dataset_meta: Dict[str, Any] | None = None) -> io.BytesIO:
+    classification = _is_classification_dataset(dataset_meta, dataset_root)
+    if classification:
+        image_count = _count_images_under(dataset_root / "train") + _count_images_under(dataset_root / "val")
+    else:
+        image_count = _count_images_under(dataset_root / "images")
+        if image_count == 0:
+            image_count = _count_images_under(dataset_root)
     if image_count == 0:
         raise FileNotFoundError(
             f"No image files under {dataset_root}. Regenerate the training dataset "
@@ -168,8 +238,22 @@ def _zip_dataset_dir(dataset_root: Path) -> io.BytesIO:
             f"Dataset zip would contain 0 images from {dataset_root}. "
             "Regenerate the training dataset before submitting to Train Server."
         )
-    logger.info("Prepared dataset zip: %s images from %s", zipped_images, dataset_root)
-    _verify_zip_includes_split_images(buffer, dataset_root)
+    buffer.seek(0)
+    with zipfile.ZipFile(buffer, "r") as zf:
+        if not _list_zip_dataset_image_entries(zf.namelist(), classification=classification):
+            layout = "train/ and val/" if classification else "images/"
+            raise FileNotFoundError(
+                f"Dataset zip from {dataset_root} has no image entries under {layout} "
+                "Regenerate the training dataset before submitting."
+            )
+    buffer.seek(0)
+    logger.info(
+        "Prepared dataset zip: %s images from %s (classify=%s)",
+        zipped_images,
+        dataset_root,
+        classification,
+    )
+    _verify_zip_includes_split_images(buffer, dataset_root, classification=classification)
     buffer.seek(0)
     return buffer
 
@@ -341,6 +425,9 @@ def create_remote_job(
     if use_shared_path and dataset_path:
         data["dataset_path"] = dataset_path
     elif dataset_root.exists():
+        from .datasets import validate_dataset_for_training
+
+        validate_dataset_for_training(dataset_root, dataset_meta)
         shared = _resolve_shared_dataset_path(dataset_root, train_server_url=cfg.base_url)
         if shared:
             logger.warning(
@@ -351,7 +438,7 @@ def create_remote_job(
             data["dataset_path"] = shared
         else:
             logger.info("Uploading dataset zip to Train Server (%s)", cfg.base_url)
-            zip_buffer = _zip_dataset_dir(dataset_root)
+            zip_buffer = _zip_dataset_dir(dataset_root, dataset_meta=dataset_meta)
             zip_size_mb = zip_buffer.getbuffer().nbytes / (1024 * 1024)
             logger.info("Dataset zip size: %.2f MB from %s", zip_size_mb, dataset_root)
             files["dataset_zip"] = ("dataset.zip", zip_buffer, "application/zip")

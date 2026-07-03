@@ -25,7 +25,7 @@ from rest_framework.views import APIView
 from rq.job import Job
 
 from .jobs import cnn_classification_train_job, yolo_classification_train_job, yolo_detect_train_job
-from .datasets import detect_training_interface, prepare_training_dataset_for_project, resolve_deploy_task_context, validate_yolo_dataset_files
+from .datasets import detect_training_interface, prepare_training_dataset_for_project, resolve_deploy_task_context, validate_dataset_for_training, validate_yolo_dataset_files
 from .train_client import (
     TRAIN_SERVER_URL,
     TrainServerConfig,
@@ -942,7 +942,7 @@ class ProjectTrainingJobsAPI(APIView):
                 return Response({"detail": compat_err}, status=status.HTTP_400_BAD_REQUEST)
             if dataset_root.exists():
                 try:
-                    validate_yolo_dataset_files(dataset_root)
+                    validate_dataset_for_training(dataset_root, dataset_meta)
                 except FileNotFoundError as exc:
                     return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 

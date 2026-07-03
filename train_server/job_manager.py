@@ -12,6 +12,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
+from .dataset_layout import (
+    is_classification_dataset,
+    list_zip_dataset_image_entries,
+    normalize_zip_entry,
+    unwrap_single_dataset_root,
+    validate_dataset_layout,
+)
 from .metrics_utils import json_safe
 from .trainer import run_yolo_training
 
@@ -148,34 +155,42 @@ class JobManager:
             root = Path(dataset_path)
             if not root.exists():
                 raise FileNotFoundError(f"dataset_path not found: {dataset_path}")
+            root = unwrap_single_dataset_root(root)
+            validate_dataset_layout(root, dataset_meta)
             return root
 
         if not dataset_zip_path or not dataset_zip_path.exists():
             raise FileNotFoundError("dataset_zip or dataset_path is required")
 
+        classification = is_classification_dataset(
+            dataset_meta,
+            Path(str(dataset_meta.get("dataset_root") or ".")),
+        )
         extract_root = self.output_root / f"project_{project_id}" / job_id / "dataset"
         extract_root.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(dataset_zip_path, "r") as zf:
             names = zf.namelist()
-            image_entries = [n for n in names if n.lower().startswith("images/") and not n.endswith("/")]
+            image_entries = list_zip_dataset_image_entries(names, classification=classification)
             logger.info(
-                "Extracting dataset zip for job %s: %s files (%s under images/)",
+                "Extracting dataset zip for job %s: %s files (%s image entries, classify=%s)",
                 job_id,
                 len(names),
                 len(image_entries),
+                classification,
             )
             if not image_entries:
+                sample = ", ".join(normalize_zip_entry(n) for n in names[:8])
+                layout_hint = "train/ and val/" if classification else "images/"
                 raise FileNotFoundError(
-                    "Uploaded dataset zip contains no files under images/. "
+                    f"Uploaded dataset zip contains no image files under {layout_hint}. "
                     "Regenerate the training dataset in Label Studio and resubmit."
+                    + (f" Zip sample entries: {sample}" if sample else "")
                 )
             zf.extractall(extract_root)
 
-        # 若 zip 只有一層目錄，進入該目錄
-        children = [p for p in extract_root.iterdir() if p.name != "__MACOSX"]
-        if len(children) == 1 and children[0].is_dir():
-            return children[0]
-        return extract_root
+        dataset_root = unwrap_single_dataset_root(extract_root)
+        validate_dataset_layout(dataset_root, dataset_meta)
+        return dataset_root
 
     def _run_job(
         self,
