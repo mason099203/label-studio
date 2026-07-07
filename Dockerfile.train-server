@@ -1,5 +1,11 @@
 # syntax=docker/dockerfile:1
 # Label Studio Train Server — 獨立 YOLO 訓練容器（含 ultralytics / torch）
+
+
+# docker build -f Dockerfile.train-server -t labelstudio-train-server:latest .
+# docker run -d --name train-server -p 8011:8011 -v ./data:/data labelstudio-train-server:latest
+
+
 ARG PYTHON_VERSION=3.12
 
 FROM python:${PYTHON_VERSION}-slim-bookworm
