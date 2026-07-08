@@ -32,17 +32,17 @@ TRAIN_SERVER_API_KEY=your-secret   # 可選
 Train Server 使用**獨立虛擬環境** `.venv-train`，與 Label Studio 的 `.venv` 分離（避免 NumPy 2.x / torch / Anaconda 衝突）：
 
 ```powershell
-# 首次設定（約需數分鐘，下載 PyTorch CPU）
+# 首次設定（約需數分鐘；有 NVIDIA GPU 時裝 CUDA 版 PyTorch，否則 CPU）
 .\scripts\setup-venv-train.ps1
 
 # 啟動（預設 http://localhost:8011）
 .\start-train-server.ps1
 ```
 
-若 torch 載入失敗（如 `c10.dll`），可重裝：
+若 torch 載入失敗（如 `c10.dll`），可重裝（有 GPU 時優先 CUDA）：
 
 ```powershell
-.\scripts\install-torch-cpu-windows.ps1
+.\scripts\install-torch-windows.ps1
 ```
 
 Label Studio 本機開發：

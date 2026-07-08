@@ -6,9 +6,8 @@ import { Modal } from "../../components/Modal/Modal";
 import { Space } from "../../components/Space/Space";
 import { useAPI } from "../../providers/ApiProvider";
 import { useFixedLocation, useParams } from "../../providers/RoutesProvider";
-import { absoluteURL } from "../../utils/helpers";
 import { cn } from "../../utils/bem";
-import { appendTrainServerToApiPath, getTrainServerQueryParams } from "../TrainingPage/trainServerStorage";
+import { downloadTrainingArtifact, getTrainServerQueryParams } from "../TrainingPage/trainServerStorage";
 import "./TrainingProgressPage.scss";
 
 const ACTIVE_STATUSES = new Set(["queued", "preparing", "starting", "running", "started"]);
@@ -121,6 +120,7 @@ export const TrainingProgressPage = () => {
   const [jobInfo, setJobInfo] = useState(null);
   const [errorMessage, setErrorMessage] = useState(null);
   const [resolvedTrainServerUrl, setResolvedTrainServerUrl] = useState(null);
+  const [downloadingFile, setDownloadingFile] = useState(null);
   const pollFailStreakRef = useRef(0);
 
   const trainServerParams = useMemo(() => {
@@ -137,6 +137,26 @@ export const TrainingProgressPage = () => {
     const search = location.search;
     history.replace(`${path}${search !== "?" ? search : ""}`);
   }, [history, location.pathname, location.search, resolvedJobId]);
+
+  const downloadArtifact = useCallback(
+    async (file) => {
+      if (!projectId || !resolvedJobId) return;
+      setDownloadingFile(file);
+      try {
+        await downloadTrainingArtifact(api, {
+          projectId,
+          jobId: resolvedJobId,
+          file,
+          trainServerParams,
+        });
+      } catch (err) {
+        setErrorMessage(err?.message ?? `下載 ${file} 失敗`);
+      } finally {
+        setDownloadingFile(null);
+      }
+    },
+    [api, projectId, resolvedJobId, trainServerParams],
+  );
 
   const status =
     progress?.status ?? jobInfo?.status ?? jobInfo?.meta?.status ?? (errorMessage ? "failed" : "unknown");
@@ -263,14 +283,6 @@ export const TrainingProgressPage = () => {
     trainingComplete && status === "failed" ? "已完成" : STATUS_LABELS[status] ?? status;
   const completionWarning =
     trainingComplete && (progress?.error || jobInfo?.exc_info || jobInfo?.warning);
-
-  const downloadUrl = (file) =>
-    absoluteURL(
-      appendTrainServerToApiPath(
-        `/api/projects/${projectId}/training/jobs/${resolvedJobId}/download?file=${file}`,
-        projectId,
-      ),
-    );
 
   return (
     <Modal
@@ -415,10 +427,9 @@ export const TrainingProgressPage = () => {
             <div className={cn("training-progress").elem("section-title").toClassName()}>訓練完成</div>
             <Space size="small">
               <Button
-                as="a"
-                href={downloadUrl("best.pt")}
-                target="_blank"
-                rel="noreferrer"
+                onClick={() => downloadArtifact("best.pt")}
+                waiting={downloadingFile === "best.pt"}
+                disabled={Boolean(downloadingFile) && downloadingFile !== "best.pt"}
                 look="outlined"
                 size="small"
                 icon={<IconFileDownload />}
@@ -426,10 +437,9 @@ export const TrainingProgressPage = () => {
                 下載 best.pt
               </Button>
               <Button
-                as="a"
-                href={downloadUrl("last.pt")}
-                target="_blank"
-                rel="noreferrer"
+                onClick={() => downloadArtifact("last.pt")}
+                waiting={downloadingFile === "last.pt"}
+                disabled={Boolean(downloadingFile) && downloadingFile !== "last.pt"}
                 look="outlined"
                 size="small"
                 icon={<IconFileDownload />}

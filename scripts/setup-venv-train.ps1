@@ -64,9 +64,27 @@ if (-not (Test-Path -LiteralPath $TrainPy)) {
 Write-Host "Upgrading pip..."
 & $TrainPy -m pip install --upgrade pip
 
-Write-Host "Installing PyTorch 2.0.1+cpu first (avoids ultralytics pulling torch 2.x)..."
-& $TrainPy -m pip install "numpy==1.26.4" "torch==2.0.1+cpu" "torchvision==0.15.2+cpu" `
-    --index-url https://download.pytorch.org/whl/cpu
+function Test-NvidiaGpuAvailable {
+    if (-not (Get-Command nvidia-smi -ErrorAction SilentlyContinue)) {
+        return $false
+    }
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "SilentlyContinue"
+    & nvidia-smi -L 2>$null | Out-Null
+    $ok = ($LASTEXITCODE -eq 0)
+    $ErrorActionPreference = $prev
+    return $ok
+}
+
+if (Test-NvidiaGpuAvailable) {
+    Write-Host "NVIDIA GPU detected. Installing PyTorch with CUDA (cu124)..."
+    & $TrainPy -m pip install "numpy==1.26.4" "torch>=2.0.1" "torchvision>=0.15.2" `
+        --index-url https://download.pytorch.org/whl/cu124
+} else {
+    Write-Host "No NVIDIA GPU detected. Installing PyTorch CPU..."
+    & $TrainPy -m pip install "numpy==1.26.4" "torch==2.0.1+cpu" "torchvision==0.15.2+cpu" `
+        --index-url https://download.pytorch.org/whl/cpu
+}
 
 Write-Host "Installing train_server requirements..."
 & $TrainPy -m pip install -r $ReqFile
@@ -75,7 +93,7 @@ Write-Host "Re-pinning NumPy 1.26.4 if upgraded by dependencies..."
 & $TrainPy -m pip install "numpy==1.26.4" --force-reinstall
 
 Write-Host "Verifying stack..."
-$verify = "import numpy, torch; from ultralytics import YOLO; import fastapi, uvicorn; assert numpy.__version__.startswith('1.'); print('OK numpy', numpy.__version__, 'torch', torch.__version__)"
+$verify = "import numpy, torch; from ultralytics import YOLO; import fastapi, uvicorn; assert numpy.__version__.startswith('1.'); cuda=torch.cuda.is_available(); print('OK numpy', numpy.__version__, 'torch', torch.__version__, 'cuda', cuda, 'default_device', ('0' if cuda else 'cpu'))"
 & $TrainPy -c $verify
 
 Write-Host ""

@@ -45,14 +45,60 @@ def _is_local_train_server_url(base_url: str) -> bool:
     return host in ("localhost", "127.0.0.1", "0.0.0.0", "[::1]")
 
 
+def _is_windows_absolute_path(path: str) -> bool:
+    if len(path) >= 2 and path[1] == ":":
+        return True
+    return path.startswith("\\\\")
+
+
+_train_server_output_root_cache: Dict[str, str | None] = {}
+
+
+def _probe_train_server_output_root(train_server_url: str) -> str | None:
+    """Probe Train Server /models for output_root (cached). Used to detect containerized layout."""
+    url = (train_server_url or TRAIN_SERVER_URL or "").strip().rstrip("/")
+    if not url:
+        return None
+    if url in _train_server_output_root_cache:
+        return _train_server_output_root_cache[url]
+    output_root: str | None = None
+    try:
+        cfg = resolve_train_server_config(url=url)
+        resp = _request(cfg, "GET", "/models", timeout=8, retries=1)
+        if resp.ok:
+            raw = resp.json().get("output_root")
+            if isinstance(raw, str) and raw.strip():
+                output_root = raw.strip()
+    except Exception as exc:
+        logger.debug("Could not probe Train Server output_root at %s: %s", url, exc)
+    _train_server_output_root_cache[url] = output_root
+    return output_root
+
+
+def _train_server_looks_containerized(train_server_url: str) -> bool:
+    output_root = _probe_train_server_output_root(train_server_url)
+    return bool(output_root and output_root.startswith("/"))
+
+
+def _shared_path_unusable_for_train_server(path: str, train_server_url: str) -> bool:
+    """Return True when path cannot exist on the Train Server host (e.g. Windows path to remote Linux)."""
+    server_url = (train_server_url or TRAIN_SERVER_URL or "").strip()
+    if _is_windows_absolute_path(path) and not _is_local_train_server_url(server_url):
+        return True
+    if _is_windows_absolute_path(path) and _train_server_looks_containerized(server_url):
+        return True
+    return False
+
+
 def _resolve_shared_dataset_path(dataset_root: Path, *, train_server_url: str = "") -> str | None:
     """
     當 Label Studio 與 Train Server 共用 data/ 目錄時，傳 dataset_path 略過 zip。
 
-    - Docker Train Server（./data:/data）：設定 TRAIN_SERVER_SHARED_DATA_ROOT=/data
-    - 本機原生 Train Server（localhost:8011）：可設 TRAIN_SERVER_SHARED_DATA_ROOT=<repo>/data
-      或未設定且 TRAIN_SERVER_URL 為 localhost 時使用 host 絕對路徑
-    - 其餘情況（例如 LAN IP + Docker）：勿傳 Windows 路徑，改走 zip 上傳
+    - **遠端 Train Server**（非 localhost）：預設回傳 None → 改上傳 zip。
+      僅在雙方掛載同一 NFS/共享儲存時，設 `TRAIN_SERVER_SHARED_DATA_ROOT` +
+      `TRAIN_SERVER_FORCE_SHARED_PATH=1`，傳 Train Server 端可見的 POSIX 路徑。
+    - **本機 Docker Train Server**（localhost + ./data:/data）：設 `TRAIN_SERVER_SHARED_DATA_ROOT=/data`
+    - **本機原生 Train Server**（localhost + start-train-server.ps1）：可用 host 絕對路徑
     """
     if not dataset_root.is_dir():
         return None
@@ -80,6 +126,12 @@ def _resolve_shared_dataset_path(dataset_root: Path, *, train_server_url: str = 
 
     if is_local:
         host_path = str(dataset_root.resolve())
+        if _shared_path_unusable_for_train_server(host_path, server_url):
+            logger.info(
+                "Train Server on localhost looks containerized; uploading dataset zip instead of Windows path. "
+                "To use shared dataset_path, bind-mount repo data to /data and set TRAIN_SERVER_SHARED_DATA_ROOT=/data.",
+            )
+            return None
         logger.info("Using host dataset path for local Train Server: %s", host_path)
         return host_path
 
@@ -422,13 +474,23 @@ def create_remote_job(
             cfg.base_url,
         )
 
-    if use_shared_path and dataset_path:
-        data["dataset_path"] = dataset_path
-    elif dataset_root.exists():
+    if dataset_root.exists():
         from .datasets import validate_dataset_for_training
 
         validate_dataset_for_training(dataset_root, dataset_meta)
-        shared = _resolve_shared_dataset_path(dataset_root, train_server_url=cfg.base_url)
+        explicit_root = dataset_root
+        if use_shared_path and dataset_path:
+            explicit = Path(str(dataset_path))
+            if explicit.is_dir():
+                explicit_root = explicit
+        shared = _resolve_shared_dataset_path(explicit_root, train_server_url=cfg.base_url)
+        if shared and _shared_path_unusable_for_train_server(shared, cfg.base_url):
+            logger.warning(
+                "Refusing dataset_path %s for Train Server %s; uploading zip instead.",
+                shared,
+                cfg.base_url,
+            )
+            shared = None
         if shared:
             logger.warning(
                 "Using shared dataset_path %s for Train Server %s — ensure images/ exists on that host.",

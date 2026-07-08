@@ -47,7 +47,7 @@ if (-not (Test-Path -LiteralPath $TrainPy)) {
 
 if (-not (Test-TrainStack)) {
     Write-Host "Train stack incomplete. Repairing..."
-    & (Join-Path $Root "scripts\install-torch-cpu-windows.ps1")
+    & (Join-Path $Root "scripts\install-torch-windows.ps1")
 }
 
 $lanIp = Get-LanIpAddress

@@ -1,11 +1,40 @@
 # syntax=docker/dockerfile:1
 # Label Studio Train Server — 獨立 YOLO 訓練容器（含 ultralytics / torch）
 
-
+# ── 建置 ──────────────────────────────────────────────────────────────────────
 # docker build -f Dockerfile.train-server -t labelstudio-train-server:latest .
-# docker run -d --name train-server -p 8011:8011 -v ./data:/data labelstudio-train-server:latest
-
-
+#
+# ── 首次部署（建議：GPU + 不掛 volume，Label Studio 以 zip 上傳資料集）──────
+# docker run -d --name train-server --gpus all -p 8011:8011 --restart unless-stopped labelstudio-train-server:latest
+#
+# ── 首次部署（選用：與 Label Studio 共用本機 data/，可略過 zip 上傳）────────
+# docker run -d --name train-server --gpus all -p 8011:8011 --restart unless-stopped `
+#   -v "D:\ai_test\project\label-studio\data:/data" `
+#   labelstudio-train-server:latest
+# Linux / macOS 將 -v 改為：-v ./data:/data
+#
+# ── 更新與重新部署（改 train_server/ 或本 Dockerfile 後）────────────────────
+# docker stop train-server
+# docker rm train-server
+# docker build -f Dockerfile.train-server -t labelstudio-train-server:latest .
+# docker run -d --name train-server --gpus all -p 8011:8011 --restart unless-stopped labelstudio-train-server:latest
+# 若需保留 volume 掛載，run 時加上相同的 -v 參數
+#
+# ── 常用管理 ──────────────────────────────────────────────────────────────────
+# docker ps --filter name=train-server
+# docker logs -f train-server
+# curl http://localhost:8011/health
+# .\scripts\test-train-server-health.ps1
+#
+# ── 備註 ──────────────────────────────────────────────────────────────────────
+# • 預設 DataLoader workers=0（Docker /dev/shm 不足時 workers>0 會 bus error）；要加速可 run 加：
+#   --shm-size=2g -e TRAIN_SERVER_DATALOADER_WORKERS=4
+# • 預設優先 GPU（需 --gpus all + NVIDIA Container Toolkit）；無 GPU 時自動用 CPU
+# • 不掛 -v 時：訓練產物在容器內，刪容器會消失；Label Studio 透過 API 取回 best.pt
+# • 掛 -v ./data:/data 時：與 Label Studio 共用資料集／模型目錄（Compose 預設行為）
+# • Label Studio 連線：TRAIN_SERVER_URL=http://localhost:8011（遠端改為該主機 IP）
+# • 可選 API Key：run 加 -e TRAIN_SERVER_API_KEY=your-secret，Label Studio 端需一致
+# • Docker Compose：docker compose up -d train-server（服務名 train-server，埠 8011）
 ARG PYTHON_VERSION=3.12
 
 FROM python:${PYTHON_VERSION}-slim-bookworm
@@ -18,7 +47,8 @@ ENV PYTHONUNBUFFERED=1 \
     TRAIN_SERVER_PORT=8011 \
     TRAIN_SERVER_OUTPUT_ROOT=/data/training/models/trained \
     TRAIN_SERVER_MODELS_DIR=/data/training/models/original \
-    TRAIN_SERVER_MAX_WORKERS=1
+    TRAIN_SERVER_MAX_WORKERS=1 \
+    TRAIN_SERVER_DATALOADER_WORKERS=0
 
 WORKDIR /app
 
@@ -28,11 +58,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY train_server/requirements-train.txt /app/train_server/requirements-train.txt
-# CPU 版 torch（避免 pip 預設拉取含 CUDA 的完整 torch，映像可小數 GB）
+# CUDA 版 torch（預設 GPU 訓練；容器未掛載 GPU 時自動回退 CPU）
 RUN pip install --upgrade pip \
     && pip install "numpy>=1.26.4,<2.0" \
         "torch>=2.0.1" "torchvision>=0.15.2" \
-        --index-url https://download.pytorch.org/whl/cpu \
+        --index-url https://download.pytorch.org/whl/cu124 \
     && pip install -r /app/train_server/requirements-train.txt
 
 COPY train_server /app/train_server

@@ -20,6 +20,7 @@ from .yolo_catalog import (
     resolve_yolo_task,
     resolve_yolo_weights_name,
 )
+from .device_utils import resolve_dataloader_workers, resolve_training_device
 from .metrics_utils import collect_yolo_val_metrics, json_safe, normalize_trainer_metrics
 from .progress import collect_preview_images
 
@@ -417,6 +418,10 @@ def run_yolo_training(
     task = reconcile_yolo_task(training_model, task_type, weights_path)
     train_params = build_training_params(task=task, overrides=param_overrides)
     data_path = resolve_train_data_path(task, dataset_meta, dataset_root)
+    dataloader_workers = resolve_dataloader_workers(
+        train_params.get("workers"),
+        user_specified="workers" in param_overrides,
+    )
 
     _emit({"status": "running", "message": "Training in progress", "run_dir": str(run_dir)})
 
@@ -426,7 +431,7 @@ def run_yolo_training(
         "epochs": int(train_params.get("epochs", 100)),
         "imgsz": int(train_params.get("imgsz", 640)),
         "batch": int(train_params.get("batch", 16)),
-        "workers": int(train_params.get("workers", 0)),
+        "workers": dataloader_workers,
         "patience": int(train_params.get("patience", 100)),
         "project": str(run_dir),
         "name": "train",
@@ -463,8 +468,7 @@ def run_yolo_training(
         if key in train_params:
             train_kwargs[key] = train_params[key]
 
-    if train_params.get("device"):
-        train_kwargs["device"] = train_params["device"]
+    train_kwargs["device"] = resolve_training_device(train_params.get("device"))
 
     total_epochs = int(train_kwargs["epochs"])
     progress_path = run_dir / "progress.json"

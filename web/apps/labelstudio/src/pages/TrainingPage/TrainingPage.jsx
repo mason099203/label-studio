@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useHistory } from "react-router";
 import { IconAnalytics, IconCheck, IconFileDownload, IconPlay, IconWarningCircleFilled } from "@humansignal/icons";
 import { Button } from "@humansignal/ui";
@@ -7,12 +7,15 @@ import { Space } from "../../components/Space/Space";
 import { useAPI } from "../../providers/ApiProvider";
 import { useFixedLocation, useParams } from "../../providers/RoutesProvider";
 import { cn } from "../../utils/bem";
-import { absoluteURL, isDefined } from "../../utils/helpers";
+import { isDefined } from "../../utils/helpers";
 import {
+  downloadTrainingArtifact,
   getTrainServerBodyFields,
   getTrainServerQueryParams,
   getTrainServerSettings,
+  hasTrainServerUrl,
   normalizeTrainServerUrl,
+  saveTrainServerDraft,
   setTrainServerSettings,
 } from "./trainServerStorage";
 import { toUltralyticsTaskKey } from "../ModelDeployment/trainingTaskTypes";
@@ -37,7 +40,8 @@ export const TrainingPage = () => {
   const [trainingState, setTrainingState] = useState("idle"); // idle | running | done | error
   const [metrics, setMetrics] = useState(null);
   const [artifacts, setArtifacts] = useState([]);
-  const [outputModelUrl, setOutputModelUrl] = useState(null);
+  const [outputModelFile, setOutputModelFile] = useState(null);
+  const [downloadingOutput, setDownloadingOutput] = useState(false);
   const [errorMessage, setErrorMessage] = useState(null);
   const [localModels, setLocalModels] = useState([]);
   const [selectedBaseWeights, setSelectedBaseWeights] = useState(null);
@@ -68,6 +72,7 @@ export const TrainingPage = () => {
   const [trainServerVerified, setTrainServerVerified] = useState(false);
   const [trainServerVerifyDetail, setTrainServerVerifyDetail] = useState(null);
   const [verifyingTrainServer, setVerifyingTrainServer] = useState(false);
+  const didRestoreTrainServerRef = useRef(false);
 
   const loadModels = useCallback(async (taskOverride) => {
     if (!pageParams?.id) return;
@@ -99,14 +104,21 @@ export const TrainingPage = () => {
     }
   }, [api, pageParams?.id, trainingSpec?.task_type]);
 
-  const verifyTrainServer = useCallback(async () => {
+  const verifyTrainServer = useCallback(async (override = {}) => {
     if (!pageParams?.id) return;
+    const urlInput = override.url ?? trainServerUrl;
+    const apiKeyInput = override.apiKey ?? trainServerApiKey;
+    const normalized = normalizeTrainServerUrl(urlInput);
+    if (!normalized) {
+      setTrainServerVerified(false);
+      setTrainServerVerifyDetail("請輸入 Train Server 位址");
+      return;
+    }
     setVerifyingTrainServer(true);
     setTrainServerVerifyDetail(null);
-    const normalized = normalizeTrainServerUrl(trainServerUrl);
     setTrainServerSettings(pageParams.id, {
       url: normalized,
-      apiKey: trainServerApiKey,
+      apiKey: apiKeyInput,
       verified: false,
     });
     try {
@@ -114,28 +126,57 @@ export const TrainingPage = () => {
         params: {
           pk: pageParams.id,
           train_server_url: normalized,
-          ...(trainServerApiKey ? { train_server_api_key: trainServerApiKey } : {}),
+          ...(apiKeyInput ? { train_server_api_key: apiKeyInput } : {}),
         },
         errorFilter: () => true,
       });
       const ok = Boolean(res?.ok);
       setTrainServerVerified(ok);
-      setTrainServerVerifyDetail(res?.detail ?? (ok ? "連線成功" : "連線失敗"));
+      const detail =
+        res?.detail ??
+        (ok
+          ? `連線成功（${res?.base_url ?? normalized}）`
+          : "連線失敗");
+      setTrainServerVerifyDetail(detail);
       setTrainServerSettings(pageParams.id, {
         url: normalized,
-        apiKey: trainServerApiKey,
+        apiKey: apiKeyInput,
         verified: ok,
         verifiedAt: ok ? new Date().toISOString() : null,
-        detail: res?.detail ?? null,
+        detail,
       });
       if (ok) await loadModels();
     } catch (err) {
       setTrainServerVerified(false);
       setTrainServerVerifyDetail(err?.message ?? "驗證失敗");
+      saveTrainServerDraft(pageParams.id, { url: normalized, apiKey: apiKeyInput });
     } finally {
       setVerifyingTrainServer(false);
     }
   }, [api, pageParams?.id, trainServerUrl, trainServerApiKey, loadModels]);
+
+  const handleTrainServerUrlChange = useCallback(
+    (value) => {
+      setTrainServerUrl(value);
+      setTrainServerVerified(false);
+      setTrainServerVerifyDetail(null);
+      if (pageParams?.id) {
+        saveTrainServerDraft(pageParams.id, { url: value, apiKey: trainServerApiKey });
+      }
+    },
+    [pageParams?.id, trainServerApiKey],
+  );
+
+  const handleTrainServerApiKeyChange = useCallback(
+    (value) => {
+      setTrainServerApiKey(value);
+      setTrainServerVerified(false);
+      if (pageParams?.id) {
+        saveTrainServerDraft(pageParams.id, { url: trainServerUrl, apiKey: value });
+      }
+    },
+    [pageParams?.id, trainServerUrl],
+  );
 
   const closeAndBack = useCallback(() => {
     const path = location.pathname.replace(TrainingPage.path, "");
@@ -145,13 +186,26 @@ export const TrainingPage = () => {
 
   useEffect(() => {
     if (!isDefined(pageParams?.id)) return;
-    let cancelled = false;
+    didRestoreTrainServerRef.current = false;
+  }, [pageParams?.id]);
+
+  useEffect(() => {
+    if (!isDefined(pageParams?.id) || didRestoreTrainServerRef.current) return;
+    didRestoreTrainServerRef.current = true;
 
     const saved = getTrainServerSettings(pageParams.id);
     setTrainServerUrl(saved.url ?? "");
     setTrainServerApiKey(saved.apiKey ?? "");
     setTrainServerVerified(Boolean(saved.verified));
     setTrainServerVerifyDetail(saved.detail ?? null);
+    if (saved.verified && hasTrainServerUrl(saved.url)) {
+      verifyTrainServer({ url: saved.url, apiKey: saved.apiKey });
+    }
+  }, [pageParams?.id, verifyTrainServer]);
+
+  useEffect(() => {
+    if (!isDefined(pageParams?.id)) return;
+    let cancelled = false;
 
     api
       .callApi("project", {
@@ -194,7 +248,7 @@ export const TrainingPage = () => {
     setTrainingState("running");
     setMetrics(null);
     setArtifacts([]);
-    setOutputModelUrl(null);
+    setOutputModelFile(null);
     setJobId(null);
     setJobInfo(null);
 
@@ -202,6 +256,9 @@ export const TrainingPage = () => {
       if (!pageParams?.id) return;
       if (!selectedBaseWeights) throw new Error("請先選擇 base 模型（權重檔）");
       if (!datasetConfigPath) throw new Error("請輸入 dataset_config.json 路徑");
+      if (hasTrainServerUrl(trainServerUrl) && !trainServerVerified) {
+        throw new Error("請先驗證 Train Server 連線後再開始訓練");
+      }
 
       const extraTrainParams = {};
       if (mosaic !== "") extraTrainParams.mosaic = Number(mosaic);
@@ -222,7 +279,11 @@ export const TrainingPage = () => {
           lrf: lrf !== "" ? Number(lrf) : undefined,
           train_params: Object.keys(extraTrainParams).length ? extraTrainParams : undefined,
           training_model: trainingEngine !== "auto" ? trainingEngine : undefined,
-          ...getTrainServerBodyFields(pageParams.id),
+          ...getTrainServerBodyFields(pageParams.id, {
+            url: trainServerUrl,
+            apiKey: trainServerApiKey,
+            verified: trainServerVerified,
+          }),
         },
       });
 
@@ -251,6 +312,9 @@ export const TrainingPage = () => {
     trainingEngine,
     api,
     history,
+    trainServerUrl,
+    trainServerApiKey,
+    trainServerVerified,
   ]);
 
   const prepareDatasetFromExport = useCallback(async () => {
@@ -283,17 +347,25 @@ export const TrainingPage = () => {
     (m) => m.path === selectedBaseWeights || m.name === selectedBaseWeights,
   );
 
+  const customTrainServerUrl = normalizeTrainServerUrl(trainServerUrl);
+  const requiresTrainServerVerification = hasTrainServerUrl(customTrainServerUrl);
+  const trainServerReady = !requiresTrainServerVerification || trainServerVerified;
+
   const canStart =
     hasSelectableModel &&
     (trainingState === "idle" || trainingState === "error") &&
     Boolean(selectedBaseWeights) &&
-    Boolean(datasetConfigPath);
+    Boolean(datasetConfigPath) &&
+    trainServerReady;
 
   const hasDatasetReady = Boolean(datasetConfigPath);
 
   const disabledReason = (() => {
     if (trainingState === "running") return "目前已有任務進行中";
     if (trainingState === "done") return "本次訓練已完成；若要再次訓練請關閉此視窗後重新開啟 Training。";
+    if (requiresTrainServerVerification && !trainServerVerified) {
+      return "請先輸入 Train Server 位址並點「驗證連線」，通過後才能在此訓練";
+    }
     if (localModels.length === 0) return "找不到可用模型（請設定 Train Server 或放置權重於 data/training/models/original/）";
     if (!selectedBaseWeights) return "請先選擇 base 模型";
     if (!datasetConfigPath) return "請先輸入或從 Export 產生 dataset_config.json";
@@ -337,9 +409,7 @@ export const TrainingPage = () => {
           const file = best ?? last;
 
           if (file) {
-            setOutputModelUrl(
-              absoluteURL(`/api/projects/${pageParams.id}/training/jobs/${jobId}/download?file=${file}`),
-            );
+            setOutputModelFile(file);
           }
           return;
         }
@@ -362,6 +432,27 @@ export const TrainingPage = () => {
       if (timer) window.clearTimeout(timer);
     };
   }, [pageParams?.id, jobId]);
+
+  const downloadOutputModel = useCallback(async () => {
+    if (!pageParams?.id || !jobId || !outputModelFile) return;
+    setDownloadingOutput(true);
+    try {
+      const trainQuery = getTrainServerQueryParams(pageParams.id);
+      if (jobInfo?.train_server_url && !trainQuery.train_server_url) {
+        trainQuery.train_server_url = jobInfo.train_server_url;
+      }
+      await downloadTrainingArtifact(api, {
+        projectId: pageParams.id,
+        jobId,
+        file: outputModelFile,
+        trainServerParams: trainQuery,
+      });
+    } catch (err) {
+      setErrorMessage(err?.message ?? "下載模型失敗");
+    } finally {
+      setDownloadingOutput(false);
+    }
+  }, [api, jobId, jobInfo?.train_server_url, outputModelFile, pageParams?.id]);
 
   return (
     <Modal
@@ -390,10 +481,12 @@ export const TrainingPage = () => {
               className="w-full"
               placeholder="例如：192.168.1.10:8011 或 http://gpu-server:8011"
               value={trainServerUrl}
-              onChange={(e) => {
-                setTrainServerUrl(e.target.value);
-                setTrainServerVerified(false);
-                setTrainServerVerifyDetail(null);
+              onChange={(e) => handleTrainServerUrlChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  verifyTrainServer();
+                }
               }}
             />
             <input
@@ -402,25 +495,47 @@ export const TrainingPage = () => {
               placeholder="API Key（可選）"
               type="password"
               value={trainServerApiKey}
-              onChange={(e) => {
-                setTrainServerApiKey(e.target.value);
-                setTrainServerVerified(false);
+              onChange={(e) => handleTrainServerApiKeyChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  verifyTrainServer();
+                }
               }}
             />
             <Button
               look="outlined"
               size="small"
               waiting={verifyingTrainServer}
-              onClick={verifyTrainServer}
+              onClick={() => verifyTrainServer()}
               icon={trainServerVerified ? <IconCheck /> : undefined}
             >
               {trainServerVerified ? "已驗證" : "驗證連線"}
             </Button>
           </div>
           <div className={cn("training-page").elem("hint").toClassName()} style={{ marginTop: 8 }}>
-            留空則使用伺服器環境變數 TRAIN_SERVER_URL；填寫後會優先連到指定 IP/主機。
+            留空則使用伺服器環境變數 TRAIN_SERVER_URL（本機 RQ 或預設遠端）。
+            填寫遠端位址後請先驗證，通過後才能開始訓練。
             {trainServerVerifyDetail ? ` — ${trainServerVerifyDetail}` : ""}
           </div>
+          {requiresTrainServerVerification && (
+            <div
+              className={cn("training-page")
+                .elem("train-server-status")
+                .mod({
+                  ok: trainServerVerified,
+                  pending: !trainServerVerified && !verifyingTrainServer,
+                })
+                .toClassName()}
+              style={{ marginTop: 8 }}
+            >
+              {trainServerVerified
+                ? "Train Server 可用，可在此專案進行遠端訓練。"
+                : verifyingTrainServer
+                  ? "正在驗證 Train Server…"
+                  : "尚未驗證 — 請點「驗證連線」確認遠端 Train Server 可連線。"}
+            </div>
+          )}
           {trainServerMode === "remote" && trainServerVerified && (
             <div className={cn("training-page").elem("hint").toClassName()} style={{ marginTop: 4 }}>
               目前使用遠端 Train Server（模型可自動下載）。
@@ -795,7 +910,7 @@ export const TrainingPage = () => {
         )}
 
         {/* 輸出模型下載 / 部署 */}
-        {outputModelUrl && (
+        {outputModelFile && (
           <div className={cn("training-page").elem("section").toClassName()}>
             <div className={cn("training-page").elem("section-title").toClassName()}>
               <IconFileDownload /> 輸出模型
@@ -803,15 +918,13 @@ export const TrainingPage = () => {
             <div className={cn("training-page").elem("output").toClassName()}>
               <p>訓練完成。</p>
               <Button
-                as="a"
-                href={outputModelUrl}
-                target="_blank"
-                rel="noreferrer"
+                onClick={downloadOutputModel}
+                waiting={downloadingOutput}
                 icon={<IconFileDownload />}
                 look="outlined"
                 size="small"
               >
-                下載模型
+                下載 {outputModelFile}
               </Button>
             </div>
           </div>

@@ -50,25 +50,54 @@ export function normalizeTrainServerUrl(raw) {
 }
 
 /**
+ * @param {string} raw
+ */
+export function hasTrainServerUrl(raw) {
+  return Boolean(normalizeTrainServerUrl(raw));
+}
+
+/**
+ * Persist URL/API key draft; clears verified until user clicks verify again.
+ * @param {number|string} projectId
+ * @param {{ url?: string, apiKey?: string }} draft
+ */
+export function saveTrainServerDraft(projectId, draft) {
+  if (!projectId) return;
+  setTrainServerSettings(projectId, {
+    url: draft.url ?? "",
+    apiKey: draft.apiKey ?? "",
+    verified: false,
+    verifiedAt: null,
+    detail: null,
+  });
+}
+
+/**
  * @param {number|string} projectId
  */
 export function getTrainServerQueryParams(projectId) {
-  const { url, apiKey } = getTrainServerSettings(projectId);
+  const { url, apiKey, verified } = getTrainServerSettings(projectId);
   const params = {};
   const normalized = normalizeTrainServerUrl(url);
-  if (normalized) params.train_server_url = normalized;
+  if (!normalized || !verified) return params;
+  params.train_server_url = normalized;
   if (apiKey) params.train_server_api_key = apiKey;
   return params;
 }
 
 /**
  * @param {number|string} projectId
+ * @param {{ url?: string, apiKey?: string, verified?: boolean }} [override]
  */
-export function getTrainServerBodyFields(projectId) {
-  const { url, apiKey } = getTrainServerSettings(projectId);
+export function getTrainServerBodyFields(projectId, override = {}) {
+  const stored = getTrainServerSettings(projectId);
+  const url = override.url ?? stored.url;
+  const apiKey = override.apiKey ?? stored.apiKey;
+  const verified = override.verified ?? stored.verified;
   const body = {};
   const normalized = normalizeTrainServerUrl(url);
-  if (normalized) body.train_server_url = normalized;
+  if (!normalized || !verified) return body;
+  body.train_server_url = normalized;
   if (apiKey) body.train_server_api_key = apiKey;
   return body;
 }
@@ -94,4 +123,44 @@ export function appendTrainServerToApiPath(path, projectId, run = {}) {
   const base = path.split("?")[0];
   const qs = params.toString();
   return qs ? `${base}?${qs}` : base;
+}
+
+/**
+ * 經 Django API 下載訓練產物（帶 session 與 train_server 參數；避免 <a href> 401/404）。
+ * @param {import("@humansignal/core").ApiContextType["api"]} api
+ * @param {{ projectId: number|string, jobId: string, file: string, trainServerParams?: Record<string, string> }} opts
+ */
+export async function downloadTrainingArtifact(api, { projectId, jobId, file, trainServerParams = {} }) {
+  const response = await api.callApi("trainingJobDownloadRaw", {
+    params: {
+      pk: projectId,
+      job_id: jobId,
+      file,
+      ...trainServerParams,
+    },
+    errorFilter: () => true,
+  });
+
+  if (!response?.ok) {
+    let detail = "";
+    try {
+      const text = await response.text();
+      try {
+        const parsed = JSON.parse(text);
+        detail = parsed.detail ?? text;
+      } catch {
+        detail = text;
+      }
+    } catch {
+      detail = "";
+    }
+    throw new Error(detail || `下載失敗（HTTP ${response?.status ?? "error"}）`);
+  }
+
+  const blob = await response.blob();
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = file;
+  link.click();
+  URL.revokeObjectURL(link.href);
 }

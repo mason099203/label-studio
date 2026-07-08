@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 
+from .device_utils import get_torch_device_info
 from .job_manager import JobManager
 from .trainer import ensure_yolo_weights
 from .yolo_catalog import (
@@ -53,8 +54,8 @@ def _verify_api_key(x_api_key: Optional[str] = Header(default=None, alias="X-API
 
 
 @app.get("/health")
-def health() -> Dict[str, str]:
-    return {"status": "ok", "service": "train-server"}
+def health() -> Dict[str, Any]:
+    return {"status": "ok", "service": "train-server", **get_torch_device_info()}
 
 
 @app.get("/tasks")

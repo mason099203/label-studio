@@ -164,6 +164,7 @@ services:
       - TRAIN_SERVER_OUTPUT_ROOT=/data/training/models/trained
       - TRAIN_SERVER_MODELS_DIR=/data/training/models/original
       - TRAIN_SERVER_MAX_WORKERS=1
+      - TRAIN_SERVER_DATALOADER_WORKERS=0
       - TRAIN_SERVER_API_KEY=${TRAIN_SERVER_API_KEY:-}
     volumes:
       - ./data:/data:rw
