@@ -433,17 +433,23 @@ def _build_training_spec(
     return spec
 
 
+TRAINING_UNSUPPORTED_INTERFACE_MSG = (
+    "目前僅支援 Classification（Choices）、Bounding Box（RectangleLabels）、"
+    "Mask Segmentation（Brush/Mask）訓練；pose、OBB、Polygon 等介面尚無法訓練。"
+)
+
+
 def detect_training_interface(project: Project) -> Dict[str, Any]:
     """
     Detect the project training interface from parsed label config.
 
-    Supported mappings:
+    Currently allowed mappings:
     - Image + Choices -> classification
-    - Image + RectangleLabels + KeyPointLabels -> pose
-    - Image + RectangleLabels (model_obb="true") -> obb
     - Image + BrushLabels / MaskLabels / BitmaskLabels -> semantic segmentation
     - Image + RectangleLabels -> detect
-    - Image + PolygonLabels -> instance segmentation
+
+    Currently rejected (raise ValueError):
+    - Pose (KeyPointLabels), OBB (model_obb), PolygonLabels instance segmentation
     """
 
     parsed = project.get_parsed_config() or {}
@@ -463,31 +469,10 @@ def detect_training_interface(project: Project) -> Dict[str, Any]:
             )
 
     if _project_has_control_type(parsed, "KeyPointLabels"):
-        if not _project_has_control_type(parsed, "RectangleLabels"):
-            raise ValueError(
-                "姿態估計（pose）需要同時設定 RectangleLabels 與 KeyPointLabels，"
-                "且 KeyPoint 需關聯到 Rectangle 父區域。",
-            )
-        rect_name, rect_info = _find_control_by_type(parsed, "RectangleLabels")
-        kp_name, _ = _find_control_by_type(parsed, "KeyPointLabels")
-        return _build_training_spec(
-            task_type="pose",
-            training_model="yolo_pose",
-            control_name=rect_name or "",
-            keypoint_control_name=kp_name,
-            data_key=_get_first_input_data_key(rect_info or {}),
-            labels=list((rect_info or {}).get("labels") or []),
-        )
+        raise ValueError(TRAINING_UNSUPPORTED_INTERFACE_MSG)
 
     if _project_has_control_type(parsed, "RectangleLabels") and _rectangle_labels_use_obb(project):
-        rect_name, rect_info = _find_control_by_type(parsed, "RectangleLabels")
-        return _build_training_spec(
-            task_type="obb",
-            training_model="yolo_obb",
-            control_name=rect_name or "",
-            data_key=_get_first_input_data_key(rect_info or {}),
-            labels=list((rect_info or {}).get("labels") or []),
-        )
+        raise ValueError(TRAINING_UNSUPPORTED_INTERFACE_MSG)
 
     for control_name, info in parsed.items():
         control_type = str(info.get("type") or "")
@@ -514,20 +499,9 @@ def detect_training_interface(project: Project) -> Dict[str, Any]:
     for control_name, info in parsed.items():
         control_type = str(info.get("type") or "")
         if control_type == "PolygonLabels" and _control_has_image_input(info):
-            return _build_training_spec(
-                task_type="segmentation",
-                training_model="yolo_segment",
-                control_name=control_name,
-                data_key=_get_first_input_data_key(info),
-                labels=list(info.get("labels") or []),
-            )
+            raise ValueError(TRAINING_UNSUPPORTED_INTERFACE_MSG)
 
-    raise ValueError(
-        "目前支援的訓練介面：Image + Choices（classification）、"
-        "Image + RectangleLabels（detect/obb）、Image + PolygonLabels（instance segmentation）、"
-        "Image + BrushLabels/MaskLabels（semantic segmentation）、"
-        "Image + RectangleLabels + KeyPointLabels（pose）。",
-    )
+    raise ValueError(TRAINING_UNSUPPORTED_INTERFACE_MSG)
 
 
 def _export_project_json(project_id: int, output_path: Path, export_format: str = "JSON_MIN") -> Path:
