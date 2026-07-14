@@ -30,12 +30,16 @@
 # • 預設 DataLoader workers=0（Docker /dev/shm 不足時 workers>0 會 bus error）；要加速可 run 加：
 #   --shm-size=2g -e TRAIN_SERVER_DATALOADER_WORKERS=4
 # • 預設優先 GPU（需 --gpus all + NVIDIA Container Toolkit）；無 GPU 時自動用 CPU
+# • RTX 50 系列（Blackwell / sm_120）需 cu128 以上；若仍見 “no kernel image…”，
+#   重建本映像，或暫時：-e TRAIN_SERVER_DEVICE=cpu
 # • 不掛 -v 時：訓練產物在容器內，刪容器會消失；Label Studio 透過 API 取回 best.pt
 # • 掛 -v ./data:/data 時：與 Label Studio 共用資料集／模型目錄（Compose 預設行為）
 # • Label Studio 連線：TRAIN_SERVER_URL=http://localhost:8011（遠端改為該主機 IP）
 # • 可選 API Key：run 加 -e TRAIN_SERVER_API_KEY=your-secret，Label Studio 端需一致
 # • Docker Compose：docker compose up -d train-server（服務名 train-server，埠 8011）
 ARG PYTHON_VERSION=3.12
+# PyTorch CUDA 輪子索引：cu128 支援 Blackwell（RTX 50）；舊 GPU 在驅動夠新時通常仍可用
+ARG TORCH_CUDA_INDEX_URL=https://download.pytorch.org/whl/cu128
 
 FROM python:${PYTHON_VERSION}-slim-bookworm
 
@@ -58,11 +62,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY train_server/requirements-train.txt /app/train_server/requirements-train.txt
-# CUDA 版 torch（預設 GPU 訓練；容器未掛載 GPU 時自動回退 CPU）
+# CUDA 版 torch（預設 GPU 訓練；容器未掛載 GPU 或強制 TRAIN_SERVER_DEVICE=cpu 時用 CPU）
+ARG TORCH_CUDA_INDEX_URL=https://download.pytorch.org/whl/cu128
 RUN pip install --upgrade pip \
     && pip install "numpy>=1.26.4,<2.0" \
-        "torch>=2.0.1" "torchvision>=0.15.2" \
-        --index-url https://download.pytorch.org/whl/cu124 \
+        "torch>=2.7.0" "torchvision>=0.22.0" \
+        --index-url "${TORCH_CUDA_INDEX_URL}" \
     && pip install -r /app/train_server/requirements-train.txt
 
 COPY train_server /app/train_server
