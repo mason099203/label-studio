@@ -13,6 +13,7 @@ import { cn } from "../../utils/bem";
 import { isDefined } from "../../utils/helpers";
 import { ImportModal } from "../CreateProject/Import/ImportModal";
 import { ExportPage } from "../ExportPage/ExportPage";
+import { isAllowedTrainingTaskType } from "../ModelDeployment/trainingTaskTypes";
 import { TrainingPage } from "../TrainingPage/TrainingPage";
 import { TrainingProgressPage } from "../TrainingProgressPage/TrainingProgressPage";
 import { APIConfig } from "./api-config";
@@ -41,7 +42,7 @@ const initializeDataManager = async (root, props, params) => {
     interfaces: {
       import: true,
       export: true,
-      training: true,
+      training: params.trainingEnabled === true,
       backButton: false,
       labelingHeader: false,
       autoAnnotation: params.autoAnnotation,
@@ -87,12 +88,23 @@ export const DataManagerPage = ({ ...props }) => {
 
     const interactiveBacked = (mlBackends ?? []).find(({ is_interactive }) => is_interactive);
 
+    // 僅 Classification / Bounding Box / Mask 顯示工具列 Training；其餘模式隱藏入口
+    let trainingEnabled = false;
+    const trainingIface = await api.callApi("trainingInterface", {
+      params: { pk: project.id },
+      errorFilter: () => true,
+    });
+    if (trainingIface && !trainingIface.detail && isAllowedTrainingTaskType(trainingIface.task_type)) {
+      trainingEnabled = true;
+    }
+
     const dataManager = (dataManagerRef.current =
       dataManagerRef.current ??
       (await initializeDataManager(root.current, props, {
         ...params,
         project,
         autoAnnotation: isDefined(interactiveBacked),
+        trainingEnabled,
       })));
 
     // initializeDataManager 在 root 為 null 或已初始化時回傳 undefined，需提早返回避免 .on() NPE

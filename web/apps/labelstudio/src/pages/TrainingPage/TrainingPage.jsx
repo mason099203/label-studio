@@ -18,15 +18,11 @@ import {
   saveTrainServerDraft,
   setTrainServerSettings,
 } from "./trainServerStorage";
-import { toUltralyticsTaskKey } from "../ModelDeployment/trainingTaskTypes";
+import {
+  isAllowedTrainingTaskType,
+  toUltralyticsTaskKey,
+} from "../ModelDeployment/trainingTaskTypes";
 import "./TrainingPage.scss";
-
-/** 與後端 detect_training_interface 允許的 task_type 對齊 */
-const ALLOWED_TRAINING_TASK_TYPES = new Set([
-  "classification",
-  "detect",
-  "semantic_segmentation",
-]);
 
 const TRAINING_UNSUPPORTED_HINT =
   "目前僅支援 Classification（Choices）、Bounding Box（RectangleLabels）、Mask Segmentation（Brush/Mask）訓練；pose、OBB、Polygon 等介面尚無法訓練。";
@@ -244,7 +240,7 @@ export const TrainingPage = () => {
       })
       .then((res) => {
         if (cancelled) return;
-        if (!res || res?.detail || !ALLOWED_TRAINING_TASK_TYPES.has(res.task_type)) {
+        if (!res || res?.detail || !isAllowedTrainingTaskType(res.task_type)) {
           setUnsupportedTraining(true);
           setUnsupportedTrainingDetail(
             typeof res?.detail === "string" ? res.detail : TRAINING_UNSUPPORTED_HINT,

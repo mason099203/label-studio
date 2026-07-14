@@ -1,5 +1,20 @@
 /** Playground / 部署共用的訓練任務類型定義（對齊後端 detect_training_interface）。 */
 
+/** Training 目前允許的 task_type（與後端 detect_training_interface 白名單對齊） */
+export const ALLOWED_TRAINING_TASK_TYPES = new Set([
+  "classification",
+  "detect",
+  "semantic_segmentation",
+]);
+
+/**
+ * @param {string | null | undefined} taskType
+ * @returns {boolean}
+ */
+export function isAllowedTrainingTaskType(taskType) {
+  return ALLOWED_TRAINING_TASK_TYPES.has(taskType);
+}
+
 export const PLAYGROUND_TASK_TYPES = {
   detect: {
     label: "物件偵測（矩形框）",
