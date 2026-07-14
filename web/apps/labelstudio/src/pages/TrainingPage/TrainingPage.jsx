@@ -81,6 +81,8 @@ export const TrainingPage = () => {
   const [unsupportedTraining, setUnsupportedTraining] = useState(false);
   const [unsupportedTrainingDetail, setUnsupportedTrainingDetail] = useState(null);
   const didRestoreTrainServerRef = useRef(false);
+  /** 已套用預設參數的 task key；同 task 再次 loadModels 不覆寫使用者修改 */
+  const appliedDefaultsTaskRef = useRef(null);
 
   const loadModels = useCallback(async (taskOverride) => {
     if (!pageParams?.id) return;
@@ -96,20 +98,29 @@ export const TrainingPage = () => {
       setErrorMessage("無法取得模型清單");
       return;
     }
-    const models = res?.models ?? [];
-    setLocalModels(Array.isArray(models) ? models : []);
+    const models = Array.isArray(res?.models) ? res.models : [];
+    setLocalModels(models);
     setTrainingSpec(res?.training_spec ?? null);
     setTrainServerMode(res?.train_server ?? "local");
     setTaskDefaults(res?.task_defaults ?? null);
-    if (res?.task_defaults?.epochs) setEpochs(res.task_defaults.epochs);
-    if (res?.task_defaults?.imgsz) setImgsz(res.task_defaults.imgsz);
-    if (res?.task_defaults?.batch) setBatch(res.task_defaults.batch);
-    if (res?.task_defaults?.patience) setPatience(res.task_defaults.patience);
-    if (res?.task_defaults?.optimizer) setOptimizer(res.task_defaults.optimizer);
-    if (models?.length) {
-      const preferred = models.find((m) => m.available) ?? models[0];
-      setSelectedBaseWeights(preferred.path ?? preferred.name);
+
+    const defaultsKey = taskKey ?? res?.training_spec?.task_type ?? "default";
+    const defaults = res?.task_defaults;
+    if (defaults && appliedDefaultsTaskRef.current !== defaultsKey) {
+      appliedDefaultsTaskRef.current = defaultsKey;
+      if (defaults.epochs != null) setEpochs(defaults.epochs);
+      if (defaults.imgsz != null) setImgsz(defaults.imgsz);
+      if (defaults.batch != null) setBatch(defaults.batch);
+      if (defaults.patience != null) setPatience(defaults.patience);
+      if (defaults.optimizer) setOptimizer(defaults.optimizer);
     }
+
+    setSelectedBaseWeights((prev) => {
+      if (prev && models.some((m) => m.path === prev || m.name === prev)) return prev;
+      if (!models.length) return null;
+      const preferred = models.find((m) => m.available) ?? models[0];
+      return preferred.path ?? preferred.name;
+    });
   }, [api, pageParams?.id, trainingSpec?.task_type]);
 
   const verifyTrainServer = useCallback(async (override = {}) => {
@@ -195,6 +206,7 @@ export const TrainingPage = () => {
   useEffect(() => {
     if (!isDefined(pageParams?.id)) return;
     didRestoreTrainServerRef.current = false;
+    appliedDefaultsTaskRef.current = null;
   }, [pageParams?.id]);
 
   useEffect(() => {
@@ -605,108 +617,121 @@ export const TrainingPage = () => {
               找不到模型清單。請設定 TRAIN_SERVER_URL 或將 `.pt` 放到 `data/training/models/original/`。
             </div>
           ) : (
-            <div className={cn("training-page").elem("backends").toClassName()}>
-              {localModels.map((m) => (
-                <div
-                  key={m.path ?? m.name}
-                  className={cn("training-page")
-                    .elem("backend-item")
-                    .mod({ selected: selectedBaseWeights === m.path || selectedBaseWeights === m.name })
-                    .toClassName()}
-                  onClick={() => setSelectedBaseWeights(m.path ?? m.name)}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => e.key === "Enter" && setSelectedBaseWeights(m.path ?? m.name)}
-                >
-                  <span className={cn("training-page").elem("backend-title").toClassName()}>
-                    {m.name}
-                    {m.family ? ` (${m.family})` : ""}
-                    {!m.available && trainServerMode === "remote" ? " · 將自動下載" : ""}
-                  </span>
-                </div>
-              ))}
-            </div>
+            <label className={cn("training-page").elem("field").toClassName()}>
+              <span className={cn("training-page").elem("field-label").toClassName()}>模型</span>
+              <select
+                className={cn("training-page").elem("select").toClassName()}
+                value={selectedBaseWeights ?? ""}
+                onChange={(e) => setSelectedBaseWeights(e.target.value || null)}
+                aria-label="選擇基礎模型"
+              >
+                {localModels.map((m) => {
+                  const value = m.path ?? m.name;
+                  const suffix = [
+                    m.family ? m.family : null,
+                    !m.available && trainServerMode === "remote" ? "將自動下載" : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ");
+                  return (
+                    <option key={value} value={value}>
+                      {m.name}
+                      {suffix ? ` (${suffix})` : ""}
+                    </option>
+                  );
+                })}
+              </select>
+            </label>
           )}
         </div>
 
-        {/* 訓練超參數（對齊 Ultralytics 第 3 步：epochs / batch / imgsz / run name） */}
+        {/* 訓練超參數（對齊 Ultralytics：epochs / batch / imgsz / run name） */}
         <div className={cn("training-page").elem("section").toClassName()}>
           <div className={cn("training-page").elem("section-title").toClassName()}>訓練參數</div>
-          <div className={cn("training-page").elem("stats").toClassName()} style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-            <label>
-              Run 名稱
+          <div className={cn("training-page").elem("param-grid").toClassName()}>
+            <label className={cn("training-page").elem("field").toClassName()}>
+              <span className={cn("training-page").elem("field-label").toClassName()}>Run 名稱</span>
               <input
                 type="text"
                 className={cn("training-page").elem("input").toClassName()}
                 value={runName}
                 placeholder="可選"
                 onChange={(e) => setRunName(e.target.value)}
-                style={{ width: 140, marginLeft: 6 }}
               />
             </label>
-            <label>
-              Epochs
+            <label className={cn("training-page").elem("field").toClassName()}>
+              <span className={cn("training-page").elem("field-label").toClassName()}>Epochs</span>
               <input
                 type="number"
                 min={1}
                 className={cn("training-page").elem("input").toClassName()}
                 value={epochs}
-                onChange={(e) => setEpochs(Number(e.target.value) || taskDefaults?.epochs || 100)}
-                style={{ width: 80, marginLeft: 6 }}
+                onChange={(e) => {
+                  const n = Number(e.target.value);
+                  if (e.target.value === "" || Number.isNaN(n)) return;
+                  setEpochs(n);
+                }}
               />
             </label>
-            <label>
-              Image size
+            <label className={cn("training-page").elem("field").toClassName()}>
+              <span className={cn("training-page").elem("field-label").toClassName()}>Image size</span>
               <input
                 type="number"
                 min={32}
                 step={32}
                 className={cn("training-page").elem("input").toClassName()}
                 value={imgsz}
-                onChange={(e) => setImgsz(Number(e.target.value) || taskDefaults?.imgsz || 640)}
-                style={{ width: 80, marginLeft: 6 }}
+                onChange={(e) => {
+                  const n = Number(e.target.value);
+                  if (e.target.value === "" || Number.isNaN(n)) return;
+                  setImgsz(n);
+                }}
               />
             </label>
-            <label>
-              Batch
+            <label className={cn("training-page").elem("field").toClassName()}>
+              <span className={cn("training-page").elem("field-label").toClassName()}>Batch</span>
               <input
                 type="number"
                 min={1}
                 className={cn("training-page").elem("input").toClassName()}
                 value={batch}
-                onChange={(e) => setBatch(Number(e.target.value) || taskDefaults?.batch || 16)}
-                style={{ width: 80, marginLeft: 6 }}
+                onChange={(e) => {
+                  const n = Number(e.target.value);
+                  if (e.target.value === "" || Number.isNaN(n)) return;
+                  setBatch(n);
+                }}
               />
             </label>
-            <label>
-              Patience
+            <label className={cn("training-page").elem("field").toClassName()}>
+              <span className={cn("training-page").elem("field-label").toClassName()}>Patience</span>
               <input
                 type="number"
                 min={1}
                 className={cn("training-page").elem("input").toClassName()}
                 value={patience}
-                onChange={(e) => setPatience(Number(e.target.value) || taskDefaults?.patience || 100)}
-                style={{ width: 80, marginLeft: 6 }}
+                onChange={(e) => {
+                  const n = Number(e.target.value);
+                  if (e.target.value === "" || Number.isNaN(n)) return;
+                  setPatience(n);
+                }}
               />
             </label>
           </div>
           <button
             type="button"
-            className={cn("training-page").elem("hint").toClassName()}
-            style={{ marginTop: 8, background: "none", border: "none", cursor: "pointer", padding: 0, textAlign: "left" }}
+            className={cn("training-page").elem("advanced-toggle").toClassName()}
             onClick={() => setShowAdvancedParams((v) => !v)}
           >
             {showAdvancedParams ? "▾ 收合進階參數" : "▸ 進階參數（學習率、增強等）"}
           </button>
           {showAdvancedParams && (
-            <div className={cn("training-page").elem("stats").toClassName()} style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 8 }}>
-              <label>
-                Optimizer
+            <div className={cn("training-page").elem("param-grid").toClassName()}>
+              <label className={cn("training-page").elem("field").toClassName()}>
+                <span className={cn("training-page").elem("field-label").toClassName()}>Optimizer</span>
                 <select
-                  className={cn("training-page").elem("input").toClassName()}
+                  className={cn("training-page").elem("select").toClassName()}
                   value={optimizer}
                   onChange={(e) => setOptimizer(e.target.value)}
-                  style={{ marginLeft: 6 }}
                 >
                   {["auto", "SGD", "Adam", "AdamW", "NAdam", "RAdam", "RMSProp"].map((opt) => (
                     <option key={opt} value={opt}>
@@ -715,32 +740,30 @@ export const TrainingPage = () => {
                   ))}
                 </select>
               </label>
-              <label>
-                lr0
+              <label className={cn("training-page").elem("field").toClassName()}>
+                <span className={cn("training-page").elem("field-label").toClassName()}>lr0</span>
                 <input
                   type="number"
                   step="0.0001"
                   className={cn("training-page").elem("input").toClassName()}
                   value={lr0}
-                  placeholder={taskDefaults?.lr0 ?? "0.01"}
+                  placeholder={String(taskDefaults?.lr0 ?? "0.01")}
                   onChange={(e) => setLr0(e.target.value)}
-                  style={{ width: 90, marginLeft: 6 }}
                 />
               </label>
-              <label>
-                lrf
+              <label className={cn("training-page").elem("field").toClassName()}>
+                <span className={cn("training-page").elem("field-label").toClassName()}>lrf</span>
                 <input
                   type="number"
                   step="0.0001"
                   className={cn("training-page").elem("input").toClassName()}
                   value={lrf}
-                  placeholder={taskDefaults?.lrf ?? "0.01"}
+                  placeholder={String(taskDefaults?.lrf ?? "0.01")}
                   onChange={(e) => setLrf(e.target.value)}
-                  style={{ width: 90, marginLeft: 6 }}
                 />
               </label>
-              <label>
-                mosaic
+              <label className={cn("training-page").elem("field").toClassName()}>
+                <span className={cn("training-page").elem("field-label").toClassName()}>mosaic</span>
                 <input
                   type="number"
                   step="0.1"
@@ -750,11 +773,10 @@ export const TrainingPage = () => {
                   value={mosaic}
                   placeholder="預設"
                   onChange={(e) => setMosaic(e.target.value)}
-                  style={{ width: 80, marginLeft: 6 }}
                 />
               </label>
-              <label>
-                mixup
+              <label className={cn("training-page").elem("field").toClassName()}>
+                <span className={cn("training-page").elem("field-label").toClassName()}>mixup</span>
                 <input
                   type="number"
                   step="0.1"
@@ -764,14 +786,13 @@ export const TrainingPage = () => {
                   value={mixup}
                   placeholder="預設"
                   onChange={(e) => setMixup(e.target.value)}
-                  style={{ width: 80, marginLeft: 6 }}
                 />
               </label>
             </div>
           )}
           {taskDefaults && (
             <div className={cn("training-page").elem("hint").toClassName()} style={{ marginTop: 6 }}>
-              預設依 Ultralytics {taskDefaults.task ?? "detect"} 任務。參考{" "}
+              預設依 Ultralytics {taskDefaults.task ?? "detect"} 任務（僅首次載入／更換任務時套用）。參考{" "}
               <a href="https://docs.ultralytics.com/zh/platform/train/cloud-training" target="_blank" rel="noreferrer">
                 官方訓練參數文件
               </a>
