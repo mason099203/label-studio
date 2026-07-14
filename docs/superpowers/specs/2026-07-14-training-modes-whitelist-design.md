@@ -1,97 +1,97 @@
-# Design: Limit Training to Classification / Bounding Box / Mask
+# 設計：Training 僅開放 Classification／Bounding Box／Mask
 
-**Date:** 2026-07-14  
-**Status:** Approved for implementation planning  
-**Approach:** Backend single source of truth + frontend early disable of Training actions
+**日期：** 2026-07-14  
+**狀態：** 已核准，待撰寫實作計畫  
+**作法：** 後端單一真相來源 + 前端提早禁用 Training 操作
 
-## Goal
+## 目標
 
-Restrict the Label Studio Training module so users can only train these three modes:
+限制 Label Studio Training 模組，使用者只能訓練以下三種模式：
 
-| User-facing mode | Label config | `task_type` | `training_model` |
-|------------------|--------------|-------------|------------------|
-| Classification | Image + Choices | `classification` | `yolo_classify`, `cnn_classify` |
-| Bounding box | Image + RectangleLabels (non-OBB) | `detect` | `yolo_detect` |
+| 使用者面向 | Label config | `task_type` | `training_model` |
+|------------|--------------|-------------|------------------|
+| Classification | Image + Choices | `classification` | `yolo_classify`、`cnn_classify` |
+| Bounding box | Image + RectangleLabels（非 OBB） | `detect` | `yolo_detect` |
 | Mask segmentation | Image + BrushLabels / MaskLabels / BitmaskLabels | `semantic_segmentation` | `yolo_semantic` |
 
-All other currently detected training interfaces must fail clearly and must not start a job.
+其他目前可被偵測到的訓練介面必須明確失敗，且不得啟動 job。
 
-## Explicitly blocked
+## 明確封鎖
 
-| Mode | Detection today | Action |
-|------|-----------------|--------|
-| Pose | RectangleLabels + KeyPointLabels | Reject (`ValueError` / API 400) |
-| OBB | RectangleLabels + `model_obb="true"` | Reject |
-| Polygon instance segmentation | PolygonLabels | Reject (`yolo_segment`) |
-| Anything else unsupported by detection | already raises | Keep raising; refresh error message to list only the three allowed modes |
+| 模式 | 目前偵測方式 | 處理 |
+|------|--------------|------|
+| Pose | RectangleLabels + KeyPointLabels | 拒絕（`ValueError`／API 400） |
+| OBB | RectangleLabels + `model_obb="true"` | 拒絕 |
+| Polygon 實例分割 | PolygonLabels | 拒絕（`yolo_segment`） |
+| 其他無法對應的介面 | 原本就 raise | 維持 raise；錯誤訊息改為只列出允許的三種 |
 
-Out of scope: deleting trainer code paths, changing Playground inference task-type dropdown, Train Server Dockerfile, or Model Deployment UI beyond Training page.
+本變更不包含：刪除 trainer 程式碼、收斂 Playground 推論任務類型下拉、改 Train Server Dockerfile，或超越 Training 頁的 Model Deployment UI。
 
-## Backend
+## 後端
 
-### 1. `detect_training_interface` (`label_studio/training/datasets.py`)
+### 1. `detect_training_interface`（`label_studio/training/datasets.py`）
 
-Primary gate. Today it returns specs for pose / obb / polygon. Change behavior:
+主要閘道。目前會回傳 pose／obb／polygon 的 spec。改為：
 
-- When pose or OBB would be detected → raise `ValueError` with a Chinese message that Training currently only supports Classification、Bounding Box、Mask Segmentation.
-- When PolygonLabels would be detected → raise the same style of `ValueError` (do not return `yolo_segment`).
-- Classification, detect (plain RectangleLabels), and brush/mask semantic segmentation continue to return specs unchanged.
-- Update the final “unsupported interface” message to list only the three allowed interfaces.
+- 偵測到 pose 或 OBB → 拋 `ValueError`，中文說明目前僅支援 Classification、Bounding Box、Mask Segmentation。
+- 偵測到 PolygonLabels → 同樣拋 `ValueError`（不回傳 `yolo_segment`）。
+- Classification、一般 RectangleLabels detect、Brush/Mask 語意分割 → 行為不變。
+- 最後一段「不支援介面」訊息改為只列出允許的三種。
 
-This automatically blocks dataset generation and any caller that relies on interface detection.
+如此會一併擋住資料集產生，以及任何依賴介面偵測的呼叫端。
 
-### 2. Jobs API whitelist (`label_studio/training/api.py`)
+### 2. Jobs API 白名單（`label_studio/training/api.py`）
 
-`ProjectTrainingJobsAPI.post` currently allows:
+`ProjectTrainingJobsAPI.post` 目前允許：
 
-`yolo_detect`, `yolo_classify`, `yolo_segment`, `yolo_pose`, `yolo_obb`, `yolo_semantic`, `cnn_classify`
+`yolo_detect`、`yolo_classify`、`yolo_segment`、`yolo_pose`、`yolo_obb`、`yolo_semantic`、`cnn_classify`
 
-Shrink to:
+縮成：
 
-`yolo_detect`, `yolo_classify`, `yolo_semantic`, `cnn_classify`
+`yolo_detect`、`yolo_classify`、`yolo_semantic`、`cnn_classify`
 
-Reject others with the existing unsupported-model response pattern. This prevents starting training from an old `dataset_config.json` that still names a blocked `training_model`.
+其餘用既有「unsupported training_model」回應拒絕，避免舊的 `dataset_config.json` 仍帶被封鎖的 `training_model` 卻能開訓。
 
-### 3. Error handling
+### 3. 錯誤處理
 
-Prefer consistent Chinese user-facing text, e.g.:
+對使用者統一中文說明，例如：
 
 > 目前僅支援 Classification（Choices）、Bounding Box（RectangleLabels）、Mask Segmentation（Brush/Mask）訓練；pose、OBB、Polygon 等介面尚無法訓練。
 
-Interface / prepare endpoints that already surface `ValueError` should continue to return 400 with that detail. Align prepare-dataset error handling with interface API if prepare currently bubbles to 500.
+Interface／prepare 等已把 `ValueError` 轉成 400 的端點維持該行為。若 prepare-dataset 目前會變成 500，對齊成與 interface API 相同的 400。
 
-## Frontend
+## 前端
 
-### Training page (`web/apps/labelstudio/src/pages/TrainingPage/TrainingPage.jsx`)
+### Training 頁（`web/apps/labelstudio/src/pages/TrainingPage/TrainingPage.jsx`）
 
-On load (alongside existing project / models loading), call the training interface API.
+進頁時（與現有專案／模型載入並行）呼叫 training interface API。
 
-- If interface succeeds and `training_model` / `task_type` is one of the allowed three → normal flow.
-- If interface fails or returns a blocked type → set `unsupportedTraining = true` (or equivalent).
+- 成功且 `training_model`／`task_type` 屬於允許三種 → 正常流程。
+- 失敗或屬於被封鎖類型 → 設 `unsupportedTraining = true`（或同等狀態）。
 
-When unsupported:
+不支援時：
 
-- Disable **Start Training** (`canStart` false).
-- Disable **prepare / generate dataset** action as well (user cannot prepare a blocked dataset).
-- Show `disabledReason` (or equivalent banner text) explaining only the three modes are supported.
+- 禁用 **Start Training**（`canStart` 為 false）。
+- 一併禁用 **產生／準備 dataset**（避免產生被封鎖類型的資料集）。
+- 顯示 `disabledReason`（或同等提示）說明目前僅支援上述三種模式。
 
-Do not rely on frontend alone; backend remains authoritative.
+前端不可單獨充當閘道；後端仍為權威。
 
-### Out of scope for this change
+### 本變更不做
 
-- Playground `PLAYGROUND_TASK_TYPES` need not be narrowed in this iteration (inference preview ≠ training start).
-- No new shared package constant between JS and Python required for v1; keep lists mirrored in comments if helpful.
+- Playground 的 `PLAYGROUND_TASK_TYPES` 本迭代不必收斂（推論預覽 ≠ 啟動訓練）。
+- v1 不強制 JS／Python 共用常數；必要時在註解中兩邊對齊即可。
 
-## Tests
+## 測試
 
-- Extend `label_studio/tests/test_training_datasets.py` (or adjacent):
-  - Classification / detect / brush-mask still pass `detect_training_interface`.
-  - Pose / OBB / Polygon raise `ValueError`.
-- Optional API test: create job with `training_model=yolo_pose` (or other blocked value) returns 400.
+- 擴充 `label_studio/tests/test_training_datasets.py`（或鄰近測試）：
+  - Classification／detect／brush-mask 仍可通過 `detect_training_interface`。
+  - Pose／OBB／Polygon 應拋 `ValueError`。
+- 可選 API 測試：以 `training_model=yolo_pose`（或其他被封鎖值）建立 job 應回 400。
 
-## Acceptance criteria
+## 驗收條件
 
-1. Projects with Choices / RectangleLabels (non-OBB) / Brush|Mask|Bitmask can prepare dataset and start training as today.
-2. Projects with pose, OBB, or Polygon cannot prepare or start training; frontend Start Training and prepare buttons are disabled with a clear reason.
-3. Direct `POST .../training/jobs/` with blocked `training_model` is rejected even if an old dataset_config exists.
-4. No unrelated Trainer code deletion; blocked modes remain in codebase for a future reopen.
+1. Choices／RectangleLabels（非 OBB）／Brush|Mask|Bitmask 專案可如今日一般準備資料集並開始訓練。
+2. Pose、OBB、Polygon 專案不可準備或開始訓練；前端 Start Training 與準備資料集按鈕為禁用，並顯示清楚原因。
+3. 即使存在舊的 dataset_config，直接 `POST .../training/jobs/` 帶被封鎖的 `training_model` 仍被拒絕。
+4. 不刪除無關 Trainer 程式；被擋模式保留在程式庫中以便日後重開。
