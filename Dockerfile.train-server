@@ -4,7 +4,17 @@
 # ── 建置 ──────────────────────────────────────────────────────────────────────
 # docker build -f Dockerfile.train-server -t labelstudio-train-server:latest .
 #
-# ── 首次部署（建議：GPU + 不掛 volume，Label Studio 以 zip 上傳資料集）──────
+# ── NVIDIA DGX Spark（GB10 / aarch64 / CUDA 13）─────────────────────────────
+# 必須在 Spark 本機建置（linux/arm64），勿在 Windows/x86 建好再搬過去。
+#   uname -m   # 應為 aarch64
+#   docker build --no-cache -f Dockerfile.train-server -t labelstudio-train-server:latest .
+#   docker rm -f train-server
+#   docker run -d --name train-server --gpus all --ipc=host -p 8011:8011 \
+#     --restart unless-stopped labelstudio-train-server:latest
+# 驗證：curl http://localhost:8011/health  → torch_version 含 cu130、cuda_kernel_usable=true
+# 若日誌出現整段 #ifdef __HIPCC__ / NVRTC：幾乎都是 cu12x wheel + CUDA 13 混用，請用上方 cu130 重建。
+#
+# ── 首次部署（一般 x86 GPU：不掛 volume，Label Studio 以 zip 上傳資料集）──
 # docker run -d --name train-server --gpus all -p 8011:8011 --restart unless-stopped labelstudio-train-server:latest
 #
 # ── 首次部署（選用：與 Label Studio 共用本機 data/，可略過 zip 上傳）────────
@@ -30,16 +40,17 @@
 # • 預設 DataLoader workers=0（Docker /dev/shm 不足時 workers>0 會 bus error）；要加速可 run 加：
 #   --shm-size=2g -e TRAIN_SERVER_DATALOADER_WORKERS=4
 # • 預設優先 GPU（需 --gpus all + NVIDIA Container Toolkit）；無 GPU 時自動用 CPU
-# • RTX 50 系列（Blackwell / sm_120）需 cu128 以上；若仍見 “no kernel image…”，
-#   重建本映像，或暫時：-e TRAIN_SERVER_DEVICE=cpu
+# • DGX Spark / GB10：務必 cu130 + arm64 本機 build；sm_121 警告可忽略（與 sm_120 相容）
+# • 一般 Blackwell（RTX 50）：cu128 亦可，預設改 cu130 通常仍相容（驅動需夠新）
+# • 暫時純 CPU：-e TRAIN_SERVER_DEVICE=cpu
 # • 不掛 -v 時：訓練產物在容器內，刪容器會消失；Label Studio 透過 API 取回 best.pt
 # • 掛 -v ./data:/data 時：與 Label Studio 共用資料集／模型目錄（Compose 預設行為）
-# • Label Studio 連線：TRAIN_SERVER_URL=http://localhost:8011（遠端改為該主機 IP）
+# • Label Studio 連線：TRAIN_SERVER_URL=http://<Spark IP>:8011
 # • 可選 API Key：run 加 -e TRAIN_SERVER_API_KEY=your-secret，Label Studio 端需一致
 # • Docker Compose：docker compose up -d train-server（服務名 train-server，埠 8011）
 ARG PYTHON_VERSION=3.12
-# PyTorch CUDA 輪子索引：cu128 支援 Blackwell（RTX 50）；舊 GPU 在驅動夠新時通常仍可用
-ARG TORCH_CUDA_INDEX_URL=https://download.pytorch.org/whl/cu128
+# PyTorch CUDA 輪子：cu130 給 DGX Spark（CUDA 13 / aarch64）；亦適用新一代 Blackwell
+ARG TORCH_CUDA_INDEX_URL=https://download.pytorch.org/whl/cu130
 
 FROM python:${PYTHON_VERSION}-slim-bookworm
 
@@ -62,11 +73,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY train_server/requirements-train.txt /app/train_server/requirements-train.txt
-# CUDA 版 torch（預設 GPU 訓練；容器未掛載 GPU 或強制 TRAIN_SERVER_DEVICE=cpu 時用 CPU）
-ARG TORCH_CUDA_INDEX_URL=https://download.pytorch.org/whl/cu128
+# CUDA 版 torch（預設 GPU；Spark 請用 cu130；強制 CPU：TRAIN_SERVER_DEVICE=cpu）
+ARG TORCH_CUDA_INDEX_URL=https://download.pytorch.org/whl/cu130
 RUN pip install --upgrade pip \
     && pip install "numpy>=1.26.4,<2.0" \
-        "torch>=2.7.0" "torchvision>=0.22.0" \
+        "torch>=2.9.0" "torchvision>=0.24.0" \
         --index-url "${TORCH_CUDA_INDEX_URL}" \
     && pip install -r /app/train_server/requirements-train.txt
 

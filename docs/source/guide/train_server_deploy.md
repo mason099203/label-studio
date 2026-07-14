@@ -127,6 +127,26 @@ TRAIN_SERVER_URL=http://<gpu-host-ip>:8011
 TRAIN_SERVER_API_KEY=your-secret
 ```
 
+### 2.2.1 NVIDIA DGX Spark（GB10）
+
+Spark 為 **aarch64 + CUDA 13 + GB10 (sm_121)**。請注意：
+
+1. **在 Spark 本機** `docker build`（產出 `linux/arm64`），不要從 Windows／x86 建映像後搬過去。
+2. `Dockerfile.train-server` 預設安裝 **PyTorch cu130**（勿用 cu124／cu128，易出現 `no kernel image` 或整段 `#ifdef __HIPCC__` NVRTC 錯誤）。
+3. 運行範例：
+
+```bash
+uname -m   # 應為 aarch64
+docker build --no-cache -f Dockerfile.train-server -t labelstudio-train-server:latest .
+docker rm -f train-server
+docker run -d --name train-server --gpus all --ipc=host -p 8011:8011 \
+  --restart unless-stopped labelstudio-train-server:latest
+curl http://localhost:8011/health
+```
+
+4. Label Studio（可在別台）設 `TRAIN_SERVER_URL=http://<Spark-IP>:8011`。
+5. `yolo checks` 若警告 sm_121：可忽略（與 sm_120 二進位相容）。
+
 ### 2.3 Windows 本機開發
 
 Train Server 使用 **獨立虛擬環境** `.venv-train`（與 Label Studio `.venv` 分離）：
