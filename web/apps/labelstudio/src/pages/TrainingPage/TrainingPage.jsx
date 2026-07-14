@@ -21,6 +21,16 @@ import {
 import { toUltralyticsTaskKey } from "../ModelDeployment/trainingTaskTypes";
 import "./TrainingPage.scss";
 
+/** 與後端 detect_training_interface 允許的 task_type 對齊 */
+const ALLOWED_TRAINING_TASK_TYPES = new Set([
+  "classification",
+  "detect",
+  "semantic_segmentation",
+]);
+
+const TRAINING_UNSUPPORTED_HINT =
+  "目前僅支援 Classification（Choices）、Bounding Box（RectangleLabels）、Mask Segmentation（Brush/Mask）訓練；pose、OBB、Polygon 等介面尚無法訓練。";
+
 /**
  * 訓練模組頁面：使用當前專案與已標註資料進行模型訓練，
  * 展示訓練效能指標並提供輸出模型下載以供部署。
@@ -72,6 +82,8 @@ export const TrainingPage = () => {
   const [trainServerVerified, setTrainServerVerified] = useState(false);
   const [trainServerVerifyDetail, setTrainServerVerifyDetail] = useState(null);
   const [verifyingTrainServer, setVerifyingTrainServer] = useState(false);
+  const [unsupportedTraining, setUnsupportedTraining] = useState(false);
+  const [unsupportedTrainingDetail, setUnsupportedTrainingDetail] = useState(null);
   const didRestoreTrainServerRef = useRef(false);
 
   const loadModels = useCallback(async (taskOverride) => {
@@ -226,6 +238,25 @@ export const TrainingPage = () => {
     });
 
     api
+      .callApi("trainingInterface", {
+        params: { pk: pageParams.id },
+        errorFilter: () => true,
+      })
+      .then((res) => {
+        if (cancelled) return;
+        if (!res || res?.detail || !ALLOWED_TRAINING_TASK_TYPES.has(res.task_type)) {
+          setUnsupportedTraining(true);
+          setUnsupportedTrainingDetail(
+            typeof res?.detail === "string" ? res.detail : TRAINING_UNSUPPORTED_HINT,
+          );
+          return;
+        }
+        setUnsupportedTraining(false);
+        setUnsupportedTrainingDetail(null);
+        setTrainingSpec((prev) => prev ?? res);
+      });
+
+    api
       .callApi("trainingHistory", {
         params: { pk: pageParams.id },
         errorFilter: () => true,
@@ -318,11 +349,11 @@ export const TrainingPage = () => {
   ]);
 
   const prepareDatasetFromExport = useCallback(async () => {
+    if (!pageParams?.id || unsupportedTraining) return;
     setErrorMessage(null);
     setPreparingDataset(true);
     setDatasetMeta(null);
     try {
-      if (!pageParams?.id) return;
       const meta = await api.callApi("trainingPrepareDataset", {
         params: { pk: pageParams.id },
         body: {
@@ -341,7 +372,7 @@ export const TrainingPage = () => {
     } finally {
       setPreparingDataset(false);
     }
-  }, [pageParams?.id, exportFormat, api, loadModels]);
+  }, [pageParams?.id, exportFormat, api, loadModels, unsupportedTraining]);
 
   const hasSelectableModel = localModels.some(
     (m) => m.path === selectedBaseWeights || m.name === selectedBaseWeights,
@@ -352,6 +383,7 @@ export const TrainingPage = () => {
   const trainServerReady = !requiresTrainServerVerification || trainServerVerified;
 
   const canStart =
+    !unsupportedTraining &&
     hasSelectableModel &&
     (trainingState === "idle" || trainingState === "error") &&
     Boolean(selectedBaseWeights) &&
@@ -361,6 +393,9 @@ export const TrainingPage = () => {
   const hasDatasetReady = Boolean(datasetConfigPath);
 
   const disabledReason = (() => {
+    if (unsupportedTraining) {
+      return unsupportedTrainingDetail || TRAINING_UNSUPPORTED_HINT;
+    }
     if (trainingState === "running") return "目前已有任務進行中";
     if (trainingState === "done") return "本次訓練已完成；若要再次訓練請關閉此視窗後重新開啟 Training。";
     if (requiresTrainServerVerification && !trainServerVerified) {
@@ -771,7 +806,7 @@ export const TrainingPage = () => {
               size="small"
               onClick={prepareDatasetFromExport}
               waiting={preparingDataset}
-              disabled={!isDefined(pageParams?.id)}
+              disabled={!isDefined(pageParams?.id) || unsupportedTraining || preparingDataset}
               aria-label="Prepare dataset from export"
             >
               生成訓練資料集
