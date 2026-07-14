@@ -68,7 +68,7 @@ def test_detect_training_interface_detects_rectangle_detect():
     assert spec["training_model"] == "yolo_detect"
 
 
-def test_detect_training_interface_detects_polygon_segmentation():
+def test_detect_training_interface_rejects_polygon_segmentation():
     project = StubProject(
         {
             "label": {
@@ -79,13 +79,11 @@ def test_detect_training_interface_detects_polygon_segmentation():
             }
         }
     )
-
-    spec = detect_training_interface(project)
-    assert spec["task_type"] == "segmentation"
-    assert spec["training_model"] == "yolo_segment"
+    with pytest.raises(ValueError, match="目前僅支援"):
+        detect_training_interface(project)
 
 
-def test_detect_training_interface_detects_pose():
+def test_detect_training_interface_rejects_pose():
     project = StubProject(
         {
             "bbox": {
@@ -106,14 +104,11 @@ def test_detect_training_interface_detects_pose():
             },
         }
     )
-
-    spec = detect_training_interface(project)
-    assert spec["task_type"] == "pose"
-    assert spec["training_model"] == "yolo_pose"
-    assert spec["keypoint_control_name"] == "kp"
+    with pytest.raises(ValueError, match="目前僅支援"):
+        detect_training_interface(project)
 
 
-def test_detect_training_interface_detects_obb_from_model_obb_attr():
+def test_detect_training_interface_rejects_obb_from_model_obb_attr():
     label_config = """<View>
   <Image name="image" value="$image"/>
   <RectangleLabels name="label" toName="image" model_obb="true">
@@ -131,10 +126,8 @@ def test_detect_training_interface_detects_obb_from_model_obb_attr():
         },
         label_config=label_config,
     )
-
-    spec = detect_training_interface(project)
-    assert spec["task_type"] == "obb"
-    assert spec["training_model"] == "yolo_obb"
+    with pytest.raises(ValueError, match="目前僅支援"):
+        detect_training_interface(project)
 
 
 def test_detect_training_interface_rejects_pose_without_rectangle():
@@ -149,7 +142,7 @@ def test_detect_training_interface_rejects_pose_without_rectangle():
         }
     )
 
-    with pytest.raises(ValueError, match="RectangleLabels"):
+    with pytest.raises(ValueError, match="目前僅支援"):
         detect_training_interface(project)
 
 
