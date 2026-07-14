@@ -924,7 +924,13 @@ class ProjectTrainingJobsAPI(APIView):
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         training_model = payload.get("training_model") or dataset_meta.get("training_model")
-        if training_model not in {"yolo_detect", "yolo_classify", "yolo_segment", "yolo_pose", "yolo_obb", "yolo_semantic", "cnn_classify"}:
+        _allowed_training_models = {
+            "yolo_detect",
+            "yolo_classify",
+            "yolo_semantic",
+            "cnn_classify",
+        }
+        if training_model not in _allowed_training_models:
             return Response(
                 {"detail": f"Unsupported training_model in dataset_config: {training_model}"},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -1075,12 +1081,15 @@ class ProjectTrainingDatasetPrepareAPI(APIView):
         seed = int(payload.get("seed", 42))
         export_format = payload.get("export_format")
 
-        meta = prepare_training_dataset_for_project(
-            project_id=project.id,
-            train_ratio=train_ratio,
-            seed=seed,
-            export_format=export_format,
-        )
+        try:
+            meta = prepare_training_dataset_for_project(
+                project_id=project.id,
+                train_ratio=train_ratio,
+                seed=seed,
+                export_format=export_format,
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response(meta, status=status.HTTP_200_OK)
 
