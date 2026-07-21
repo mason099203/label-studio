@@ -1440,6 +1440,37 @@ def _run_dir_has_weights(run_dir: Path) -> bool:
     return _find_local_run_artifact(run_dir, "best.pt") is not None
 
 
+def _resolve_run_best_pt(
+    project_id: int,
+    run_id: str,
+    request,
+    body: Dict[str, Any] | None = None,
+) -> Tuple[Path | None, Path, str | None]:
+    """
+    Resolve best.pt for a training run on local disk or via Train Server.
+    Returns (best_pt_path, run_dir, error_detail).
+    """
+    run_dir = _get_training_output_root() / f"project_{project_id}" / run_id
+    best_pt = _find_local_run_artifact(run_dir, "best.pt")
+    if best_pt is not None:
+        return best_pt, run_dir, None
+
+    train_config, _err = _resolve_train_server_config_from_request(request, body)
+    if train_config.enabled:
+        try:
+            cache_dir = run_dir / "artifacts"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            target = cache_dir / "best.pt"
+            if not target.exists():
+                download_remote_artifact(run_id, "best.pt", target, config=train_config)
+            if target.exists():
+                return target, run_dir, None
+        except Exception as exc:
+            return None, run_dir, f"Failed to download best.pt from Train Server: {exc}"
+
+    return None, run_dir, "No best.pt found for this run. Train the model first."
+
+
 def _build_remote_training_run_entry(
     project_id: int,
     meta: Dict[str, Any],
@@ -1777,18 +1808,15 @@ class ProjectTrainingRunDeployToTritonAPI(APIView):
     def post(self, request, pk: int, run_id: str, *args, **kwargs):
         project = _get_project_for_user(request, pk)
 
-        output_root = _get_training_output_root()
-        run_dir = output_root / f"project_{project.id}" / run_id
-        artifacts_dir = run_dir / "artifacts"
-        best_pt = artifacts_dir / "best.pt"
-
-        if not best_pt.exists():
-            return Response(
-                {"detail": "No best.pt found for this run. Train the model first."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
         payload = request.data or {}
+        best_pt, run_dir, best_pt_err = _resolve_run_best_pt(project.id, run_id, request, payload)
+        if best_pt is None:
+            status_code = (
+                status.HTTP_503_SERVICE_UNAVAILABLE
+                if best_pt_err and "Train Server" in best_pt_err
+                else status.HTTP_404_NOT_FOUND
+            )
+            return Response({"detail": best_pt_err}, status=status_code)
         raw_name = (payload.get("model_name") or f"ls_project_{project.id}_{run_id}").strip()
         model_name = sanitize_triton_model_name(raw_name, fallback=f"ls_project_{project.id}_run")
         public_triton_base = _sanitize_optional_http_url(payload.get("triton_url"))

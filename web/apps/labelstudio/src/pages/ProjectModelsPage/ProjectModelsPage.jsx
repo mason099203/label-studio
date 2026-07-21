@@ -16,7 +16,11 @@ import { useParams } from "../../providers/RoutesProvider";
 import { useProject } from "../../providers/ProjectProvider";
 import { cn } from "../../utils/bem";
 import { absoluteURL } from "../../utils/helpers";
-import { appendTrainServerToApiPath, getTrainServerQueryParams } from "../TrainingPage/trainServerStorage";
+import {
+  appendTrainServerToApiPath,
+  getTrainServerBodyFields,
+  getTrainServerQueryParams,
+} from "../TrainingPage/trainServerStorage";
 import {
   readTritonUrlState,
   persistTritonUrlFields,
@@ -403,7 +407,7 @@ export const ProjectModelsPage = () => {
       }
     }
     setDeployingRunId(runId);
-    const body = {};
+    const body = { ...getTrainServerBodyFields(params.id) };
     if (tu) body.triton_url = tu;
     body.instance_kind = instanceKind;
     body.instance_count = instanceCount;

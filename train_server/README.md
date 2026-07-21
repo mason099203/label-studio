@@ -14,6 +14,16 @@
 
 ## 快速啟動
 
+## build
+```bash
+cd 你的目錄
+uname -m   # 應為 aarch64
+docker build --no-cache -f Dockerfile.train-server -t labelstudio-train-server:latest .
+docker rm -f train-server
+docker run -d --name train-server --gpus all --ipc=host -p 8011:8011   --restart unless-stopped labelstudio-train-server:latest
+curl http://localhost:8011/health
+```
+
 ### Docker Compose（與 Label Studio 一起）
 
 ```bash
