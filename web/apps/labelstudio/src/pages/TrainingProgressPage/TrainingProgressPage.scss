@@ -1,3 +1,5 @@
+@import "../TrainingWorkspace/training-workspace.scss";
+
 .training-progress {
   &__header {
     display: flex;
@@ -16,6 +18,7 @@
     font-size: 14px;
     color: var(--color-neutral-content);
     margin-top: 4px;
+    line-height: 1.5;
   }
 
   &__status {
@@ -23,8 +26,8 @@
     font-weight: 600;
     text-transform: uppercase;
     padding: 4px 10px;
-    border-radius: 999px;
-    background: var(--color-neutral-surface-active);
+    border-radius: 6px;
+    background: var(--color-neutral-emphasis-subtle);
     color: var(--color-neutral-content-subtle);
 
     &_active {
@@ -58,6 +61,7 @@
     border-radius: 999px;
     background: var(--color-neutral-surface-active);
     overflow: hidden;
+    border: 1px solid var(--color-neutral-border-subtler);
   }
 
   &__progress-fill {
@@ -81,51 +85,9 @@
     }
   }
 
-  &__section {
-    margin-bottom: 20px;
-  }
-
-  &__section-title {
-    font-weight: 600;
-    font-size: 14px;
-    color: var(--color-neutral-content);
-    margin-bottom: 10px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  &__metrics {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-    gap: 10px;
-  }
-
-  &__metric {
-    padding: 10px 12px;
-    border-radius: 6px;
-    background: var(--color-neutral-surface-active);
-    border: 1px solid var(--color-neutral-border-subtler);
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  &__metric-label {
-    font-size: 11px;
-    color: var(--color-neutral-content-subtle);
-    word-break: break-all;
-  }
-
-  &__metric-value {
-    font-weight: 600;
-    font-size: 14px;
-    color: var(--color-neutral-content);
-  }
-
   &__previews {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
     gap: 12px;
   }
 
@@ -154,6 +116,9 @@
 
   &__history-scroll {
     overflow-x: auto;
+    border: 1px solid var(--color-neutral-border-subtler);
+    border-radius: 8px;
+    background: var(--color-neutral-surface);
   }
 
   &__history-table {
@@ -163,7 +128,7 @@
 
     th,
     td {
-      padding: 6px 8px;
+      padding: 8px 10px;
       border-bottom: 1px solid var(--color-neutral-border-subtler);
       text-align: left;
       white-space: nowrap;
@@ -172,36 +137,25 @@
     th {
       color: var(--color-neutral-content-subtle);
       font-weight: 600;
+      background: var(--color-neutral-surface-active);
     }
-  }
-
-  &__error {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 12px;
-    border-radius: 6px;
-    background: var(--color-negative-background);
-    border: 1px solid var(--color-negative-border);
-    font-size: 14px;
-    color: var(--color-negative-content);
-    margin-bottom: 16px;
   }
 
   &__warning {
     padding: 12px;
     border-radius: 6px;
-    background: var(--color-warning-background, #fff8e6);
-    border: 1px solid var(--color-warning-border, #e6c200);
+    background: var(--color-primary-emphasis-subtle);
+    border: 1px solid var(--color-neutral-border-subtler);
     font-size: 13px;
     color: var(--color-neutral-content);
     margin-bottom: 16px;
+    line-height: 1.5;
   }
 
   &__footer {
-    margin-top: 16px;
+    margin-top: 20px;
     padding-top: 16px;
-    border-top: 1px solid var(--color-neutral-border);
+    border-top: 1px solid var(--color-neutral-border-subtler);
   }
 
   &__footer-hint {

@@ -112,3 +112,5 @@ web/coverage-chunks
 .cache
 deploy/bundles/out/docker-build-context
 deploy/bundles/out/label-studio/deploy/bundles/out/docker-build-context
+
+.agents/

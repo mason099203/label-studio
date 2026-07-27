@@ -28,37 +28,13 @@ import {
   normalizeTritonUrl,
   TRITON_PLAYGROUND_STATE_KEY,
 } from "../ModelDeployment/tritonUrlState";
+import { TrainingMetricsGrid } from "../TrainingWorkspace/TrainingMetricsGrid";
+import {
+  formatRunStatus,
+  formatTrainingTime,
+  isActiveRun,
+} from "../TrainingWorkspace/trainingRunUtils";
 import "./ProjectModelsPage.scss";
-
-const ACTIVE_RUN_STATUSES = new Set(["queued", "preparing", "starting", "running", "started", "deferred"]);
-
-const RUN_STATUS_LABELS = {
-  queued: "排隊中",
-  preparing: "準備資料",
-  starting: "啟動中",
-  running: "訓練中",
-  started: "訓練中",
-  finished: "已完成",
-  failed: "失敗",
-  unknown: "未知",
-};
-
-/** @param {{ status?: string, epoch?: number, total_epochs?: number, progress_pct?: number }} run */
-function formatRunStatus(run) {
-  const key = run?.status ?? "unknown";
-  const label = RUN_STATUS_LABELS[key] ?? key;
-  if (run?.progress_pct != null && ACTIVE_RUN_STATUSES.has(key)) {
-    const epochPart =
-      run.epoch != null && run.total_epochs != null ? ` · Epoch ${run.epoch}/${run.total_epochs}` : "";
-    return `${label}${epochPart} · ${Math.round(run.progress_pct)}%`;
-  }
-  return label;
-}
-
-/** @param {{ status?: string }} run */
-function isActiveRun(run) {
-  return ACTIVE_RUN_STATUSES.has(run?.status ?? "");
-}
 
 /**
  * 將最新部署的 Triton 模型寫入 Playground 預設值。
@@ -469,25 +445,7 @@ export const ProjectModelsPage = () => {
 
   /**
    * Format training time for the collapsed run summary.
-   * @param {string | null | undefined} value
-   * @returns {string}
    */
-  const formatTrainingTime = (value) => {
-    if (!value) return "時間未知";
-
-    const date = new Date(value);
-
-    if (Number.isNaN(date.getTime())) return "時間未知";
-
-    return new Intl.DateTimeFormat("zh-TW", {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-    }).format(date);
-  };
-
   return (
     <div className={cn("project-models-page").toClassName()}>
       <div className={cn("project-models-page").elem("header").toClassName()}>
@@ -776,7 +734,7 @@ export const ProjectModelsPage = () => {
                     <div className={cn("project-models-page").elem("run-summary-title").toClassName()}>
                       {run.name || run.run_id}
                     </div>
-                    {/* <div className={cn("project-models-page").elem("run-summary-time").toClassName()}>{trainingTime}</div> */}
+                    <div className={cn("project-models-page").elem("hint").toClassName()}>{trainingTime}</div>
                   </div>
                   <div className={cn("project-models-page").elem("run-summary-side").toClassName()}>
                     <div
@@ -910,22 +868,7 @@ export const ProjectModelsPage = () => {
                       {/* {run.params?.data_yaml && <div>Dataset: {run.params.data_yaml}</div>} */}
                     </div>
 
-                    {run.metrics && (
-                      <div className={cn("project-models-page").elem("metrics").toClassName()}>
-                        {[
-                          ["mAP@0.5", run.metrics.map50],
-                          ["mAP@0.5:0.95", run.metrics.map],
-                          ["mAP@0.75", run.metrics.map75],
-                          ["Precision", run.metrics.mp],
-                          ["Recall", run.metrics.mr],
-                        ].map(([label, value]) => (
-                          <div key={label} className={cn("project-models-page").elem("metric").toClassName()}>
-                            <span>{label}</span>
-                            <strong>{typeof value === "number" ? `${(value * 100).toFixed(2)}%` : "—"}</strong>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                    {run.metrics && <TrainingMetricsGrid block="project-models-page" metrics={run.metrics} />}
 
                     {charts.length > 0 && (
                       <div className={cn("project-models-page").elem("charts").toClassName()}>

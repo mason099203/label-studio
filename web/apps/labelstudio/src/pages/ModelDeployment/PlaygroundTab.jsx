@@ -1454,17 +1454,12 @@ export function PlaygroundTab() {
 
   return (
     <section className={rootClass.toClassName()}>
-      <Typography variant="headline" size="medium" className="mb-wide">
-        模型測試
-      </Typography>
-      <Typography variant="body" size="small" className="text-neutral-content-subtle mb-wide">
+      <p className={rootClass.elem("intro").toClassName()}>
         選擇已部署之模型，並上傳圖片來測試其效能與結果。測試時會自動檢查 Triton 是否已載入模型，必要時先載入，完成後釋放記憶體。
-      </Typography>
+      </p>
 
       <div className={rootClass.elem("api-docs").toClassName()}>
-        <Typography variant="title" size="small" className="mb-tight block">
-          以程式引用此模型（REST API）
-        </Typography>
+        <div className={rootClass.elem("section-title").toClassName()}>以程式引用此模型（REST API）</div>
         <Typography variant="body" size="small" className="text-neutral-content-subtle mb-tight block">
           後端會校驗該 <code>model_name</code> 是否為此專案已部署之模型，並轉送 Triton{" "}
           <code>{`/v2/models/<name>/infer`}</code>。請求方法為 <code>POST</code>，內容類型 <code>application/json</code>
@@ -1515,24 +1510,17 @@ export function PlaygroundTab() {
       </div>
 
       <div className={rootClass.elem("form").toClassName()}>
-        <div
-          className={rootClass.elem("form-row").toClassName()}
-          style={{ display: "flex", gap: "16px", marginBottom: "16px" }}
-        >
-          <div className={rootClass.elem("field").toClassName()} style={{ flex: 1 }}>
-            <label
-              className="text-label-small text-neutral-content mb-tightest block"
-              htmlFor="playground-project-select"
-            >
+        <div className={rootClass.elem("form-row").toClassName()}>
+          <div className={rootClass.elem("field").toClassName()}>
+            <label className={rootClass.elem("field-label").toClassName()} htmlFor="playground-project-select">
               專案名稱
             </label>
             <select
               id="playground-project-select"
-              className={rootClass.elem("input").toClassName()}
+              className={rootClass.elem("select").toClassName()}
               value={projectId}
               onChange={(e) => setProjectId(e.target.value)}
               disabled={projectsLoading}
-              style={{ width: "100%", padding: "8px", borderRadius: "4px", border: "1px solid #ccc", height: "36px" }}
             >
               <option value="">{projectsLoading ? "載入專案列表中…" : "請選擇專案"}</option>
               {!projectsLoading &&
@@ -1549,27 +1537,25 @@ export function PlaygroundTab() {
             ) : null}
             {projectsError && <div className={rootClass.elem("error").toClassName()}>{projectsError}</div>}
           </div>
-          {/* <div className={rootClass.elem("field").toClassName()} style={{ flex: 1 }}>
-             <label className="text-label-small text-neutral-content mb-tightest block">Triton 安全金鑰 (API Key)</label>
-             <input
-               type="password"
-               className={rootClass.elem("input").toClassName()}
-               value={apiKey}
-               onChange={(e) => setApiKey(e.target.value)}
-               placeholder="輸入專案對應的 API Key (選填)"
-             />
-           </div> */}
+          <div className={rootClass.elem("field").toClassName()}>
+            <label className={rootClass.elem("field-label").toClassName()} htmlFor="playground-api-key">
+              Triton 安全金鑰（API Key，選填）
+            </label>
+            <input
+              id="playground-api-key"
+              type="password"
+              className={rootClass.elem("input").toClassName()}
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="專案有設定 Triton 金鑰時請填寫"
+              autoComplete="off"
+            />
+          </div>
         </div>
 
-        <div
-          className={rootClass.elem("form-row").toClassName()}
-          style={{ display: "flex", gap: "16px", marginBottom: "16px", flexWrap: "wrap" }}
-        >
-          <div className={rootClass.elem("field").toClassName()} style={{ flex: "1 1 280px" }}>
-            <label
-              className="text-label-small text-neutral-content mb-tightest block"
-              htmlFor="playground-triton-server-host"
-            >
+        <div className={rootClass.elem("form-row").toClassName()}>
+          <div className={rootClass.elem("field").toClassName()}>
+            <label className={rootClass.elem("field-label").toClassName()} htmlFor="playground-triton-server-host">
               Triton 伺服器 IP（選填）
             </label>
             <input
@@ -1580,13 +1566,6 @@ export function PlaygroundTab() {
               onChange={(e) => setTritonServerHost(e.target.value.trim())}
               placeholder="192.168.1.10"
               autoComplete="off"
-              style={{
-                width: "100%",
-                padding: "8px",
-                borderRadius: "4px",
-                border: "1px solid #ccc",
-                minHeight: "36px",
-              }}
             />
             <Typography variant="body" size="small" className="text-neutral-content-subtle mt-tightest block">
               {tritonServerHost.trim() ? (
@@ -1594,22 +1573,13 @@ export function PlaygroundTab() {
                   HTTP：<code>{tritonServerUrl}</code>　Metrics：<code>{tritonMetricsUrl}</code>
                 </>
               ) : (
-                "空值表示由伺服器 TRITON_SERVER_URL 決定。模型列表與推論經後端轉發，須從 Label Studio 主機可連線。"
+                "空值表示由伺服器 TRITON_SERVER_URL 決定（本機預設埠 8000）。模型列表與推論經後端轉發，須從 Label Studio 主機可連線。"
               )}
             </Typography>
           </div>
         </div>
 
-        <div
-          className={rootClass.elem("form-row").toClassName()}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "12px",
-            flexWrap: "wrap",
-            marginBottom: "16px",
-          }}
-        >
+        <div className={rootClass.elem("form-row").toClassName()}>
           <Button
             type="button"
             variant="neutral"
@@ -1642,20 +1612,19 @@ export function PlaygroundTab() {
           )}
         </div>
 
-        <div className={rootClass.elem("field").toClassName()} style={{ marginBottom: "16px" }}>
-          <label className="text-label-small text-neutral-content mb-tightest block" htmlFor="playground-model-select">
+        <div className={rootClass.elem("field").toClassName()}>
+          <label className={rootClass.elem("field-label").toClassName()} htmlFor="playground-model-select">
             已部署模型
           </label>
           <select
             id="playground-model-select"
-            className={rootClass.elem("input").toClassName()}
+            className={rootClass.elem("select").toClassName()}
             value={models.some((m) => m.model_name === modelName) ? modelName : ""}
             onChange={(e) => {
               const v = e.target.value;
               if (v) setModelName(v);
             }}
             disabled={modelsLoading || !projectId.trim() || models.length === 0}
-            style={{ width: "100%", padding: "8px", borderRadius: "4px", border: "1px solid #ccc", height: "36px" }}
           >
             <option value="">
               {modelsLoading ? "載入中…" : models.length === 0 ? "無已部署模型" : "自訂（請在下方輸入 model_name）"}
@@ -1669,10 +1638,7 @@ export function PlaygroundTab() {
                 </option>
               ))}
           </select>
-          <label
-            className="text-label-small text-neutral-content mb-tightest mt-tight block"
-            htmlFor="playground-model-name-input"
-          >
+          <label className={rootClass.elem("field-label").toClassName()} htmlFor="playground-model-name-input">
             模型名稱（送請求用）
           </label>
           <input
@@ -1688,7 +1654,6 @@ export function PlaygroundTab() {
                 : "請先選擇專案；與 Triton model_name 一致"
             }
             autoComplete="off"
-            style={{ width: "100%", padding: "8px", borderRadius: "4px", border: "1px solid #ccc", minHeight: "36px" }}
           />
           <Typography variant="body" size="small" className="text-neutral-content-subtle mt-tightest block">
             下拉會列出此專案<strong>全部</strong>已部署模型；實際呼叫 API 以上方「模型名稱」欄為準，可自行修改。
@@ -1708,10 +1673,10 @@ export function PlaygroundTab() {
           {modelsError && <div className={rootClass.elem("error").toClassName()}>{modelsError}</div>}
         </div>
 
-        <div className={rootClass.elem("field").toClassName()} style={{ marginBottom: "16px" }}>
-          <label className="text-label-small text-neutral-content mb-tightest block">任務類型</label>
+        <div className={rootClass.elem("field").toClassName()}>
+          <label className={rootClass.elem("field-label").toClassName()}>任務類型</label>
           <select
-            className={rootClass.elem("input").toClassName()}
+            className={rootClass.elem("select").toClassName()}
             value={taskType}
             onChange={(e) => {
               taskTypeManualRef.current = true;
@@ -1722,7 +1687,6 @@ export function PlaygroundTab() {
               setOutputParseHint(null);
               tensorPayloadRef.current = null;
             }}
-            style={{ width: "100%", padding: "8px", borderRadius: "4px", border: "1px solid #ccc", height: "36px" }}
           >
             {Object.entries(PLAYGROUND_TASK_TYPES).map(([key, meta]) => (
               <option key={key} value={key}>
@@ -1748,36 +1712,13 @@ export function PlaygroundTab() {
           </Typography>
         </div>
 
-        <div
-          className={rootClass.elem("field").toClassName()}
-          style={{
-            marginBottom: "24px",
-            border: "1px solid #e0e0e0",
-            padding: "16px",
-            borderRadius: "8px",
-            backgroundColor: "#fff",
-          }}
-        >
-          <label
-            className="text-label-small text-neutral-content block"
-            style={{ marginBottom: "8px", fontWeight: "bold" }}
-          >
-            上傳圖片
-          </label>
+        <div className={rootClass.elem("upload-panel").toClassName()}>
+          <label className={rootClass.elem("upload-label").toClassName()}>上傳圖片</label>
           <input type="file" accept="image/*" onChange={handleImageUpload} disabled={processingImage} />
           {processingImage && <span className="text-neutral-content-subtle ml-tight">運算中...</span>}
 
-          <div style={{ marginTop: "16px", display: imagePreview ? "block" : "none", textAlign: "center" }}>
-            <canvas
-              ref={canvasRef}
-              style={{
-                maxWidth: "100%",
-                maxHeight: "500px",
-                border: "1px solid #ddd",
-                borderRadius: "4px",
-                backgroundColor: "#f9f9f9",
-              }}
-            />
+          <div className={rootClass.elem("canvas-wrap").toClassName()} style={{ display: imagePreview ? "block" : "none" }}>
+            <canvas ref={canvasRef} className={rootClass.elem("canvas").toClassName()} />
             {outputParseHint && (
               <Typography
                 variant="body"
@@ -1795,25 +1736,25 @@ export function PlaygroundTab() {
             )}
             {isSpatialYoloTaskType(taskType) && detectionRows.length > 0 && (
               <div style={{ marginTop: "16px", overflowX: "auto", textAlign: "left" }}>
-                <Typography variant="title" size="small" className="mb-tight block">
+                <div className={rootClass.elem("section-title").toClassName()}>
                   {playgroundTaskTypeLabel(taskType)}數值（前 {detectionRows.length} 筆；標籤來自 Labeling Interface）
-                </Typography>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", fontFamily: "monospace" }}>
+                </div>
+                <table className={rootClass.elem("data-table").toClassName()}>
                   <thead>
-                    <tr style={{ background: "#f3f4f6" }}>
-                      <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>#</th>
-                      <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>錨點</th>
-                      <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>索引</th>
-                      <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>標籤（介面）</th>
-                      <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>信心度</th>
-                      <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>cx</th>
-                      <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>cy</th>
-                      <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>w</th>
-                      <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>h</th>
-                      <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>x1</th>
-                      <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>y1</th>
-                      <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>x2</th>
-                      <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>y2</th>
+                    <tr>
+                      <th>#</th>
+                      <th>錨點</th>
+                      <th>索引</th>
+                      <th>標籤（介面）</th>
+                      <th>信心度</th>
+                      <th>cx</th>
+                      <th>cy</th>
+                      <th>w</th>
+                      <th>h</th>
+                      <th>x1</th>
+                      <th>y1</th>
+                      <th>x2</th>
+                      <th>y2</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1824,23 +1765,23 @@ export function PlaygroundTab() {
                       const y2 = row.cy + row.h / 2;
                       return (
                         <tr key={`${row.anchorIndex}-${row.classIndex}-${i}`}>
-                          <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{i + 1}</td>
-                          <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{row.anchorIndex}</td>
-                          <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{row.classIndex}</td>
-                          <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>
+                          <td>{i + 1}</td>
+                          <td>{row.anchorIndex}</td>
+                          <td>{row.classIndex}</td>
+                          <td>
                             {resolveInterfaceLabelName(interfaceDetectionLabels, row.classIndex) || (
                               <span className="text-neutral-content-subtle">—</span>
                             )}
                           </td>
-                          <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{row.confidence.toFixed(4)}</td>
-                          <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{Number(row.cx).toFixed(2)}</td>
-                          <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{Number(row.cy).toFixed(2)}</td>
-                          <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{Number(row.w).toFixed(2)}</td>
-                          <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{Number(row.h).toFixed(2)}</td>
-                          <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{x1.toFixed(2)}</td>
-                          <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{y1.toFixed(2)}</td>
-                          <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{x2.toFixed(2)}</td>
-                          <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{y2.toFixed(2)}</td>
+                          <td>{row.confidence.toFixed(4)}</td>
+                          <td>{Number(row.cx).toFixed(2)}</td>
+                          <td>{Number(row.cy).toFixed(2)}</td>
+                          <td>{Number(row.w).toFixed(2)}</td>
+                          <td>{Number(row.h).toFixed(2)}</td>
+                          <td>{x1.toFixed(2)}</td>
+                          <td>{y1.toFixed(2)}</td>
+                          <td>{x2.toFixed(2)}</td>
+                          <td>{y2.toFixed(2)}</td>
                         </tr>
                       );
                     })}
@@ -1850,32 +1791,30 @@ export function PlaygroundTab() {
             )}
             {taskType === "classification" && classificationRows.length > 0 && (
               <div style={{ marginTop: "16px", textAlign: "left" }}>
-                <Typography variant="title" size="small" className="mb-tight block">
+                <div className={rootClass.elem("section-title").toClassName()}>
                   分類數值（共 {classificationRows.length} 類；標籤來自專案 Labeling Interface 之 Choices 順序）
-                </Typography>
-                <div style={{ maxHeight: "360px", overflow: "auto", border: "1px solid #e5e7eb", borderRadius: "6px" }}>
-                  <table
-                    style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", fontFamily: "monospace" }}
-                  >
-                    <thead style={{ position: "sticky", top: 0, background: "#f3f4f6", zIndex: 1 }}>
+                </div>
+                <div style={{ maxHeight: "360px", overflow: "auto", border: "1px solid var(--color-neutral-border-subtler)", borderRadius: "6px" }}>
+                  <table className={rootClass.elem("data-table").toClassName()}>
+                    <thead style={{ position: "sticky", top: 0, background: "var(--color-neutral-emphasis-subtle)", zIndex: 1 }}>
                       <tr>
-                        <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>標籤（介面）</th>
-                        <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>索引</th>
-                        <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>原始輸出</th>
-                        <th style={{ border: "1px solid #e5e7eb", padding: "6px" }}>機率</th>
+                        <th>標籤（介面）</th>
+                        <th>索引</th>
+                        <th>原始輸出</th>
+                        <th>機率</th>
                       </tr>
                     </thead>
                     <tbody>
                       {classificationRows.map((row) => (
                         <tr key={row.classIndex}>
-                          <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>
+                          <td>
                             {resolveInterfaceLabelName(interfaceClassificationLabels, row.classIndex) || (
                               <span className="text-neutral-content-subtle">—</span>
                             )}
                           </td>
-                          <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{row.classIndex}</td>
-                          <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{Number(row.raw).toFixed(6)}</td>
-                          <td style={{ border: "1px solid #e5e7eb", padding: "6px" }}>{row.probability.toFixed(6)}</td>
+                          <td>{row.classIndex}</td>
+                          <td>{Number(row.raw).toFixed(6)}</td>
+                          <td>{row.probability.toFixed(6)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -1898,38 +1837,25 @@ export function PlaygroundTab() {
       </div>
 
       {(response.status != null || response.error) && (
-        <div className={rootClass.elem("response").toClassName()} style={{ marginTop: "24px" }}>
-          <Typography variant="title" size="medium" className="mb-tight mt-wide block">
-            結果
-          </Typography>
-          {response.error && (
-            <div
-              className={rootClass.elem("error").toClassName()}
-              style={{ padding: "12px", background: "#fee2e2", color: "#b91c1c", borderRadius: "6px" }}
-            >
-              {response.error}
-            </div>
-          )}
+        <div className={rootClass.elem("response").toClassName()}>
+          <div className={rootClass.elem("section-title").toClassName()}>結果</div>
+          {response.error && <div className={rootClass.elem("error").toClassName()}>{response.error}</div>}
           {response.status != null && (
-            <div style={{ padding: "12px", background: response.ok ? "#f0fdf4" : "#fef2f2", borderRadius: "6px" }}>
+            <div
+              className={rootClass
+                .elem("response-box")
+                .mod({ ok: response.ok, error: !response.ok })
+                .toClassName()}
+            >
               <div
-                className={rootClass.elem("status").toClassName()}
-                style={{ fontWeight: "bold", marginBottom: "8px", color: response.ok ? "#166534" : "#991b1b" }}
+                className={rootClass
+                  .elem("status-line")
+                  .mod({ ok: response.ok, error: !response.ok })
+                  .toClassName()}
               >
                 HTTP 狀態: {response.status} {response.statusText}
               </div>
-              <pre
-                className={rootClass.elem("pre").toClassName()}
-                style={{
-                  margin: 0,
-                  whiteSpace: "pre-wrap",
-                  color: "#374151",
-                  fontSize: "14px",
-                  fontFamily: "monospace",
-                }}
-              >
-                {response.summary}
-              </pre>
+              <pre className={rootClass.elem("pre").toClassName()}>{response.summary}</pre>
             </div>
           )}
         </div>

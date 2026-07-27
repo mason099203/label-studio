@@ -6,10 +6,11 @@
 export const TRITON_PLAYGROUND_STATE_KEY = "labelstudio.triton.playground";
 
 /**
- * Triton HTTP 推論服務固定埠號（docker-compose `triton` service）。
+ * Triton HTTP 推論預設埠（與後端 `get_triton_server_url()` 預設 `http://localhost:8000` 一致）。
+ * Docker Compose 對外映射可能為 18000，此時請在儀表板手動新增完整 URL，或於部署頁使用自訂位址。
  * @type {number}
  */
-export const TRITON_HTTP_PORT = 18000;
+export const TRITON_HTTP_PORT = 8000;
 
 /**
  * Triton Prometheus Metrics 固定埠號（docker-compose `triton` service）。

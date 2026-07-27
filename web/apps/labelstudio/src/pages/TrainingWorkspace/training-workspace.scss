@@ -1,0 +1,430 @@
+/**
+ * Training 與 Models 頁面共用視覺語言（對齊 ProjectModelsPage / TrainingPage）。
+ * 兩頁皆使用 `.training-page` 或 `.project-models-page` 作為 BEM 根區塊。
+ */
+
+.training-page,
+.project-models-page,
+.training-progress {
+  &__section {
+    margin-bottom: 20px;
+
+    &:last-of-type {
+      margin-bottom: 0;
+    }
+  }
+
+  &__section-title {
+    font-weight: 600;
+    font-size: 16px;
+    color: var(--color-neutral-content);
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    justify-content: space-between;
+
+    svg {
+      width: 18px;
+      height: 18px;
+      color: var(--color-neutral-content-subtle);
+    }
+  }
+
+  &__panel,
+  &__triton-deploy-config {
+    margin-bottom: 16px;
+    padding: 12px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--color-neutral-border-subtler);
+    background: var(--color-neutral-surface);
+  }
+
+  &__panel-label,
+  &__triton-deploy-label {
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--color-neutral-content);
+    margin-bottom: 8px;
+  }
+
+  &__form-row,
+  &__triton-deploy-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+  }
+
+  &__triton-deploy-label + &__triton-deploy-row,
+  &__triton-deploy-row + &__triton-deploy-label,
+  &__triton-deploy-hint + &__triton-deploy-label,
+  &__panel-label + &__form-row,
+  &__form-row + &__panel-label {
+    margin-top: 14px;
+  }
+
+  &__field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+    flex: 1;
+  }
+
+  &__field-label,
+  &__triton-deploy-inline-label {
+    font-size: 12px;
+    color: var(--color-neutral-content-subtle);
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  &__input,
+  &__select,
+  &__triton-deploy-select,
+  &__triton-deploy-input,
+  &__triton-deploy-count-input {
+    min-height: 32px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--color-neutral-border-subtler);
+    background: var(--color-neutral-surface);
+    color: var(--color-neutral-content);
+    font-size: 14px;
+  }
+
+  &__input,
+  &__triton-deploy-input {
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+
+    &--wide {
+      width: 100%;
+    }
+  }
+
+  &__select,
+  &__triton-deploy-select {
+    min-width: 200px;
+    cursor: pointer;
+
+    &--dataset-config {
+      flex: 1;
+      min-width: 200px;
+    }
+  }
+
+  &__triton-deploy-count-input {
+    width: 64px;
+    text-align: center;
+  }
+
+  &__triton-deploy-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+  }
+
+  &__stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    font-size: 14px;
+    color: var(--color-neutral-content-subtle);
+  }
+
+  &__hint,
+  &__triton-deploy-hint,
+  &__empty-hint {
+    font-size: 14px;
+    color: var(--color-neutral-content-subtle);
+    line-height: 1.5;
+  }
+
+  &__warning {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 12px;
+    border-radius: 6px;
+    background: var(--color-primary-emphasis-subtle);
+    border: 1px solid var(--color-neutral-border-subtler);
+    font-size: 14px;
+    color: var(--color-neutral-content);
+
+    svg {
+      width: 18px;
+      height: 18px;
+      flex-shrink: 0;
+      color: var(--color-negative-content);
+    }
+  }
+
+  &__error {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px;
+    border-radius: 6px;
+    background: var(--color-negative-emphasis-subtle, var(--color-negative-background));
+    border: 1px solid var(--color-negative-border-subtle, var(--color-negative-border));
+    font-size: 14px;
+    color: var(--color-negative-content);
+    margin-bottom: 16px;
+
+    svg {
+      width: 18px;
+      height: 18px;
+      flex-shrink: 0;
+    }
+  }
+
+  &__metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px;
+    margin: 14px 0;
+  }
+
+  &__metric {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    border-radius: 6px;
+    background: var(--color-neutral-surface-active);
+    border: 1px solid var(--color-neutral-border-subtler);
+    font-size: 13px;
+  }
+
+  &__metric-label {
+    font-size: 12px;
+    color: var(--color-neutral-content-subtle);
+  }
+
+  &__metric-value {
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--color-neutral-content);
+  }
+
+  &__metric span {
+    color: var(--color-neutral-content-subtle);
+  }
+
+  &__metric strong {
+    font-size: 14px;
+    color: var(--color-neutral-content);
+  }
+
+  &__run-list,
+  &__dataset-list {
+    display: grid;
+    gap: 12px;
+  }
+
+  &__run-card,
+  &__dataset-card {
+    border-radius: 8px;
+    border: 1px solid var(--color-neutral-border-subtler);
+    background: var(--color-neutral-surface);
+    overflow: hidden;
+  }
+
+  &__dataset-card {
+    padding: 16px;
+  }
+
+  &__run-summary {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    padding: 16px;
+    border: 0;
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  &__run-summary-main {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+  }
+
+  &__run-summary-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--color-neutral-content);
+  }
+
+  &__run-summary-side {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+
+  &__run-toggle {
+    font-size: 13px;
+    color: var(--color-primary-content);
+  }
+
+  &__run-content {
+    padding: 0 16px 16px;
+    border-top: 1px solid var(--color-neutral-border-subtler);
+  }
+
+  &__run-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: flex-start;
+    margin-top: 12px;
+  }
+
+  &__run-error {
+    color: var(--color-negative-content);
+    margin-top: 6px;
+    word-break: break-word;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  &__charts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+    margin-top: 12px;
+  }
+
+  &__chart-link {
+    display: block;
+    text-decoration: none;
+    border: 1px solid var(--color-neutral-border-subtler);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--color-neutral-surface-active);
+
+    img {
+      width: 100%;
+      aspect-ratio: 16 / 10;
+      object-fit: cover;
+      display: block;
+      background: var(--color-neutral-background);
+    }
+  }
+
+  &__chart-name {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    padding: 10px 12px;
+    color: var(--color-neutral-content);
+    font-size: 13px;
+  }
+
+  &__run-status {
+    display: inline-flex;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    background: var(--color-neutral-emphasis-subtle);
+    color: var(--color-neutral-content-subtle);
+
+    &_finished {
+      color: var(--color-positive-content);
+      background: var(--color-positive-emphasis-subtle);
+    }
+
+    &_failed {
+      color: var(--color-negative-content);
+      background: var(--color-negative-emphasis-subtle);
+    }
+
+    &_running,
+    &_starting,
+    &_queued,
+    &_preparing,
+    &_started {
+      color: var(--color-primary-content);
+      background: var(--color-primary-emphasis-subtle);
+    }
+  }
+
+  &__empty {
+    padding: 16px;
+    border-radius: 8px;
+    border: 1px dashed var(--color-neutral-border-subtler);
+    color: var(--color-neutral-content-subtle);
+    font-size: 14px;
+    text-align: center;
+  }
+
+  &__dataset-config-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin-top: 10px;
+  }
+
+  &__dataset-config-select {
+    min-width: 200px;
+    flex: 1;
+  }
+
+  &__subpanel {
+    margin-top: 14px;
+  }
+
+  &__subpanel-title {
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--color-neutral-content);
+    margin-bottom: 8px;
+  }
+
+  &__section-link,
+  &__text-link {
+    margin-left: auto;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--color-primary-content);
+    text-decoration: none;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+
+  &__triton-verify-msg {
+    font-size: 13px;
+    line-height: 1.4;
+
+    &--success {
+      color: var(--color-positive-content);
+    }
+
+    &--warning {
+      color: var(--color-warning-content);
+    }
+
+    &--error {
+      color: var(--color-negative-content);
+    }
+  }
+}

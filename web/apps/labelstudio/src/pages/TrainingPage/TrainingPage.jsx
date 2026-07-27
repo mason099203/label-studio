@@ -22,6 +22,8 @@ import {
   isAllowedTrainingTaskType,
   toUltralyticsTaskKey,
 } from "../ModelDeployment/trainingTaskTypes";
+import { TrainingMetricsGrid } from "../TrainingWorkspace/TrainingMetricsGrid";
+import { TrainingRunHistoryList } from "../TrainingWorkspace/TrainingRunHistoryList";
 import "./TrainingPage.scss";
 
 const TRAINING_UNSUPPORTED_HINT =
@@ -399,6 +401,7 @@ export const TrainingPage = () => {
     trainServerReady;
 
   const hasDatasetReady = Boolean(datasetConfigPath);
+  const historyRuns = trainingHistory?.runs ?? [];
 
   const disabledReason = (() => {
     if (unsupportedTraining) {
@@ -500,7 +503,7 @@ export const TrainingPage = () => {
   return (
     <Modal
       onHide={closeAndBack}
-      title="Training"
+      title="訓練"
       style={{ width: 720 }}
       closeOnClickOutside={false}
       allowClose={trainingState !== "running"}
@@ -519,71 +522,71 @@ export const TrainingPage = () => {
         {/* Train Server 設定 */}
         <div className={cn("training-page").elem("section").toClassName()}>
           <div className={cn("training-page").elem("section-title").toClassName()}>Train Server</div>
-          <div className={cn("training-page").elem("train-server-row").toClassName()}>
-            <input
-              className="w-full"
-              placeholder="例如：192.168.1.10:8011 或 http://gpu-server:8011"
-              value={trainServerUrl}
-              onChange={(e) => handleTrainServerUrlChange(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  verifyTrainServer();
-                }
-              }}
-            />
-            <input
-              className={cn("training-page").elem("input").toClassName()}
-              style={{ width: 160 }}
-              placeholder="API Key（可選）"
-              type="password"
-              value={trainServerApiKey}
-              onChange={(e) => handleTrainServerApiKeyChange(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  verifyTrainServer();
-                }
-              }}
-            />
-            <Button
-              look="outlined"
-              size="small"
-              waiting={verifyingTrainServer}
-              onClick={() => verifyTrainServer()}
-              icon={trainServerVerified ? <IconCheck /> : undefined}
-            >
-              {trainServerVerified ? "已驗證" : "驗證連線"}
-            </Button>
-          </div>
-          <div className={cn("training-page").elem("hint").toClassName()} style={{ marginTop: 8 }}>
-            留空則使用伺服器環境變數 TRAIN_SERVER_URL（本機 RQ 或預設遠端）。
-            填寫遠端位址後請先驗證，通過後才能開始訓練。
-            {trainServerVerifyDetail ? ` — ${trainServerVerifyDetail}` : ""}
-          </div>
-          {requiresTrainServerVerification && (
-            <div
-              className={cn("training-page")
-                .elem("train-server-status")
-                .mod({
-                  ok: trainServerVerified,
-                  pending: !trainServerVerified && !verifyingTrainServer,
-                })
-                .toClassName()}
-              style={{ marginTop: 8 }}
-            >
-              {trainServerVerified
-                ? "Train Server 可用，可在此專案進行遠端訓練。"
-                : verifyingTrainServer
-                  ? "正在驗證 Train Server…"
-                  : "尚未驗證 — 請點「驗證連線」確認遠端 Train Server 可連線。"}
+          <div className={cn("training-page").elem("panel").toClassName()}>
+            <div className={cn("training-page").elem("train-server-row").toClassName()}>
+              <input
+                className={cn("training-page").elem("input").toClassName()}
+                placeholder="例如：192.168.1.10:8011 或 http://gpu-server:8011"
+                value={trainServerUrl}
+                onChange={(e) => handleTrainServerUrlChange(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    verifyTrainServer();
+                  }
+                }}
+              />
+              <input
+                className={cn("training-page").elem("input").mod({ "api-key": true }).toClassName()}
+                placeholder="API Key（可選）"
+                type="password"
+                value={trainServerApiKey}
+                onChange={(e) => handleTrainServerApiKeyChange(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    verifyTrainServer();
+                  }
+                }}
+              />
+              <Button
+                look="outlined"
+                size="small"
+                waiting={verifyingTrainServer}
+                onClick={() => verifyTrainServer()}
+                icon={trainServerVerified ? <IconCheck /> : undefined}
+              >
+                {trainServerVerified ? "已驗證" : "驗證連線"}
+              </Button>
             </div>
-          )}
-          {trainServerMode === "remote" && trainServerVerified && (
-            <div className={cn("training-page").elem("hint").toClassName()} style={{ marginTop: 4 }}>
-              目前使用遠端 Train Server（模型可自動下載）。
+            <div className={cn("training-page").elem("hint").toClassName()}>
+              留空則使用伺服器環境變數 TRAIN_SERVER_URL（本機 RQ 或預設遠端）。
+              填寫遠端位址後請先驗證，通過後才能開始訓練。
+              {trainServerVerifyDetail ? ` — ${trainServerVerifyDetail}` : ""}
             </div>
-          )}
+            {requiresTrainServerVerification && (
+              <div
+                className={cn("training-page")
+                  .elem("train-server-status")
+                  .mod({
+                    ok: trainServerVerified,
+                    pending: !trainServerVerified && !verifyingTrainServer,
+                  })
+                  .toClassName()}
+              >
+                {trainServerVerified
+                  ? "Train Server 可用，可在此專案進行遠端訓練。"
+                  : verifyingTrainServer
+                    ? "正在驗證 Train Server…"
+                    : "尚未驗證 — 請點「驗證連線」確認遠端 Train Server 可連線。"}
+              </div>
+            )}
+            {trainServerMode === "remote" && trainServerVerified && (
+              <div className={cn("training-page").elem("hint").toClassName()}>
+                目前使用遠端 Train Server（模型可自動下載）。
+              </div>
+            )}
+          </div>
         </div>
 
         {/* 專案與資料摘要 */}
@@ -803,81 +806,84 @@ export const TrainingPage = () => {
         {/* dataset_config.json 路徑 */}
         <div className={cn("training-page").elem("section").toClassName()}>
           <div className={cn("training-page").elem("section-title").toClassName()}>資料集設定</div>
-          <div style={{ marginTop: 10, display: "flex", gap: 8, alignItems: "center" }}>
-            <select
-              className={cn("training-page").elem("input").toClassName()}
-              style={{ width: "auto", padding: "4px 8px" }}
-              value={exportFormat}
-              onChange={(e) => setExportFormat(e.target.value)}
-            >
-              <option value="">依專案預設</option>
-              <option value="YOLO_WITH_IMAGES">YOLO_WITH_IMAGES（偵測 / 分割 / 姿態）</option>
-              <option value="YOLO_OBB_WITH_IMAGES">YOLO_OBB_WITH_IMAGES（旋轉框 OBB）</option>
-              <option value="JSON_MIN">JSON_MIN（分類資料結構）</option>
-              <option value="YOLO">YOLO（僅座標，無圖片）</option>
-              <option value="YOLO_OBB">YOLO_OBB（僅 OBB 座標，無圖片）</option>
-              <option value="COCO">COCO</option>
-            </select>
-            <Button
-              look="outlined"
-              size="small"
-              onClick={prepareDatasetFromExport}
-              waiting={preparingDataset}
-              disabled={!isDefined(pageParams?.id) || unsupportedTraining || preparingDataset}
-              aria-label="Prepare dataset from export"
-            >
-              生成訓練資料集
-            </Button>
-          </div>
-          <div className={cn("training-page").elem("stats").toClassName()} style={{ marginTop: 8 }}>
-            <input
-              className="w-full"
-              value={datasetConfigPath}
-              placeholder="例如：D:\\ai_test\\project\\label-studio\\data\\training\\datasets\\project_1\\20260313_120000\\dataset_config.json"
-              onChange={(e) => setDatasetConfigPath(e.target.value)}
-            />
-          </div>
-
-          {/* 訓練引擎選擇 (僅限分類任務) */}
-          {(datasetMeta?.task_type === "classification" || trainingSpec?.task_type === "classification") && (
-            <div style={{ marginTop: 12 }}>
-              <div className={cn("training-page").elem("section-title").toClassName()} style={{ fontSize: 13 }}>
-                訓練引擎
-              </div>
-              <div style={{ display: "flex", gap: 12, marginTop: 4 }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
-                  <input
-                    type="radio"
-                    name="engine"
-                    value="auto"
-                    checked={trainingEngine === "auto"}
-                    onChange={() => setTrainingEngine("auto")}
-                  />
-                  自動 (依資料集)
-                </label>
-                <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
-                  <input
-                    type="radio"
-                    name="engine"
-                    value="yolo_classify"
-                    checked={trainingEngine === "yolo_classify"}
-                    onChange={() => setTrainingEngine("yolo_classify")}
-                  />
-                  YOLO v8/v11
-                </label>
-                <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
-                  <input
-                    type="radio"
-                    name="engine"
-                    value="cnn_classify"
-                    checked={trainingEngine === "cnn_classify"}
-                    onChange={() => setTrainingEngine("cnn_classify")}
-                  />
-                  ResNet18 (PyTorch)
-                </label>
-              </div>
+          <div className={cn("training-page").elem("panel").toClassName()}>
+            <div className={cn("training-page").elem("dataset-config-row").toClassName()}>
+              <select
+                className={cn("training-page")
+                  .elem("select")
+                  .mod({ "dataset-config": true })
+                  .toClassName()}
+                value={exportFormat}
+                onChange={(e) => setExportFormat(e.target.value)}
+              >
+                <option value="">依專案預設</option>
+                <option value="YOLO_WITH_IMAGES">YOLO_WITH_IMAGES（偵測 / 分割 / 姿態）</option>
+                <option value="YOLO_OBB_WITH_IMAGES">YOLO_OBB_WITH_IMAGES（旋轉框 OBB）</option>
+                <option value="JSON_MIN">JSON_MIN（分類資料結構）</option>
+                <option value="YOLO">YOLO（僅座標，無圖片）</option>
+                <option value="YOLO_OBB">YOLO_OBB（僅 OBB 座標，無圖片）</option>
+                <option value="COCO">COCO</option>
+              </select>
+              <Button
+                look="outlined"
+                size="small"
+                onClick={prepareDatasetFromExport}
+                waiting={preparingDataset}
+                disabled={!isDefined(pageParams?.id) || unsupportedTraining || preparingDataset}
+                aria-label="Prepare dataset from export"
+              >
+                生成訓練資料集
+              </Button>
             </div>
-          )}
+            <label className={cn("training-page").elem("field").toClassName()}>
+              <span className={cn("training-page").elem("field-label").toClassName()}>dataset_config.json 路徑</span>
+              <input
+                className={cn("training-page").elem("input").toClassName()}
+                value={datasetConfigPath}
+                placeholder="例如：D:\\ai_test\\project\\label-studio\\data\\training\\datasets\\project_1\\20260313_120000\\dataset_config.json"
+                onChange={(e) => setDatasetConfigPath(e.target.value)}
+              />
+            </label>
+
+            {/* 訓練引擎選擇 (僅限分類任務) */}
+            {(datasetMeta?.task_type === "classification" || trainingSpec?.task_type === "classification") && (
+              <div className={cn("training-page").elem("subpanel").toClassName()}>
+                <div className={cn("training-page").elem("subpanel-title").toClassName()}>訓練引擎</div>
+                <div className={cn("training-page").elem("engine-options").toClassName()}>
+                  <label className={cn("training-page").elem("engine-option").toClassName()}>
+                    <input
+                      type="radio"
+                      name="engine"
+                      value="auto"
+                      checked={trainingEngine === "auto"}
+                      onChange={() => setTrainingEngine("auto")}
+                    />
+                    自動 (依資料集)
+                  </label>
+                  <label className={cn("training-page").elem("engine-option").toClassName()}>
+                    <input
+                      type="radio"
+                      name="engine"
+                      value="yolo_classify"
+                      checked={trainingEngine === "yolo_classify"}
+                      onChange={() => setTrainingEngine("yolo_classify")}
+                    />
+                    YOLO v8/v11
+                  </label>
+                  <label className={cn("training-page").elem("engine-option").toClassName()}>
+                    <input
+                      type="radio"
+                      name="engine"
+                      value="cnn_classify"
+                      checked={trainingEngine === "cnn_classify"}
+                      onChange={() => setTrainingEngine("cnn_classify")}
+                    />
+                    ResNet18 (PyTorch)
+                  </label>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* 訓練按鈕 */}
@@ -930,31 +936,9 @@ export const TrainingPage = () => {
             <div className={cn("training-page").elem("section-title").toClassName()}>
               <IconAnalytics /> 訓練效能
             </div>
-            <div className={cn("training-page").elem("metrics").toClassName()}>
-              {(metrics?.top1 != null || metrics?.top5 != null
-                ? [
-                    ["Top-1", metrics.top1],
-                    ["Top-5", metrics.top5],
-                    ["Fitness", metrics.fitness],
-                  ]
-                : [
-                    ["mAP@0.5", metrics.map50],
-                    ["mAP@0.5:0.95", metrics.map],
-                    ["mAP@0.75", metrics.map75],
-                    ["Precision (mp)", metrics.mp],
-                    ["Recall (mr)", metrics.mr],
-                  ]
-              ).map(([label, value]) => (
-                <div key={label} className={cn("training-page").elem("metric").toClassName()}>
-                  <span className={cn("training-page").elem("metric-label").toClassName()}>{label}</span>
-                  <span className={cn("training-page").elem("metric-value").toClassName()}>
-                    {typeof value === "number" ? `${(value * 100).toFixed(2)}%` : "—"}
-                  </span>
-                </div>
-              ))}
-            </div>
+            <TrainingMetricsGrid block="training-page" metrics={metrics} />
             {metrics.warning && (
-              <div className={cn("training-page").elem("hint").toClassName()} style={{ marginTop: 8 }}>
+              <div className={cn("training-page").elem("hint").toClassName()}>
                 {metrics.warning}
               </div>
             )}
@@ -981,6 +965,27 @@ export const TrainingPage = () => {
             </div>
           </div>
         )}
+
+        <div className={cn("training-page").elem("section").toClassName()}>
+          <div className={cn("training-page").elem("section-title").toClassName()}>
+            <span>訓練歷史紀錄</span>
+            {historyRuns.length > 0 && (
+              <button
+                type="button"
+                className={cn("training-page").elem("section-link").toClassName()}
+                onClick={() => history.push(`/projects/${pageParams.id}/models`)}
+              >
+                在模型紀錄中查看 →
+              </button>
+            )}
+          </div>
+          <TrainingRunHistoryList
+            projectId={pageParams.id}
+            runs={historyRuns}
+            limit={5}
+            showViewAll={historyRuns.length > 5}
+          />
+        </div>
 
         <div className={cn("training-page").elem("footer").toClassName()}>
           <Space spread style={{ width: "100%" }}>

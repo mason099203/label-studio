@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { Typography, Button, Spinner } from "@humansignal/ui";
+import { Button, Spinner } from "@humansignal/ui";
 import {
   IconExternal,
   IconTerminal,
@@ -33,10 +33,10 @@ const ALL_DEPLOYERS = "__all__";
 /**
  * 數據統計磁貼元件
  */
-function StatCard({ label, value, unit, icon: Icon, color = "#6366f1" }) {
+function StatCard({ label, value, unit, icon: Icon }) {
   return (
     <div className={rootClass.elem("stat-card").toClassName()}>
-      <div className={rootClass.elem("stat-icon").toClassName()} style={{ color }}>
+      <div className={rootClass.elem("stat-icon").toClassName()}>
         {typeof Icon === "function" ? <Icon size={24} /> : <IconInfoOutline size={24} />}
       </div>
       <div className={rootClass.elem("stat-label").toClassName()}>{label}</div>
@@ -60,14 +60,8 @@ function SectionBlock({ title, description, children }) {
   return (
     <div className={rootClass.elem("section").toClassName()}>
       <div className={rootClass.elem("section-header").toClassName()}>
-        <Typography variant="title" size="medium">
-          {title}
-        </Typography>
-        {description ? (
-          <Typography variant="body" size="small" className="text-neutral-content-subtle">
-            {description}
-          </Typography>
-        ) : null}
+        <div className={rootClass.elem("section-title").toClassName()}>{title}</div>
+        {description ? <p className={rootClass.elem("panel-hint").toClassName()}>{description}</p> : null}
       </div>
       {children}
     </div>
@@ -107,22 +101,6 @@ function getHealthBadge(status) {
  * @param {{ pk?: number, scope: string, selectedUserId: string }} params
  * @returns {{ pk?: number, scope: string, user_id?: number, username?: string }}
  */
-/**
- * 自 Triton HTTP 基底推導常見 metrics 位址（同主機、埠 8002）。
- * @param {string} tritonBase
- * @returns {string}
- */
-function defaultMetricsUrlFromTritonBase(tritonBase) {
-  const b = (tritonBase || "").trim();
-  if (!b) return "http://localhost:8002/metrics";
-  try {
-    const u = new URL(b);
-    return `${u.protocol}//${u.hostname}:8002/metrics`;
-  } catch {
-    return "http://localhost:8002/metrics";
-  }
-}
-
 function buildMetricsParams({ pk, scope, selectedUserId }) {
   const params = { pk, scope };
 
@@ -187,12 +165,13 @@ function extractServersFromModels(models) {
  * 單台 Triton 伺服器的即時效能面板。
  * @param {{
  *   ip: string,
+ *   serverUrl: string,
  *   models: string[],
  *   metricsData: Object | null,
  *   isManual?: boolean,
  * }} props
  */
-function ServerPerformancePanel({ ip, models, metricsData, isManual = false }) {
+function ServerPerformancePanel({ ip, serverUrl, models, metricsData, isManual = false }) {
   const health = metricsData?.health ?? {};
   const hardware = metricsData?.hardware ?? {};
   const inference = metricsData?.inference ?? {};
@@ -207,7 +186,7 @@ function ServerPerformancePanel({ ip, models, metricsData, isManual = false }) {
     hardware.metrics_available && (hardware.ram_mem_available === true || hardware.ram_used_gb > 0);
 
   const hardwareStats = [
-    { label: "GPU 使用率", value: formatValue(hardware.gpu), unit: "%", icon: IconAnalytics, color: "#10b981" },
+    { label: "GPU 使用率", value: formatValue(hardware.gpu), unit: "%", icon: IconAnalytics },
     {
       label: "VRAM 佔用",
       value: tritonHasVramMetrics ? formatValue(hardware.vram_used_gb) : "—",
@@ -217,21 +196,18 @@ function ServerPerformancePanel({ ip, models, metricsData, isManual = false }) {
           : "GB"
         : "",
       icon: IconTerminal,
-      color: "#6366f1",
     },
     {
       label: "CPU 使用率",
       value: tritonHasCpuMetrics ? formatValue(hardware.cpu) : "—",
       unit: tritonHasCpuMetrics ? "%" : "",
       icon: IconCode,
-      color: "#f59e0b",
     },
     {
       label: "系統記憶體",
       value: tritonHasRamMetrics ? formatValue(hardware.ram) : "—",
       unit: tritonHasRamMetrics ? `% (${formatValue(hardware.ram_used_gb)} GB)` : "",
       icon: IconInfoOutline,
-      color: "#3b82f6",
     },
   ];
 
@@ -244,11 +220,10 @@ function ServerPerformancePanel({ ip, models, metricsData, isManual = false }) {
       value: formatValue(inference.active_models ?? 0, 0),
       unit: `/ ${formatValue(inference.total_models ?? 0, 0)}`,
       icon: IconCode,
-      color: "#10b981",
     },
   ];
 
-  const rootClass = cn("logs-metrics-tab");
+  const metricsUrl = buildTritonMetricsUrl(ip);
 
   return (
     <div className={rootClass.elem("server-panel").toClassName()}>
@@ -264,6 +239,32 @@ function ServerPerformancePanel({ ip, models, metricsData, isManual = false }) {
           {isLoading ? "—" : health.metrics_available ? "Metrics 已連線" : "Metrics 未連線"}
         </span>
         {isManual && <span className={rootClass.elem("manual-badge").toClassName()}>手動新增</span>}
+        {metricsUrl ? (
+          <a
+            href={metricsUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={rootClass.elem("metrics-link").toClassName()}
+            title={`開啟 Prometheus Metrics：${metricsUrl}`}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <IconExternal size={14} />
+            Metrics
+          </a>
+        ) : null}
+        {serverUrl ? (
+          <a
+            href={`${serverUrl.replace(/\/+$/, "")}/v2/health/ready`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={rootClass.elem("metrics-link").toClassName()}
+            title="開啟 Triton health/ready"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <IconExternal size={14} />
+            Health
+          </a>
+        ) : null}
         {models.length > 0 && (
           <span className={rootClass.elem("meta-chip").toClassName()} title={models.join(", ")}>
             模型：{models.length <= 3 ? models.join(", ") : `${models.slice(0, 3).join(", ")} …+${models.length - 3}`}
@@ -721,23 +722,11 @@ export function LogsAndMetricsTab() {
   if (!projectId) {
     return (
       <section className={rootClass.toClassName()}>
-        <div className={rootClass.elem("hero").toClassName()}>
-          <div className={rootClass.elem("hero-copy").toClassName()}>
-            <Typography variant="headline" size="medium">
-              日誌與效能
-            </Typography>
-            <Typography variant="body" size="small" className="text-neutral-content-subtle">
-              查看模型部署、推論請求與系統監控資料。
-            </Typography>
-          </div>
-        </div>
         <div className={rootClass.elem("panel").mod({ compact: true }).toClassName()}>
-          <Typography variant="title" size="medium" className="mb-tight">
-            需要先指定專案
-          </Typography>
-          <Typography variant="body" size="small" className="text-neutral-content-subtle mb-wide">
+          <div className={rootClass.elem("section-title").toClassName()}>需要先指定專案</div>
+          <p className={rootClass.elem("panel-hint").toClassName()}>
             這個頁面是全域頁面，若目前不在專案內，請先從下拉選單選擇要查詢的專案。
-          </Typography>
+          </p>
           <div className={rootClass.elem("project-form").toClassName()}>
             <div className={rootClass.elem("field").toClassName()}>
               <label className={rootClass.elem("field-label").toClassName()}>專案</label>
@@ -827,12 +816,6 @@ export function LogsAndMetricsTab() {
     <section className={rootClass.toClassName()}>
       <div className={rootClass.elem("hero").toClassName()}>
         <div className={rootClass.elem("hero-copy").toClassName()}>
-          <Typography variant="headline" size="medium">
-            儀錶板
-          </Typography>
-          <Typography variant="body" size="small" className="text-neutral-content-subtle">
-            即時查看部署模型、推論事件、效能快照與監控入口。
-          </Typography>
           <div className={rootClass.elem("hero-meta").toClassName()}>
             <span className={rootClass.elem("meta-chip").toClassName()}>{selectedProjectTitle || projectId}</span>
             <span className={rootClass.elem("meta-chip").toClassName()}>
@@ -952,6 +935,7 @@ export function LogsAndMetricsTab() {
               <ServerPerformancePanel
                 key={url}
                 ip={ip}
+                serverUrl={url}
                 models={serverModels}
                 isManual={Boolean(_manual)}
                 metricsData={serverMetricsMap.has(url) ? serverMetricsMap.get(url) : null}

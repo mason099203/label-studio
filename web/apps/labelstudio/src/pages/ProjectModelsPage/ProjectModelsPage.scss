@@ -1,3 +1,5 @@
+@import "../TrainingWorkspace/training-workspace.scss";
+
 .project-models-page {
   padding: 24px;
 
@@ -13,145 +15,13 @@
     margin: 0 0 6px;
     font-size: 24px;
     font-weight: 600;
+    color: var(--color-neutral-content);
   }
 
   &__subtitle {
     color: var(--color-neutral-content-subtle);
     font-size: 14px;
-  }
-
-  &__section {
-    margin-bottom: 24px;
-  }
-
-  &__section-title {
-    font-weight: 600;
-    font-size: 16px;
-    margin-bottom: 12px;
-  }
-
-  &__triton-deploy-config {
-    margin-bottom: 16px;
-    padding: 12px 14px;
-    border-radius: 8px;
-    border: 1px solid var(--color-neutral-border-subtler);
-    background: var(--color-neutral-surface);
-  }
-
-  &__triton-deploy-label {
-    font-weight: 600;
-    font-size: 14px;
-    margin-bottom: 8px;
-  }
-
-  &__triton-deploy-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    align-items: center;
-  }
-
-  &__triton-deploy-select {
-    min-width: 220px;
-    padding: 8px 10px;
-    border-radius: 6px;
-    border: 1px solid var(--color-neutral-border-subtler);
-    font-size: 14px;
-    background: var(--color-neutral-surface);
-    color: inherit;
-  }
-
-  &__triton-deploy-input {
-    flex: 1;
-    min-width: 200px;
-    padding: 8px 10px;
-    border-radius: 6px;
-    border: 1px solid var(--color-neutral-border-subtler);
-    font-size: 14px;
-
-    &--wide {
-      width: 100%;
-      min-width: 0;
-      box-sizing: border-box;
-    }
-  }
-
-  &__triton-deploy-label + &__triton-deploy-row,
-  &__triton-deploy-row + &__triton-deploy-label,
-  &__triton-deploy-hint + &__triton-deploy-label {
-    margin-top: 14px;
-  }
-
-  &__triton-deploy-inline-label {
-    font-size: 13px;
-    color: var(--color-neutral-content-subtle);
-    white-space: nowrap;
-  }
-
-  &__triton-deploy-count-input {
-    width: 64px;
-    padding: 8px 6px;
-    border-radius: 6px;
-    border: 1px solid var(--color-neutral-border-subtler);
-    font-size: 14px;
-    text-align: center;
-    background: var(--color-neutral-surface);
-    color: inherit;
-  }
-
-  &__triton-deploy-actions {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 10px;
-    margin-top: 10px;
-  }
-
-  &__triton-verify-msg {
-    font-size: 13px;
-    line-height: 1.4;
-
-    &--success {
-      color: var(--color-positive-content, #166534);
-    }
-
-    &--warning {
-      color: var(--color-warning-content, #92400e);
-    }
-
-    &--error {
-      color: var(--color-negative-content, #991b1b);
-    }
-  }
-
-  &__triton-deploy-hint {
-    margin-top: 8px;
-    font-size: 13px;
-    color: var(--color-neutral-content-subtle);
-    line-height: 1.45;
-
-    code {
-      font-size: 12px;
-    }
-  }
-
-  &__dataset-list,
-  &__run-list {
-    display: grid;
-    gap: 12px;
-  }
-
-  &__dataset-card,
-  &__run-card {
-    padding: 16px;
-    border-radius: 8px;
-    border: 1px solid var(--color-neutral-border-subtler);
-    background: var(--color-neutral-surface);
-  }
-
-  &__run-card {
-    padding: 0;
-    overflow: hidden;
+    line-height: 1.5;
   }
 
   &__dataset-id,
@@ -176,157 +46,13 @@
     margin-bottom: 12px;
   }
 
-  &__run-summary {
-    width: 100%;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 16px;
-    padding: 16px;
-    border: 0;
-    background: transparent;
-    text-align: left;
-    cursor: pointer;
-  }
-
-  &__run-summary-main {
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    flex-wrap: wrap;
-  }
-
-  &__run-summary-title {
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--color-neutral-content);
-  }
-
-  &__run-summary-time {
-    font-size: 13px;
-    color: var(--color-neutral-content-subtle);
-  }
-
-  &__run-summary-side {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-shrink: 0;
-  }
-
-  &__run-toggle {
-    font-size: 13px;
-    color: var(--color-primary-content);
-  }
-
-  &__run-content {
-    padding: 0 16px 16px;
-    border-top: 1px solid var(--color-neutral-border-subtler);
-  }
-
-  &__run-status {
-    display: inline-flex;
-    margin-top: 4px;
-    padding: 2px 8px;
-    border-radius: 999px;
-    font-size: 12px;
-    text-transform: capitalize;
-    background: var(--color-neutral-surface-active);
-
-    &_finished {
-      color: var(--color-positive-content);
-    }
-
-    &_failed {
-      color: var(--color-negative-content);
-    }
-
-    &_running,
-    &_starting,
-    &_queued,
-    &_preparing {
-      color: var(--color-primary-content);
-    }
-
-    &_unknown {
-      color: var(--color-neutral-content-subtler);
-    }
-  }
-
-  &__run-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
-    align-items: flex-start;
-  }
-
-  &__run-error {
-    color: var(--color-negative-content);
-    margin-top: 6px;
-    word-break: break-word;
-  }
-
-  &__metrics {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    gap: 10px;
-    margin: 14px 0;
-  }
-
-  &__metric {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 10px 12px;
-    border-radius: 6px;
-    background: var(--color-neutral-surface-active);
-    font-size: 13px;
-
-    span {
-      color: var(--color-neutral-content-subtle);
-    }
-
-    strong {
-      font-size: 14px;
-      color: var(--color-neutral-content);
-    }
-  }
-
-  &__charts {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 12px;
-  }
-
   &__chart-link {
-    display: block;
     width: 100%;
     padding: 0;
     text-align: left;
     cursor: zoom-in;
-    text-decoration: none;
-    border: 1px solid var(--color-neutral-border-subtler);
-    border-radius: 8px;
-    overflow: hidden;
-    background: var(--color-neutral-surface-active);
-
-    img {
-      width: 100%;
-      aspect-ratio: 16 / 10;
-      object-fit: cover;
-      display: block;
-      background: #fff;
-    }
-  }
-
-  &__chart-name {
-    display: flex;
-    gap: 6px;
-    align-items: center;
-    padding: 10px 12px;
-    color: var(--color-neutral-content);
-    font-size: 13px;
+    border: none;
+    background: transparent;
   }
 
   &__preview {
@@ -366,28 +92,6 @@
     object-fit: contain;
   }
 
-  &__empty,
-  &__error {
-    color: var(--color-neutral-content-subtle);
-  }
-
-  &__empty-hint {
-    margin-top: 8px;
-    font-size: 13px;
-    line-height: 1.5;
-    color: var(--color-neutral-content-subtle);
-  }
-
-  &__error {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 16px;
-    color: var(--color-negative-content);
-  }
-
-  /* ── 模型名稱可編輯區塊 ── */
-
   &__run-name-row {
     display: flex;
     flex-direction: column;
@@ -419,7 +123,7 @@
 
     &:hover {
       color: var(--color-primary-content);
-      background: var(--color-primary-surface);
+      background: var(--color-primary-emphasis-subtle);
     }
 
     svg {
@@ -435,17 +139,18 @@
   }
 
   &__run-name-input {
-    padding: 3px 8px;
-    border: 1px solid var(--color-primary-border);
+    padding: 6px 10px;
+    border: 1px solid var(--color-neutral-border-subtler);
     border-radius: 6px;
-    font-size: 13px;
+    font-size: 14px;
     background: var(--color-neutral-surface);
     color: var(--color-neutral-content);
     outline: none;
     width: 260px;
 
     &:focus {
-      border-color: var(--color-primary-content);
+      border-color: var(--color-primary-border);
+      box-shadow: 0 0 0 2px var(--color-primary-emphasis-subtle);
     }
   }
 
@@ -473,11 +178,10 @@
   &__run-uuid {
     font-size: 11px;
     color: var(--color-neutral-content-subtle);
-    font-family: monospace;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Courier New", monospace;
     margin-top: 1px;
   }
 
-  /* 自動遞增版本 */
   &__triton-auto-version-label {
     display: inline-flex;
     align-items: center;
@@ -500,8 +204,8 @@
     color: var(--color-neutral-content-subtle);
     margin-top: 4px;
     padding: 4px 8px;
-    background: rgba(var(--color-primary-content-rgb, 0 89 200), 0.05);
-    border-left: 2px solid var(--color-primary-content);
+    background: var(--color-primary-emphasis-subtle);
+    border-left: 2px solid var(--color-primary-border);
     border-radius: 0 4px 4px 0;
 
     strong {
@@ -509,7 +213,6 @@
     }
   }
 
-  /* 自訂 config.pbtxt 區塊 */
   &__triton-deploy-pbtxt-toggle-row {
     display: flex;
     align-items: center;
@@ -533,7 +236,7 @@
 
   &__triton-deploy-pbtxt-reset {
     background: none;
-    border: 1px solid var(--color-neutral-border);
+    border: 1px solid var(--color-neutral-border-subtler);
     border-radius: 4px;
     padding: 2px 8px;
     cursor: pointer;
@@ -560,11 +263,11 @@
     width: 100%;
     min-height: 320px;
     padding: 10px 12px;
-    border: 1px solid var(--color-neutral-border);
+    border: 1px solid var(--color-neutral-border-subtler);
     border-radius: 6px;
     background: var(--color-neutral-surface);
     color: var(--color-neutral-content);
-    font-family: "Consolas", "Monaco", "Courier New", monospace;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Courier New", monospace;
     font-size: 12px;
     line-height: 1.6;
     resize: vertical;
@@ -572,9 +275,8 @@
     box-sizing: border-box;
 
     &:focus {
-      border-color: var(--color-primary-content);
-      box-shadow: 0 0 0 2px rgba(var(--color-primary-content-rgb, 0 89 200), 0.12);
+      border-color: var(--color-primary-border);
+      box-shadow: 0 0 0 2px var(--color-primary-emphasis-subtle);
     }
   }
 }
-
