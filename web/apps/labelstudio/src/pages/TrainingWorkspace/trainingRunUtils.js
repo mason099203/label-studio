@@ -36,12 +36,22 @@ export function isActiveRun(run) {
 }
 
 /** @param {string | null | undefined} value */
+export function parseApiDateTime(value) {
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  // Django / RQ 常回傳無時區的 UTC ISO 字串；瀏覽器會誤當成本地時間。
+  const hasTimezone = /[zZ]$|[+-]\d{2}:\d{2}$/.test(raw);
+  const normalized = hasTimezone ? raw : `${raw}Z`;
+  const date = new Date(normalized);
+
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/** @param {string | null | undefined} value */
 export function formatTrainingTime(value) {
-  if (!value) return "時間未知";
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) return "時間未知";
+  const date = parseApiDateTime(value);
+  if (!date) return "時間未知";
 
   return new Intl.DateTimeFormat("zh-TW", {
     year: "numeric",
@@ -49,6 +59,7 @@ export function formatTrainingTime(value) {
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
+    hour12: true,
   }).format(date);
 }
 

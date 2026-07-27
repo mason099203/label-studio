@@ -902,6 +902,17 @@ class ProjectTrainingJobsAPI(APIView):
         if not base_weights:
             return Response({"detail": "base_weights is required"}, status=status.HTTP_400_BAD_REQUEST)
         if not dataset_config:
+            try:
+                prepared = prepare_training_dataset_for_project(
+                    project_id=project.id,
+                    train_ratio=float(payload.get("train_ratio", 0.8)),
+                    seed=int(payload.get("seed", 42)),
+                    export_format=payload.get("export_format"),
+                )
+                dataset_config = prepared.get("dataset_config")
+            except ValueError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        if not dataset_config:
             return Response({"detail": "dataset_config is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         # Fail fast with clear messages (so UI can show actionable errors)

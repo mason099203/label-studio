@@ -9,7 +9,7 @@ import math
 import shutil
 import urllib.error
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict
 
@@ -393,7 +393,7 @@ def run_yolo_training(
             "training_model": training_model,
             "params": {**train_params, "base_weights": base_weights},
             "run_dir": str(run_dir),
-            "created_at": datetime.now().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
             **({"name": str(run_name)} if run_name else {}),
         },
     )
@@ -482,7 +482,7 @@ def run_yolo_training(
             "progress_pct": progress_pct,
             "latest_metrics": metrics_dict,
             "message": f"Epoch {epoch}/{total_epochs}",
-            "updated_at": datetime.now().isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         _write_json(progress_path, payload)
         train_sub = run_dir / "train"
@@ -539,7 +539,7 @@ def run_yolo_training(
     )
 
     metrics: Dict[str, Any] = {
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "project_id": project_id,
         "task": task,
         "training_model": training_model,
@@ -571,7 +571,7 @@ def run_yolo_training(
         "best_path": str(best_dst) if best_dst.exists() else None,
         "last_path": str(last_dst) if last_dst.exists() else None,
         "metrics": metrics,
-        "finished_at": datetime.now().isoformat(),
+        "finished_at": datetime.now(timezone.utc).isoformat(),
         "progress_pct": 100,
     }
     if run_name:

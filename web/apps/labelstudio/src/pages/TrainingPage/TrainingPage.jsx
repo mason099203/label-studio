@@ -282,11 +282,30 @@ export const TrainingPage = () => {
   }, [pageParams?.id, api, loadModels]);
 
   /**
+   * 從專案標註產生訓練資料集（伺服器端路徑，無需使用者手動輸入）。
+   */
+  const prepareDataset = useCallback(async () => {
+    const meta = await api.callApi("trainingPrepareDataset", {
+      params: { pk: pageParams.id },
+      body: {
+        train_ratio: 0.8,
+        seed: 42,
+        export_format: exportFormat || null,
+      },
+    });
+    if (meta?.dataset_config) setDatasetConfigPath(meta.dataset_config);
+    if (meta) setDatasetMeta(meta);
+    if (meta?.task_type) {
+      await loadModels(toUltralyticsTaskKey(meta.task_type));
+    }
+    return meta;
+  }, [pageParams?.id, exportFormat, api, loadModels]);
+
+  /**
    * 啟動訓練（後端 RQ job，在本機 server 進行）。
    */
   const startTraining = useCallback(async () => {
     setErrorMessage(null);
-    setTrainingState("running");
     setMetrics(null);
     setArtifacts([]);
     setOutputModelFile(null);
@@ -296,10 +315,18 @@ export const TrainingPage = () => {
     try {
       if (!pageParams?.id) return;
       if (!selectedBaseWeights) throw new Error("請先選擇 base 模型（權重檔）");
-      if (!datasetConfigPath) throw new Error("請輸入 dataset_config.json 路徑");
       if (hasTrainServerUrl(trainServerUrl) && !trainServerVerified) {
         throw new Error("請先驗證 Train Server 連線後再開始訓練");
       }
+
+      setPreparingDataset(true);
+      const datasetMetaResult = await prepareDataset();
+      const resolvedDatasetConfig = datasetMetaResult?.dataset_config;
+      if (!resolvedDatasetConfig) {
+        throw new Error("無法從專案標註產生訓練資料集，請確認已有足夠標註資料");
+      }
+      setPreparingDataset(false);
+      setTrainingState("running");
 
       const extraTrainParams = {};
       if (mosaic !== "") extraTrainParams.mosaic = Number(mosaic);
@@ -309,7 +336,7 @@ export const TrainingPage = () => {
         params: { pk: pageParams.id },
         body: {
           base_weights: selectedBaseWeights,
-          dataset_config: datasetConfigPath,
+          dataset_config: resolvedDatasetConfig,
           epochs,
           imgsz: trainingEngine === "cnn_classify" ? 224 : imgsz,
           batch: trainingEngine === "cnn_classify" ? 32 : batch,
@@ -333,13 +360,14 @@ export const TrainingPage = () => {
         history.push(`/projects/${pageParams.id}/data/training/progress/${res.job_id}`);
       }
     } catch (err) {
+      setPreparingDataset(false);
       setErrorMessage(err?.message ?? "Training failed");
       setTrainingState("error");
     }
   }, [
     pageParams?.id,
     selectedBaseWeights,
-    datasetConfigPath,
+    prepareDataset,
     epochs,
     imgsz,
     batch,
@@ -364,25 +392,13 @@ export const TrainingPage = () => {
     setPreparingDataset(true);
     setDatasetMeta(null);
     try {
-      const meta = await api.callApi("trainingPrepareDataset", {
-        params: { pk: pageParams.id },
-        body: {
-          train_ratio: 0.8,
-          seed: 42,
-          export_format: exportFormat || null,
-        },
-      });
-      setDatasetMeta(meta);
-      if (meta?.dataset_config) setDatasetConfigPath(meta.dataset_config);
-      if (meta?.task_type) {
-        await loadModels(toUltralyticsTaskKey(meta.task_type));
-      }
+      await prepareDataset();
     } catch (err) {
       setErrorMessage(err?.message ?? "Dataset preparation failed");
     } finally {
       setPreparingDataset(false);
     }
-  }, [pageParams?.id, exportFormat, api, loadModels, unsupportedTraining]);
+  }, [pageParams?.id, prepareDataset, unsupportedTraining]);
 
   const hasSelectableModel = localModels.some(
     (m) => m.path === selectedBaseWeights || m.name === selectedBaseWeights,
@@ -397,10 +413,10 @@ export const TrainingPage = () => {
     hasSelectableModel &&
     (trainingState === "idle" || trainingState === "error") &&
     Boolean(selectedBaseWeights) &&
-    Boolean(datasetConfigPath) &&
+    !preparingDataset &&
     trainServerReady;
 
-  const hasDatasetReady = Boolean(datasetConfigPath);
+  const hasDatasetReady = Boolean(datasetMeta?.dataset_config || datasetConfigPath);
   const historyRuns = trainingHistory?.runs ?? [];
 
   const disabledReason = (() => {
@@ -414,7 +430,7 @@ export const TrainingPage = () => {
     }
     if (localModels.length === 0) return "找不到可用模型（請設定 Train Server 或放置權重於 data/training/models/original/）";
     if (!selectedBaseWeights) return "請先選擇 base 模型";
-    if (!datasetConfigPath) return "請先輸入或從 Export 產生 dataset_config.json";
+    if (preparingDataset) return "正在從專案標註產生訓練資料集…";
     return null;
   })();
 
@@ -599,9 +615,13 @@ export const TrainingPage = () => {
             </span>
           </div>
           {!hasDatasetReady && (
-            <div className={cn("training-page").elem("warning").toClassName()}>
-              <IconWarningCircleFilled />
-              尚未準備訓練資料集，請先「從 Export 產生 dataset_config.json」或手動填入 JSON 設定路徑。
+            <div className={cn("training-page").elem("hint").toClassName()}>
+              開始訓練時會自動從目前專案標註產生訓練資料集（儲存在伺服器，無需手動輸入路徑）。
+            </div>
+          )}
+          {hasDatasetReady && (
+            <div className={cn("training-page").elem("hint").toClassName()}>
+              上次產生：train {datasetMeta?.train_count ?? "—"} / val {datasetMeta?.val_count ?? "—"}
             </div>
           )}
           {(datasetMeta?.task_type || trainingSpec?.task_type) && (
@@ -803,47 +823,44 @@ export const TrainingPage = () => {
           )}
         </div>
 
-        {/* dataset_config.json 路徑 */}
+        {/* 匯出格式（開始訓練時自動產生資料集） */}
         <div className={cn("training-page").elem("section").toClassName()}>
           <div className={cn("training-page").elem("section-title").toClassName()}>資料集設定</div>
           <div className={cn("training-page").elem("panel").toClassName()}>
             <div className={cn("training-page").elem("dataset-config-row").toClassName()}>
-              <select
-                className={cn("training-page")
-                  .elem("select")
-                  .mod({ "dataset-config": true })
-                  .toClassName()}
-                value={exportFormat}
-                onChange={(e) => setExportFormat(e.target.value)}
-              >
-                <option value="">依專案預設</option>
-                <option value="YOLO_WITH_IMAGES">YOLO_WITH_IMAGES（偵測 / 分割 / 姿態）</option>
-                <option value="YOLO_OBB_WITH_IMAGES">YOLO_OBB_WITH_IMAGES（旋轉框 OBB）</option>
-                <option value="JSON_MIN">JSON_MIN（分類資料結構）</option>
-                <option value="YOLO">YOLO（僅座標，無圖片）</option>
-                <option value="YOLO_OBB">YOLO_OBB（僅 OBB 座標，無圖片）</option>
-                <option value="COCO">COCO</option>
-              </select>
+              <label className={cn("training-page").elem("field").toClassName()}>
+                <span className={cn("training-page").elem("field-label").toClassName()}>匯出格式</span>
+                <select
+                  className={cn("training-page")
+                    .elem("select")
+                    .mod({ "dataset-config": true })
+                    .toClassName()}
+                  value={exportFormat}
+                  onChange={(e) => setExportFormat(e.target.value)}
+                >
+                  <option value="">依專案預設</option>
+                  <option value="YOLO_WITH_IMAGES">YOLO_WITH_IMAGES（偵測 / 分割 / 姿態）</option>
+                  <option value="YOLO_OBB_WITH_IMAGES">YOLO_OBB_WITH_IMAGES（旋轉框 OBB）</option>
+                  <option value="JSON_MIN">JSON_MIN（分類資料結構）</option>
+                  <option value="YOLO">YOLO（僅座標，無圖片）</option>
+                  <option value="YOLO_OBB">YOLO_OBB（僅 OBB 座標，無圖片）</option>
+                  <option value="COCO">COCO</option>
+                </select>
+              </label>
               <Button
                 look="outlined"
                 size="small"
                 onClick={prepareDatasetFromExport}
-                waiting={preparingDataset}
+                waiting={preparingDataset && trainingState !== "running"}
                 disabled={!isDefined(pageParams?.id) || unsupportedTraining || preparingDataset}
-                aria-label="Prepare dataset from export"
+                aria-label="Preview dataset preparation"
               >
-                生成訓練資料集
+                預覽產生
               </Button>
             </div>
-            <label className={cn("training-page").elem("field").toClassName()}>
-              <span className={cn("training-page").elem("field-label").toClassName()}>dataset_config.json 路徑</span>
-              <input
-                className={cn("training-page").elem("input").toClassName()}
-                value={datasetConfigPath}
-                placeholder="例如：D:\\ai_test\\project\\label-studio\\data\\training\\datasets\\project_1\\20260313_120000\\dataset_config.json"
-                onChange={(e) => setDatasetConfigPath(e.target.value)}
-              />
-            </label>
+            <div className={cn("training-page").elem("hint").toClassName()}>
+              「開始訓練」會依目前標註與上方格式，在伺服器自動產生最新資料集。
+            </div>
 
             {/* 訓練引擎選擇 (僅限分類任務) */}
             {(datasetMeta?.task_type === "classification" || trainingSpec?.task_type === "classification") && (
@@ -891,11 +908,11 @@ export const TrainingPage = () => {
           <Button
             onClick={startTraining}
             disabled={!canStart}
-            waiting={trainingState === "running"}
+            waiting={preparingDataset || trainingState === "running"}
             icon={<IconPlay />}
             aria-label="Start training"
           >
-            {trainingState === "running" ? "訓練中…" : "開始訓練"}
+            {preparingDataset ? "準備資料集…" : trainingState === "running" ? "訓練中…" : "開始訓練"}
           </Button>
         </div>
 

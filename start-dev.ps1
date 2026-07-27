@@ -65,7 +65,7 @@ if (-not (Test-PortListening -Port 8080)) {
         "`$env:REDIS_URL='$redisUrl'; " +
         "`$env:TRITON_MODEL_REPOSITORY='$tritonModelRepo'; `$env:TRITON_SERVER_URL='$tritonServerUrl'; " +
         $(if ($LanAccess) {
-            "`$env:TRAIN_SERVER_URL='$trainServerUrl'; `$env:CSRF_TRUSTED_ORIGINS='$csrfOrigins'; "
+            "`$env:FRONTEND_HOSTNAME='$frontendUrl'; `$env:TRAIN_SERVER_URL='$trainServerUrl'; `$env:CSRF_TRUSTED_ORIGINS='$csrfOrigins'; "
         } else { '' }) +
         $(if ($env:TRAIN_SERVER_SHARED_DATA_ROOT) {
             "`$env:TRAIN_SERVER_SHARED_DATA_ROOT='$($env:TRAIN_SERVER_SHARED_DATA_ROOT)'; "

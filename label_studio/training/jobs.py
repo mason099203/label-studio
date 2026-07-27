@@ -8,10 +8,10 @@ import logging
 import math
 import os
 import shutil
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
 
+from django.utils import timezone
 from rq import get_current_job
 
 logger = logging.getLogger(__name__)
@@ -254,7 +254,7 @@ def yolo_detect_train_job(
     """
 
     job = get_current_job()
-    now = datetime.now().isoformat()
+    now = timezone.now().isoformat()
 
     dataset_meta: Dict[str, Any] = {}
     if dataset_config:
@@ -328,7 +328,7 @@ def yolo_detect_train_job(
                     "status": "failed",
                     "message": message,
                     "error": str(error) if error else None,
-                    "failed_at": datetime.now().isoformat(),
+                    "failed_at": timezone.now().isoformat(),
                 }
             )
             job.save_meta()
@@ -338,7 +338,7 @@ def yolo_detect_train_job(
                 "status": "failed",
                 "message": message,
                 "error": str(error) if error else None,
-                "failed_at": datetime.now().isoformat(),
+                "failed_at": timezone.now().isoformat(),
             },
         )
 
@@ -454,7 +454,7 @@ def yolo_detect_train_job(
 
     # Evaluate (val) using best weights if available
     metrics: Dict[str, Any] = {
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": timezone.now().isoformat(),
         "project_id": project_id,
         "base_weights": base_weights,
         "data_yaml": str(data_path),
@@ -512,7 +512,7 @@ def yolo_detect_train_job(
             "last_path": result["last_path"],
             "metrics_path": str(metrics_path),
             "metrics": metrics,
-            "finished_at": datetime.now().isoformat(),
+            "finished_at": timezone.now().isoformat(),
         },
     )
     _release_training_resources()
@@ -534,7 +534,7 @@ def yolo_classification_train_job(
     """
 
     job = get_current_job()
-    now = datetime.now().isoformat()
+    now = timezone.now().isoformat()
 
     if job is not None:
         job.meta.update(
@@ -583,7 +583,7 @@ def yolo_classification_train_job(
                     "status": "failed",
                     "message": message,
                     "error": str(error) if error else None,
-                    "failed_at": datetime.now().isoformat(),
+                    "failed_at": timezone.now().isoformat(),
                 }
             )
             job.save_meta()
@@ -593,7 +593,7 @@ def yolo_classification_train_job(
                 "status": "failed",
                 "message": message,
                 "error": str(error) if error else None,
-                "failed_at": datetime.now().isoformat(),
+                "failed_at": timezone.now().isoformat(),
             },
         )
 
@@ -688,7 +688,7 @@ def yolo_classification_train_job(
     _copy_common_artifacts(save_dir, artifacts_dir)
 
     metrics: Dict[str, Any] = {
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": timezone.now().isoformat(),
         "project_id": project_id,
         "base_weights": base_weights,
         "dataset_config": dataset_config,
@@ -749,7 +749,7 @@ def yolo_classification_train_job(
             "last_path": result["last_path"],
             "metrics_path": str(metrics_path),
             "metrics": metrics,
-            "finished_at": datetime.now().isoformat(),
+            "finished_at": timezone.now().isoformat(),
         },
     )
 
@@ -785,7 +785,7 @@ def cnn_classification_train_job(
     from .cnn_trainer import CNNTrainer
 
     job = get_current_job()
-    now = datetime.now().isoformat()
+    now = timezone.now().isoformat()
 
     if job is not None:
         job.meta.update({
@@ -860,7 +860,7 @@ def cnn_classification_train_job(
             shutil.copy2(src, artifacts_dir / f)
 
     metrics = {
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": timezone.now().isoformat(),
         "top1": best_acc / 100.0,
         "classes": classes
     }

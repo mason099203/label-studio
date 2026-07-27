@@ -8,7 +8,7 @@ import threading
 import uuid
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
@@ -102,7 +102,7 @@ class JobManager:
         param_overrides: Dict[str, Any] | None = None,
     ) -> str:
         job_id = uuid.uuid4().hex[:16]
-        now = datetime.now().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         job: Dict[str, Any] = {
             "job_id": job_id,
             "project_id": project_id,
@@ -261,7 +261,7 @@ class JobManager:
                 "message": "Training finished" if weights_done else "Training failed",
                 "error": None if weights_done else str(exc),
                 "warning": str(exc) if weights_done else None,
-                "failed_at": datetime.now().isoformat(),
+                "failed_at": datetime.now(timezone.utc).isoformat(),
             }
             if run_meta_path.exists():
                 try:
