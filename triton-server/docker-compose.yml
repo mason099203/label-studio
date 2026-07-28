@@ -1,5 +1,5 @@
 # 獨立 Triton 主機部署（GPU + Upload Server）
-# 模型倉庫與 Label Studio 共用：../data/triton_models
+# 模型倉庫：./data/triton_models（與本目錄同層，適合遠端單獨部署）
 #
 # 啟動：docker compose -f triton-server/docker-compose.yml up -d
 # 健康檢查：curl http://localhost:18000/v2/health/ready
@@ -24,7 +24,7 @@ services:
       - "18001:8001"   # gRPC
       - "18002:8002"   # Metrics
     volumes:
-      - ../data/triton_models:/models
+      - ./data/triton_models:/models
     command: >
       tritonserver
       --model-repository=/models
@@ -44,7 +44,7 @@ services:
     ports:
       - "18003:8003"   # Upload REST API（Label Studio 遠端部署用）
     volumes:
-      - ../data/triton_models:/models
+      - ./data/triton_models:/models
     environment:
       - MODEL_REPO=/models
     restart: unless-stopped

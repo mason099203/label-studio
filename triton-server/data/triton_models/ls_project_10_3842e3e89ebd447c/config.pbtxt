@@ -1,0 +1,44 @@
+name: "ls_project_10_3842e3e89ebd447c"
+platform: "pytorch_libtorch"
+max_batch_size: 1
+
+input [
+  {
+    name: "images"
+    data_type: TYPE_FP32
+    dims: [3, 640, 640]
+  }
+]
+
+output [
+  {
+    name: "output0"
+    data_type: TYPE_FP32
+    dims: [-1]
+  }
+]
+
+instance_group [
+  {
+    kind: KIND_GPU
+    count: 1
+    gpus: [0]
+  }
+]
+
+model_warmup [
+  {
+    name: "warmup"
+    batch_size: 1
+    inputs {
+      key: "images"
+      value {
+        dims: 3
+        dims: 640
+        dims: 640
+        data_type: TYPE_FP32
+        zero_data: true
+      }
+    }
+  }
+]

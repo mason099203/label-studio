@@ -34,9 +34,16 @@ TRITON_SERVER_URL=http://192.168.1.10:18000
 
 ## 啟動
 
+```bash
+# 在 triton-server 目錄內
+mkdir -p data/triton_models
+docker compose up -d --build
+```
+
+若從 Label Studio 專案根目錄啟動：
+
 ```powershell
-# 專案根目錄
-mkdir -Force data\triton_models
+mkdir -Force triton-server\data\triton_models
 docker compose -f triton-server/docker-compose.yml up -d --build
 ```
 
