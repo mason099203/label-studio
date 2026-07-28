@@ -1,0 +1,52 @@
+# 獨立 Triton 主機部署（GPU + Upload Server）
+# 模型倉庫與 Label Studio 共用：../data/triton_models
+#
+# 啟動：docker compose -f triton-server/docker-compose.yml up -d
+# 健康檢查：curl http://localhost:18000/v2/health/ready
+#
+# Label Studio 連線（本機或區網）：
+#   TRITON_SERVER_URL=http://<主機IP>:18000
+#   TRITON_UPLOAD_SERVER_PORT=18003  （可省略，會由 18000 自動推導）
+
+services:
+  triton:
+    image: nvcr.io/nvidia/tritonserver:25.04-py3
+    container_name: triton
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    ports:
+      - "18000:8000"   # HTTP
+      - "18001:8001"   # gRPC
+      - "18002:8002"   # Metrics
+    volumes:
+      - ../data/triton_models:/models
+    command: >
+      tritonserver
+      --model-repository=/models
+      --model-control-mode=explicit
+      --exit-on-error=false
+    restart: unless-stopped
+    shm_size: "2gb"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+  upload:
+    build:
+      context: .
+      dockerfile: Dockerfile.upload
+    container_name: triton_upload
+    ports:
+      - "18003:8003"   # Upload REST API（Label Studio 遠端部署用）
+    volumes:
+      - ../data/triton_models:/models
+    environment:
+      - MODEL_REPO=/models
+    restart: unless-stopped
+    depends_on:
+      - triton

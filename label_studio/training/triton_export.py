@@ -80,10 +80,14 @@ def _is_remote_triton(triton_url: str) -> bool:
 
 def derive_upload_server_url(triton_url: str) -> str:
     """
-    從 Triton 基底 URL 推導 Upload Server URL（同主機、埠 TRITON_UPLOAD_SERVER_PORT）。
+    從 Triton 基底 URL 推導 Upload Server URL（同主機）。
+
+    優先使用環境變數 ``TRITON_UPLOAD_SERVER_PORT``；否則依 Triton 對外埠對應：
+    - ``18000`` → ``18003``（``triton-server/docker-compose.yml`` 預設映射）
+    - ``8000`` → ``8003``（容器內或無埠偏移時）
 
     @example
-    derive_upload_server_url("http://10.214.57.20:18000") → "http://10.214.57.20:8003"
+    derive_upload_server_url("http://10.214.57.20:18000") → "http://10.214.57.20:18003"
 
     @param {str} triton_url - Triton HTTP 基底 URL
     @returns {str} Upload Server 基底 URL
@@ -91,7 +95,16 @@ def derive_upload_server_url(triton_url: str) -> str:
     parsed = urlparse(triton_url)
     scheme = parsed.scheme or "http"
     host = parsed.hostname or "localhost"
-    return f"{scheme}://{host}:{TRITON_UPLOAD_SERVER_PORT}"
+    env_port = os.environ.get("TRITON_UPLOAD_SERVER_PORT")
+    if env_port:
+        upload_port = int(env_port)
+    elif parsed.port == 18000:
+        upload_port = 18003
+    elif parsed.port == 8000:
+        upload_port = 8003
+    else:
+        upload_port = TRITON_UPLOAD_SERVER_PORT
+    return f"{scheme}://{host}:{upload_port}"
 
 
 def upload_model_to_remote_server(
