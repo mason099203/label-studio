@@ -1,3 +1,5 @@
+import { httpUrlHasExplicitPort } from "../ModelDeployment/tritonUrlState";
+
 const STORAGE_PREFIX = "ls_train_server_";
 
 /**
@@ -47,6 +49,25 @@ export function normalizeTrainServerUrl(raw) {
     return trimmed.replace(/\/+$/, "");
   }
   return `http://${trimmed.replace(/\/+$/, "")}`;
+}
+
+/**
+ * @param {string} raw
+ * @returns {{ ok: boolean, normalized: string, error?: string }}
+ */
+export function validateTrainServerUrl(raw) {
+  const normalized = normalizeTrainServerUrl(raw);
+  if (!normalized) {
+    return { ok: false, normalized: "", error: "請輸入完整 Train Server URL（含 http:// 與埠號）" };
+  }
+  if (!httpUrlHasExplicitPort(normalized)) {
+    return {
+      ok: false,
+      normalized,
+      error: "Train Server URL 必須包含埠號，例如 http://192.168.1.10:8011",
+    };
+  }
+  return { ok: true, normalized };
 }
 
 /**

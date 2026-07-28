@@ -1,0 +1,102 @@
+# Label Studio 本體（nginx + app），其餘服務由 .env 指向外部。
+# 啟動：docker compose -f docker-compose.app-only.yml up --build -d
+# 含 RQ worker：docker compose -f docker-compose.app-only.yml --profile worker up --build -d
+
+services:
+  nginx:
+    build: .
+    image: custom_labelstudio:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8085"
+      - "8081:8086"
+    depends_on:
+      - app
+    env_file:
+      - .env
+    environment:
+      - LABEL_STUDIO_HOST=${LABEL_STUDIO_HOST:-}
+    volumes:
+      - ./data:/label-studio/data:rw
+      - ./deploy/nginx/certs:/certs:ro
+    command: nginx
+
+  app:
+    stdin_open: true
+    tty: true
+    build: .
+    image: custom_labelstudio:latest
+    restart: unless-stopped
+    expose:
+      - "8000"
+    env_file:
+      - .env
+    environment:
+      - JSON_LOG=1
+      # Docker 使用映像內 production build，覆寫 .env 的 FRONTEND_HMR=true（本機 dev 用）
+      - FRONTEND_HMR=false
+      - LABEL_STUDIO_HOST=${LABEL_STUDIO_HOST:-http://localhost:8080}
+      # 預設 SQLite（資料在 ./data）；要用外部 PostgreSQL 請在 .env 設 DJANGO_DB=default 與 POSTGRE_*
+      - DJANGO_DB=${DJANGO_DB:-sqlite}
+      - POSTGRE_NAME=${POSTGRE_NAME:-}
+      - POSTGRE_USER=${POSTGRE_USER:-}
+      - POSTGRE_PASSWORD=${POSTGRE_PASSWORD:-}
+      - POSTGRE_PORT=${POSTGRE_PORT:-5432}
+      - POSTGRE_HOST=${POSTGRE_HOST:-}
+      - LABEL_STUDIO_HOST=${LABEL_STUDIO_HOST:-}
+      # 未設外部 Redis 時，容器內嵌 Redis（127.0.0.1:6379）
+      - EMBEDDED_REDIS=${EMBEDDED_REDIS:-1}
+      - REDIS_ENABLED=${REDIS_ENABLED:-1}
+      - REDIS_HOST=${REDIS_HOST:-}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_DB=${REDIS_DB:-0}
+      - REDIS_URL=${REDIS_URL:-}
+      - RQ_REDIS_HOST=${RQ_REDIS_HOST:-}
+      - RQ_REDIS_PORT=${RQ_REDIS_PORT:-6379}
+      - RQ_REDIS_DB=${RQ_REDIS_DB:-0}
+      - RQ_REDIS_URL=${RQ_REDIS_URL:-}
+      - TRITON_SERVER_URL=${TRITON_SERVER_URL:-}
+      - TRITON_MODEL_REPOSITORY=${TRITON_MODEL_REPOSITORY:-/label-studio/data/triton_models}
+      - TRAIN_SERVER_URL=${TRAIN_SERVER_URL:-}
+      - TRAIN_SERVER_API_KEY=${TRAIN_SERVER_API_KEY:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./data:/label-studio/data:rw
+    command: label-studio-uwsgi
+
+  rqworker:
+    profiles:
+      - worker
+    build: .
+    image: custom_labelstudio:latest
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - JSON_LOG=1
+      - DJANGO_DB=${DJANGO_DB:-sqlite}
+      - POSTGRE_NAME=${POSTGRE_NAME:-}
+      - POSTGRE_USER=${POSTGRE_USER:-}
+      - POSTGRE_PASSWORD=${POSTGRE_PASSWORD:-}
+      - POSTGRE_PORT=${POSTGRE_PORT:-5432}
+      - POSTGRE_HOST=${POSTGRE_HOST:-}
+      - EMBEDDED_REDIS=${EMBEDDED_REDIS:-1}
+      - REDIS_ENABLED=${REDIS_ENABLED:-1}
+      - REDIS_HOST=${REDIS_HOST:-}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_DB=${REDIS_DB:-0}
+      - REDIS_URL=${REDIS_URL:-}
+      - RQ_REDIS_HOST=${RQ_REDIS_HOST:-}
+      - RQ_REDIS_PORT=${RQ_REDIS_PORT:-6379}
+      - RQ_REDIS_DB=${RQ_REDIS_DB:-0}
+      - RQ_REDIS_URL=${RQ_REDIS_URL:-}
+      - TRITON_SERVER_URL=${TRITON_SERVER_URL:-}
+      - TRITON_MODEL_REPOSITORY=${TRITON_MODEL_REPOSITORY:-/label-studio/data/triton_models}
+      - TRAIN_SERVER_URL=${TRAIN_SERVER_URL:-}
+      - TRAIN_SERVER_API_KEY=${TRAIN_SERVER_API_KEY:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./data:/label-studio/data:rw
+    command: python label_studio/manage.py rqworker low --worker-class rq.worker.SimpleWorker

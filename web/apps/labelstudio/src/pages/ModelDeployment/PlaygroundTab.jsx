@@ -5,9 +5,9 @@ import { cn } from "../../utils/bem";
 import {
   TRITON_PLAYGROUND_STATE_KEY,
   verifyTritonConnection,
-  extractHostFromUrl,
-  buildTritonBaseUrl,
-  buildTritonMetricsUrl,
+  normalizeTritonUrl,
+  validateRemoteServiceUrl,
+  persistTritonUrlFields,
 } from "./tritonUrlState";
 import {
   inferPlaygroundTaskTypeFromLabelConfig,
@@ -978,12 +978,8 @@ export function PlaygroundTab() {
   const [projectId, setProjectId] = useState(savedState.projectId);
   const [modelName, setModelName] = useState(savedState.modelName);
   const [apiKey, setApiKey] = useState(savedState.apiKey);
-  /** Triton 伺服器主機 IP（如 `192.168.1.10`）；port 18000 固定。空值表示使用伺服器 TRITON_SERVER_URL。 */
-  const [tritonServerHost, setTritonServerHost] = useState(() => extractHostFromUrl(savedState.tritonServerUrl));
-  /** 後端轉發 Triton 時使用的完整 HTTP URL（固定埠 18000）；由 tritonServerHost 自動組成。 */
-  const tritonServerUrl = useMemo(() => buildTritonBaseUrl(tritonServerHost), [tritonServerHost]);
-  /** Prometheus Metrics 完整 URL（固定埠 8002）；由 tritonServerHost 自動組成。 */
-  const tritonMetricsUrl = useMemo(() => buildTritonMetricsUrl(tritonServerHost), [tritonServerHost]);
+  /** Triton HTTP 完整基底 URL（含埠號）；空值表示使用伺服器 TRITON_SERVER_URL。 */
+  const [tritonServerUrl, setTritonServerUrl] = useState(() => readSavedPlaygroundState().tritonServerUrl);
   /** Triton 連線驗證結果（按「驗證連線」後更新）。 */
   const [tritonVerifyLoading, setTritonVerifyLoading] = useState(false);
   const [tritonVerifyResult, setTritonVerifyResult] = useState(null);
@@ -1137,15 +1133,19 @@ export function PlaygroundTab() {
   );
 
   useEffect(() => {
+    const saved = readSavedPlaygroundState();
     persistPlaygroundState({
       projectId,
       modelName,
       apiKey,
       taskType,
       tritonServerUrl,
-      tritonMetricsUrl,
+      tritonMetricsUrl: saved.tritonMetricsUrl,
     });
-  }, [projectId, modelName, apiKey, taskType, tritonServerUrl, tritonMetricsUrl]);
+    if (tritonServerUrl.trim()) {
+      persistTritonUrlFields({ tritonServerUrl: normalizeTritonUrl(tritonServerUrl) });
+    }
+  }, [projectId, modelName, apiKey, taskType, tritonServerUrl]);
 
   useEffect(() => {
     const pk = Number.parseInt(projectId.trim(), 10);
@@ -1555,26 +1555,26 @@ export function PlaygroundTab() {
 
         <div className={rootClass.elem("form-row").toClassName()}>
           <div className={rootClass.elem("field").toClassName()}>
-            <label className={rootClass.elem("field-label").toClassName()} htmlFor="playground-triton-server-host">
-              Triton 伺服器 IP（選填）
+            <label className={rootClass.elem("field-label").toClassName()} htmlFor="playground-triton-server-url">
+              Triton 伺服器 URL（選填）
             </label>
             <input
-              id="playground-triton-server-host"
-              type="text"
+              id="playground-triton-server-url"
+              type="url"
               className={rootClass.elem("input").toClassName()}
-              value={tritonServerHost}
-              onChange={(e) => setTritonServerHost(e.target.value.trim())}
-              placeholder="192.168.1.10"
+              value={tritonServerUrl}
+              onChange={(e) => setTritonServerUrl(e.target.value)}
+              onBlur={() => {
+                const next = normalizeTritonUrl(tritonServerUrl);
+                if (next !== tritonServerUrl) setTritonServerUrl(next);
+              }}
+              placeholder="http://192.168.1.10:18000"
               autoComplete="off"
             />
             <Typography variant="body" size="small" className="text-neutral-content-subtle mt-tightest block">
-              {tritonServerHost.trim() ? (
-                <>
-                  HTTP：<code>{tritonServerUrl}</code>　Metrics：<code>{tritonMetricsUrl}</code>
-                </>
-              ) : (
-                "空值表示由伺服器 TRITON_SERVER_URL 決定（本機預設埠 8000）。模型列表與推論經後端轉發，須從 Label Studio 主機可連線。"
-              )}
+              {tritonServerUrl.trim()
+                ? `將使用：${normalizeTritonUrl(tritonServerUrl)}`
+                : "留空則由伺服器 TRITON_SERVER_URL 決定。自訂時請輸入完整 URL（含埠號），例如 Docker 對外 http://主機:18000、本機 start-triton http://主機:8000。"}
             </Typography>
           </div>
         </div>

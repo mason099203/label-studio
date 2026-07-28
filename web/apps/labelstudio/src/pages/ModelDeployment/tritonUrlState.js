@@ -5,18 +5,58 @@
 
 export const TRITON_PLAYGROUND_STATE_KEY = "labelstudio.triton.playground";
 
-/**
- * Triton HTTP 推論預設埠（與後端 `get_triton_server_url()` 預設 `http://localhost:8000` 一致）。
- * Docker Compose 對外映射可能為 18000，此時請在儀表板手動新增完整 URL，或於部署頁使用自訂位址。
- * @type {number}
- */
-export const TRITON_HTTP_PORT = 8000;
+/** 常見埠號（僅文件／placeholder 參考，不會自動填入）。 */
+export const TRITON_HTTP_PORT_REFERENCE = 18000;
+export const TRITON_METRICS_PORT_REFERENCE = 8002;
+
+/** @deprecated 使用 TRITON_HTTP_PORT_REFERENCE */
+export const TRITON_HTTP_PORT = TRITON_HTTP_PORT_REFERENCE;
+
+/** @deprecated 使用 TRITON_METRICS_PORT_REFERENCE */
+export const TRITON_METRICS_PORT = TRITON_METRICS_PORT_REFERENCE;
 
 /**
- * Triton Prometheus Metrics 固定埠號（docker-compose `triton` service）。
- * @type {number}
+ * 檢查 URL 是否含明確埠號（非 http/https 預設埠）。
+ * @param {string} raw
+ * @returns {boolean}
  */
-export const TRITON_METRICS_PORT = 8002;
+export function httpUrlHasExplicitPort(raw) {
+  const u = (raw || "").trim();
+  if (!u) return false;
+  try {
+    const withScheme = /^https?:\/\//i.test(u) ? u : `http://${u}`;
+    const parsed = new URL(withScheme);
+    return Boolean(parsed.port);
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * 驗證遠端服務 URL：需含 scheme（或可補 http://）且必須帶明確埠號。
+ * @param {string} raw
+ * @param {{ label?: string }} [opts]
+ * @returns {{ ok: boolean, normalized: string, error?: string }}
+ */
+export function validateRemoteServiceUrl(raw, opts = {}) {
+  const label = opts.label || "URL";
+  const trimmed = (raw || "").trim();
+  if (!trimmed) {
+    return { ok: false, normalized: "", error: `請輸入完整 ${label}（含 http:// 與埠號）` };
+  }
+  const normalized = normalizeTritonUrl(trimmed);
+  if (!normalized) {
+    return { ok: false, normalized: "", error: `無效的 ${label}` };
+  }
+  if (!httpUrlHasExplicitPort(normalized)) {
+    return {
+      ok: false,
+      normalized,
+      error: `${label} 必須包含埠號，例如 http://192.168.1.10:18000`,
+    };
+  }
+  return { ok: true, normalized };
+}
 
 /**
  * 從完整 URL 或純 hostname 中提取主機名稱（IP 或 domain），去除 scheme、port 及路徑。
@@ -30,60 +70,59 @@ export function extractHostFromUrl(url) {
     const withScheme = /^https?:\/\//i.test(u) ? u : `http://${u}`;
     return new URL(withScheme).hostname;
   } catch (_) {
-    // URL 無效時回退：去除 scheme 與 port
     return u.replace(/^https?:\/\//i, "").replace(/[:/].*$/, "");
   }
 }
 
 /**
- * 根據主機 IP 組成 Triton HTTP 基底 URL（固定埠 18000）。
- * @param {string} host - 主機 IP 或 hostname，例如 `10.0.0.1`
- * @returns {string} 完整 URL，例如 `http://10.0.0.1:18000`；host 為空時回傳空字串
+ * 正規化 HTTP(S) 基底 URL（不自動補埠號）。
+ * @param {string} url
+ * @returns {string}
  */
-export function buildTritonBaseUrl(host) {
-  const h = (host || "").trim();
-  if (!h) return "";
-  return `http://${h}:${TRITON_HTTP_PORT}`;
+export function normalizeTritonUrl(url) {
+  const u = (url || "").trim();
+  if (!u) return "";
+  try {
+    const withScheme = /^https?:\/\//i.test(u) ? u : `http://${u}`;
+    const parsed = new URL(withScheme);
+    return parsed.origin;
+  } catch (_) {
+    return u.replace(/\/+$/, "");
+  }
 }
 
 /**
- * 根據主機 IP 組成 Triton Prometheus Metrics URL（固定埠 8002）。
- * @param {string} host - 主機 IP 或 hostname，例如 `10.0.0.1`
- * @returns {string} 完整 Metrics URL，例如 `http://10.0.0.1:8002/metrics`；host 為空時回傳空字串
+ * @param {string} hostOrUrl
+ * @returns {string}
+ */
+export function buildTritonBaseUrl(hostOrUrl) {
+  return normalizeTritonUrl(hostOrUrl);
+}
+
+/**
+ * 依 HTTP URL 之主機組成 Metrics URL（埠號須由呼叫端提供完整 URL；此函式僅供已含埠之 host:port）。
+ * @deprecated 請在 UI 直接輸入完整 Metrics URL，或於 Logs 頁手動新增監控伺服器。
+ * @param {string} host
+ * @returns {string}
  */
 export function buildTritonMetricsUrl(host) {
   const h = (host || "").trim();
   if (!h) return "";
-  return `http://${h}:${TRITON_METRICS_PORT}/metrics`;
-}
-
-/**
- * 正規化 Triton HTTP URL：若使用者未指定埠號，自動補上 {@link TRITON_HTTP_PORT}。
- *
- * @example
- * normalizeTritonUrl("http://10.0.0.1")       // → "http://10.0.0.1:18000"
- * normalizeTritonUrl("http://10.0.0.1:18000") // → "http://10.0.0.1:18000"（原樣）
- * normalizeTritonUrl("http://10.0.0.1:9000")  // → "http://10.0.0.1:9000"（原樣）
- * normalizeTritonUrl("")                       // → ""
- *
- * @param {string} url - 使用者輸入的網址（可含或不含埠號）
- * @returns {string} 補足埠號後的完整 URL；無效或空值時回傳原始字串
- */
-export function normalizeTritonUrl(url) {
-  const u = (url || "").trim();
-  if (!u) return u;
-  try {
-    const withScheme = /^https?:\/\//i.test(u) ? u : `http://${u}`;
-    const parsed = new URL(withScheme);
-    // parsed.port 為空字串表示使用者未指定埠號，補上預設值
-    if (!parsed.port) {
-      parsed.port = String(TRITON_HTTP_PORT);
+  if (/^https?:\/\//i.test(h)) {
+    try {
+      const parsed = new URL(h);
+      if (parsed.port) {
+        return `${parsed.protocol}//${parsed.hostname}:${parsed.port}/metrics`;
+      }
+    } catch (_) {
+      return "";
     }
-    // 只回傳 scheme + host + port，捨棄路徑避免污染基底 URL
-    return parsed.origin;
-  } catch (_) {
-    return u;
+    return "";
   }
+  if (/:\d+$/.test(h)) {
+    return `http://${h}/metrics`;
+  }
+  return "";
 }
 
 /**
@@ -200,17 +239,22 @@ export async function verifyTritonConnection(api, projectPk, tritonServerUrl) {
   if (!pk) {
     return { level: "error", ok: false, message: "請先選擇專案（驗證需要專案權限）" };
   }
+  const u = (tritonServerUrl || "").trim();
+  if (u) {
+    const check = validateRemoteServiceUrl(u, { label: "Triton URL" });
+    if (!check.ok) {
+      return { level: "error", ok: false, message: check.error || "Triton URL 無效" };
+    }
+  }
   /** @type {Record<string, string>} */
   const params = { pk };
-  const u = (tritonServerUrl || "").trim();
-  if (u) params.triton_url = u;
+  if (u) params.triton_url = normalizeTritonUrl(u);
   try {
     const res = await api.callApi("trainingTritonHealth", {
       params,
       errorFilter: () => true,
     });
 
-    // 後端回傳 400 — URL 格式錯誤
     if (res?.detail && res?.base_url === undefined && res?.ok === undefined) {
       return { level: "error", ok: false, message: String(res.detail), raw: res };
     }
@@ -237,7 +281,6 @@ export async function verifyTritonConnection(api, projectPk, tritonServerUrl) {
       };
     }
 
-    // 完全無法連線
     const detail = res?.detail ? String(res.detail) : "";
     return {
       level: "error",

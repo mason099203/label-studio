@@ -48,7 +48,7 @@ if ($LanAccess) {
     Write-Host "LAN IP       : $hostName"
     Write-Host "Frontend     : $frontendUrl"
     Write-Host "Backend API  : $djangoUrl"
-    Write-Host "Train Server : $trainServerUrl  (Training 頁填 ${hostName}:8011)"
+    Write-Host "Train Server : $trainServerUrl  (Training 頁請填完整 URL，例如 $trainServerUrl)"
 } else {
     Write-Host 'Frontend     : http://localhost:8010'
     Write-Host 'Backend API  : http://localhost:8080'

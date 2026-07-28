@@ -26,6 +26,7 @@ import {
   persistTritonUrlFields,
   verifyTritonConnection,
   normalizeTritonUrl,
+  validateRemoteServiceUrl,
   TRITON_PLAYGROUND_STATE_KEY,
 } from "../ModelDeployment/tritonUrlState";
 import { TrainingMetricsGrid } from "../TrainingWorkspace/TrainingMetricsGrid";
@@ -86,12 +87,10 @@ export const ProjectModelsPage = () => {
    * 空字串表示後端使用 TRITON_SERVER_URL 環境變數。
    */
   const [deployTritonServerUrl, setDeployTritonServerUrl] = useState(() => readTritonUrlState().tritonServerUrl);
-  /** 部署用 Triton 快速選項：default／本機 8000／自訂（與右側網址欄同步）。 */
+  /** 部署用 Triton：default＝後端環境變數；custom＝自訂完整 URL。 */
   const [tritonPreset, setTritonPreset] = useState(() => {
     const u = (readTritonUrlState().tritonServerUrl || "").trim();
-    if (!u) return "default";
-    if (u === "http://localhost:18000" || u === "http://127.0.0.1:18000") return "local18000";
-    return "custom";
+    return u ? "custom" : "default";
   });
   const [tritonVerifyLoading, setTritonVerifyLoading] = useState(false);
   const [tritonVerifyResult, setTritonVerifyResult] = useState(null);
@@ -280,18 +279,16 @@ export const ProjectModelsPage = () => {
    */
   const presetFromUrl = (url) => {
     const u = (url || "").trim();
-    if (!u) return "default";
-    if (u === "http://localhost:18000" || u === "http://127.0.0.1:18000") return "local18000";
-    return "custom";
+    return u ? "custom" : "default";
   };
 
   /**
    * 變更部署用 Triton 位址並寫入與模型測試頁相同之儲存。
-   * 若 URL 未包含埠號，自動補上預設 TRITON_HTTP_PORT（18000）。
    * @param {string} nextUrl
    */
   const commitDeployTritonUrl = (nextUrl) => {
-    const normalized = normalizeTritonUrl(nextUrl);
+    const trimmed = (nextUrl || "").trim();
+    const normalized = trimmed ? normalizeTritonUrl(trimmed) : "";
     setDeployTritonServerUrl(normalized);
     setTritonPreset(presetFromUrl(normalized));
     persistTritonUrlFields({ tritonServerUrl: normalized });
@@ -307,15 +304,21 @@ export const ProjectModelsPage = () => {
    */
   const handleVerifyDeployTriton = async () => {
     if (!params?.id) return;
-    // 先正規化：補足使用者未輸入的埠號後再驗證
-    const normalized = normalizeTritonUrl(deployTritonServerUrl);
-    if (normalized !== deployTritonServerUrl) {
-      commitDeployTritonUrl(normalized);
+    const trimmed = (deployTritonServerUrl || "").trim();
+    if (trimmed) {
+      const check = validateRemoteServiceUrl(trimmed, { label: "Triton URL" });
+      if (!check.ok) {
+        setTritonVerifyResult({ level: "error", text: check.error || "Triton URL 無效" });
+        return;
+      }
+      if (check.normalized !== deployTritonServerUrl) {
+        commitDeployTritonUrl(check.normalized);
+      }
     }
     setTritonVerifyResult(null);
     setTritonVerifyLoading(true);
     try {
-      const r = await verifyTritonConnection(api, params.id, normalized);
+      const r = await verifyTritonConnection(api, params.id, trimmed ? normalizeTritonUrl(trimmed) : "");
       setTritonVerifyResult({ level: r.level, text: r.message });
     } finally {
       setTritonVerifyLoading(false);
@@ -365,11 +368,18 @@ export const ProjectModelsPage = () => {
   const handleDeployToTriton = async (runId) => {
     if (!params?.id || !runId) return;
     setDeployError(null);
-    // 部署前正規化 URL：補足缺少的埠號
     const raw = (deployTritonServerUrl || "").trim();
-    const tu = raw ? normalizeTritonUrl(raw) : "";
-    if (tu !== raw) {
-      commitDeployTritonUrl(tu);
+    let tu = "";
+    if (raw) {
+      const check = validateRemoteServiceUrl(raw, { label: "Triton URL" });
+      if (!check.ok) {
+        setDeployError(check.error || "Triton URL 無效");
+        return;
+      }
+      tu = check.normalized;
+      if (tu !== deployTritonServerUrl) {
+        commitDeployTritonUrl(tu);
+      }
     }
     if (tu) {
       setTritonVerifyLoading(true);
@@ -502,13 +512,11 @@ export const ProjectModelsPage = () => {
               onChange={(e) => {
                 const v = e.target.value;
                 if (v === "default") commitDeployTritonUrl("");
-                else if (v === "local18000") commitDeployTritonUrl("http://localhost:18000");
                 else setTritonPreset("custom");
               }}
             >
               <option value="default">後端環境預設（不指定 URL）</option>
-              <option value="local18000">本機 Triton（localhost:18000）</option>
-              <option value="custom">自訂網址…</option>
+              <option value="custom">自訂完整 URL…</option>
             </select>
             <input
               type="url"
@@ -520,7 +528,7 @@ export const ProjectModelsPage = () => {
                 setTritonPreset(presetFromUrl(next));
               }}
               onBlur={() => commitDeployTritonUrl(deployTritonServerUrl)}
-              placeholder="http://主機:18000"
+              placeholder="http://主機:18000（須含埠號）"
               aria-label="Triton HTTP 基底網址"
             />
           </div>

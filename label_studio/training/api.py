@@ -113,6 +113,26 @@ def _sanitize_optional_http_url(raw: str | None) -> str | None:
     return s.rstrip("/")
 
 
+def _http_url_has_explicit_port(url: str) -> bool:
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    return bool(parsed.port)
+
+
+def _require_http_url_with_port(raw: str | None, *, label: str) -> tuple[str | None, str | None]:
+    """
+    驗證使用者提供的 http(s) URL 必須含明確埠號。
+    回傳 (sanitized_url, error_message)。
+    """
+    sanitized = _sanitize_optional_http_url(raw)
+    if not sanitized:
+        return None, f"無效的 {label}：請使用 http:// 或 https:// 開頭的完整網址（含埠號）"
+    if not _http_url_has_explicit_port(sanitized):
+        return None, f"{label} 必須包含埠號，例如 http://192.168.1.10:8011"
+    return sanitized, None
+
+
 def _resolve_train_server_config_from_request(
     request,
     body: Dict[str, Any] | None = None,
@@ -130,9 +150,9 @@ def _resolve_train_server_config_from_request(
         raw_key = request.query_params.get("train_server_api_key")
 
     if raw_url is not None and str(raw_url).strip():
-        sanitized = _sanitize_optional_http_url(str(raw_url))
-        if not sanitized:
-            return resolve_train_server_config(), "無效的 train_server_url：請使用 http:// 或 https:// 開頭的網址"
+        sanitized, port_err = _require_http_url_with_port(str(raw_url), label="train_server_url")
+        if port_err:
+            return resolve_train_server_config(), port_err
         return resolve_train_server_config(url=sanitized, api_key=str(raw_key or "")), None
 
     return resolve_train_server_config(), None
@@ -2057,12 +2077,12 @@ class ProjectTrainingTritonHealthAPI(APIView):
         _get_project_for_user(request, pk)
         raw = request.query_params.get("triton_url")
         if raw is not None and str(raw).strip():
-            sanitized = _sanitize_optional_http_url(raw)
-            if not sanitized:
+            sanitized, port_err = _require_http_url_with_port(raw, label="triton_url")
+            if port_err:
                 return Response(
                     {
                         "ok": False,
-                        "detail": "無效的 triton_url：請使用以 http:// 或 https:// 開頭的網址",
+                        "detail": port_err,
                     },
                     status=status.HTTP_400_BAD_REQUEST,
                 )

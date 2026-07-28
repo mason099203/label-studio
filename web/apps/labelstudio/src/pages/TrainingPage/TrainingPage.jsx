@@ -15,6 +15,7 @@ import {
   getTrainServerSettings,
   hasTrainServerUrl,
   normalizeTrainServerUrl,
+  validateTrainServerUrl,
   saveTrainServerDraft,
   setTrainServerSettings,
 } from "./trainServerStorage";
@@ -129,12 +130,13 @@ export const TrainingPage = () => {
     if (!pageParams?.id) return;
     const urlInput = override.url ?? trainServerUrl;
     const apiKeyInput = override.apiKey ?? trainServerApiKey;
-    const normalized = normalizeTrainServerUrl(urlInput);
-    if (!normalized) {
+    const validation = validateTrainServerUrl(urlInput);
+    if (!validation.ok) {
       setTrainServerVerified(false);
-      setTrainServerVerifyDetail("請輸入 Train Server 位址");
+      setTrainServerVerifyDetail(validation.error || "請輸入 Train Server 位址");
       return;
     }
+    const normalized = validation.normalized;
     setVerifyingTrainServer(true);
     setTrainServerVerifyDetail(null);
     setTrainServerSettings(pageParams.id, {
@@ -542,7 +544,7 @@ export const TrainingPage = () => {
             <div className={cn("training-page").elem("train-server-row").toClassName()}>
               <input
                 className={cn("training-page").elem("input").toClassName()}
-                placeholder="例如：192.168.1.10:8011 或 http://gpu-server:8011"
+                placeholder="完整 URL，例如 http://192.168.1.10:8011"
                 value={trainServerUrl}
                 onChange={(e) => handleTrainServerUrlChange(e.target.value)}
                 onKeyDown={(e) => {
@@ -577,7 +579,7 @@ export const TrainingPage = () => {
             </div>
             <div className={cn("training-page").elem("hint").toClassName()}>
               留空則使用伺服器環境變數 TRAIN_SERVER_URL（本機 RQ 或預設遠端）。
-              填寫遠端位址後請先驗證，通過後才能開始訓練。
+              填寫遠端位址時請輸入完整 URL（含埠號），通過驗證後才能開始訓練。
               {trainServerVerifyDetail ? ` — ${trainServerVerifyDetail}` : ""}
             </div>
             {requiresTrainServerVerification && (
