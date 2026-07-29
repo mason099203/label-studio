@@ -1,0 +1,176 @@
+# 完整堆疊：Label Studio + PostgreSQL + Redis + RQ + Triton + Train Server
+# 啟動：docker compose -f docker-compose.full.yml up --build -d
+
+services:
+  nginx:
+    build:
+      context: .
+      args:
+        INCLUDE_YOLO_TRAINING: "true"
+    image: custom_labelstudio:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8085"
+      - "8081:8086"
+    depends_on:
+      - app
+    environment:
+      - LABEL_STUDIO_HOST=${LABEL_STUDIO_HOST:-}
+    volumes:
+      - ./data:/label-studio/data:rw
+      - ./deploy/nginx/certs:/certs:ro
+    command: nginx
+
+  app:
+    stdin_open: true
+    tty: true
+    build:
+      context: .
+      args:
+        INCLUDE_YOLO_TRAINING: "true"
+    image: custom_labelstudio:latest
+    restart: unless-stopped
+    expose:
+      - "8000"
+    depends_on:
+      - db
+      - redis
+      - triton
+      - train-server
+    environment:
+      - DJANGO_DB=default
+      - POSTGRE_NAME=postgres
+      - POSTGRE_USER=postgres
+      - POSTGRE_PASSWORD=
+      - POSTGRE_PORT=5432
+      - POSTGRE_HOST=db
+      - LABEL_STUDIO_HOST=${LABEL_STUDIO_HOST:-}
+      - CSRF_TRUSTED_ORIGINS=${CSRF_TRUSTED_ORIGINS:-}
+      - JSON_LOG=1
+      - HOME=/label-studio
+      - USER=labelstudio
+      - LOGNAME=labelstudio
+      - TORCHINDUCTOR_CACHE_DIR=/label-studio/data/.cache/torchinductor
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - REDIS_URL=redis://redis:6379/0
+      - REDIS_ENABLED=1
+      - RQ_REDIS_HOST=redis
+      - RQ_REDIS_PORT=6379
+      - RQ_REDIS_DB=0
+      - TRITON_SERVER_URL=http://triton:8000
+      - TRITON_MODEL_REPOSITORY=/label-studio/data/triton_models
+      - TRAIN_SERVER_URL=${TRAIN_SERVER_URL:-http://train-server:8011}
+      - TRAIN_SERVER_API_KEY=${TRAIN_SERVER_API_KEY:-}
+    volumes:
+      - ./data:/label-studio/data:rw
+    command: label-studio-uwsgi
+
+  rqworker:
+    build:
+      context: .
+      args:
+        INCLUDE_YOLO_TRAINING: "true"
+    image: custom_labelstudio:latest
+    restart: unless-stopped
+    depends_on:
+      - db
+      - redis
+      - triton
+      - train-server
+    environment:
+      - DJANGO_DB=default
+      - POSTGRE_NAME=postgres
+      - POSTGRE_USER=postgres
+      - POSTGRE_PASSWORD=
+      - POSTGRE_PORT=5432
+      - POSTGRE_HOST=db
+      - JSON_LOG=1
+      - REDIS_ENABLED=1
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - REDIS_URL=redis://redis:6379/0
+      - RQ_REDIS_HOST=redis
+      - RQ_REDIS_PORT=6379
+      - RQ_REDIS_DB=0
+      - TRITON_SERVER_URL=http://triton:8000
+      - TRITON_MODEL_REPOSITORY=/label-studio/data/triton_models
+      - TRAIN_SERVER_URL=${TRAIN_SERVER_URL:-http://train-server:8011}
+      - TRAIN_SERVER_API_KEY=${TRAIN_SERVER_API_KEY:-}
+    volumes:
+      - ./data:/label-studio/data:rw
+    command: python label_studio/manage.py rqworker low --worker-class rq.worker.SimpleWorker
+
+  triton:
+    image: nvcr.io/nvidia/tritonserver:24.01-py3
+    hostname: triton
+    restart: unless-stopped
+    ports:
+      - "18000:8000"
+      - "18001:8001"
+      - "18002:8002"
+    volumes:
+      - ./data/triton_models:/models
+    command: tritonserver --model-repository=/models
+    # GPU：取消下行註解並安裝 NVIDIA Container Toolkit
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  db:
+    image: pgautoupgrade/pgautoupgrade:17-alpine
+    hostname: db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_HOST_AUTH_METHOD=trust
+      - POSTGRES_USER=postgres
+    volumes:
+      - ${POSTGRES_DATA_DIR:-./postgres-data}:/var/lib/postgresql/data
+      - ./deploy/pgsql/certs:/var/lib/postgresql/certs:ro
+
+  redis:
+    image: redis:7-alpine
+    hostname: redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+
+  train-server:
+    build:
+      context: train-server
+      dockerfile: Dockerfile
+    image: labelstudio-train-server:latest
+    hostname: train-server
+    restart: unless-stopped
+    ports:
+      - "8011:8011"
+    environment:
+      - TRAIN_SERVER_HOST=0.0.0.0
+      - TRAIN_SERVER_PORT=8011
+      - TRAIN_SERVER_OUTPUT_ROOT=/data/training/models/trained
+      - TRAIN_SERVER_MODELS_DIR=/data/training/models/original
+      - TRAIN_SERVER_MAX_WORKERS=1
+      - TRAIN_SERVER_DATALOADER_WORKERS=0
+      - TRAIN_SERVER_API_KEY=${TRAIN_SERVER_API_KEY:-}
+    volumes:
+      - ./data:/data:rw
+    shm_size: "2gb"
+    ipc: host
+    # GPU：取消下行註解並安裝 NVIDIA Container Toolkit
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+volumes:
+  redis-data:

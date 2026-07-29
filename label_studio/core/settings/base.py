@@ -817,6 +817,9 @@ else:
 # When using frontend HMR, the browser sends requests from the dev server origin (e.g. http://localhost:8010)
 if FRONTEND_HMR and FRONTEND_HOSTNAME and FRONTEND_HOSTNAME not in CSRF_TRUSTED_ORIGINS:
     CSRF_TRUSTED_ORIGINS = list(CSRF_TRUSTED_ORIGINS) + [FRONTEND_HOSTNAME]
+# Docker / 生產：LABEL_STUDIO_HOST 指向區網 IP 或網域時，登入與 API 需信任該 Origin
+elif HOSTNAME and HOSTNAME not in CSRF_TRUSTED_ORIGINS:
+    CSRF_TRUSTED_ORIGINS = list(CSRF_TRUSTED_ORIGINS) + [HOSTNAME]
 # 從區網 IP 存取時（例如 http://10.214.57.66:8010）需額外加入信任來源
 if FRONTEND_HMR:
     _extra_origins = get_env('ADDITIONAL_CSRF_TRUSTED_ORIGINS', '')
@@ -905,6 +908,8 @@ if ENABLE_CSP := get_bool_env('ENABLE_CSP', True):
         'https://*.g.double' + 'click.net',  # hacky way of suppressing codespell complaint
         'https://*.ingest.sentry.io',
     )
+    if HOSTNAME:
+        CSP_CONNECT_SRC = CSP_CONNECT_SRC + (HOSTNAME,)
     # Note that this will be overridden to real CSP for views that use the override_report_only_csp decorator
     CSP_REPORT_ONLY = get_bool_env('LS_CSP_REPORT_ONLY', True)
     CSP_REPORT_URI = get_env('LS_CSP_REPORT_URI', None)

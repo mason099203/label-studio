@@ -442,7 +442,15 @@ def export_torchscript_pt_to_triton(
                                             跳過 _build_triton_pbtxt() 自動生成
     @returns {dict} 部署結果；包含 ``error`` 鍵時表示失敗
     """
-    import torch as _torch
+    try:
+        import torch as _torch
+    except ImportError:
+        return {
+            "error": (
+                "部署至 Triton 需要 PyTorch。"
+                "請在 .env 設 INCLUDE_YOLO_TRAINING=true 後執行：docker compose build && docker compose up -d"
+            )
+        }
 
     best_pt_path = Path(best_pt_path)
     if not best_pt_path.exists():
@@ -729,7 +737,15 @@ def export_yolo_pt_to_triton(
                                             跳過 _build_triton_pbtxt() 自動生成
     @returns {dict} 部署結果；包含 ``error`` 鍵時表示失敗
     """
-    import torch as _torch
+    try:
+        import torch as _torch
+    except ImportError:
+        return {
+            "error": (
+                "部署至 Triton 需要 PyTorch（ultralytics）。"
+                "請在 .env 設 INCLUDE_YOLO_TRAINING=true 後執行：docker compose build && docker compose up -d"
+            )
+        }
 
     best_pt_path = Path(best_pt_path)
     if not best_pt_path.exists():

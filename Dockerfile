@@ -118,6 +118,8 @@ COPY pyproject.toml poetry.lock README.md ./
 
 # Set a default build argument for including dev dependencies
 ARG INCLUDE_DEV=false
+# 預設 false（僅標註）；要本機 RQ/YOLO 訓練時設 true 或使用 docker-compose.full.yml
+ARG INCLUDE_YOLO_TRAINING=false
 
 # Install dependencies
 # lock 會解析出含 CUDA 的 torch；slim 映像無系統 libcudnn，import 會報錯。
@@ -126,31 +128,46 @@ RUN --mount=type=cache,target=/.poetry-cache,id=poetry-cache-bookworm,sharing=lo
     set -e; \
     poetry check --lock; \
     set +e; \
-    if [ "${INCLUDE_DEV:-false}" = "true" ]; then \
+    if [ "${INCLUDE_DEV:-false}" = "true" ] && [ "${INCLUDE_YOLO_TRAINING:-false}" = "true" ]; then \
         poetry install --no-root --extras uwsgi --extras yolo-training --with test; \
-    else \
+    elif [ "${INCLUDE_DEV:-false}" = "true" ]; then \
+        poetry install --no-root --extras uwsgi --with test; \
+    elif [ "${INCLUDE_YOLO_TRAINING:-false}" = "true" ]; then \
         poetry install --no-root --without test --extras uwsgi --extras yolo-training; \
+    else \
+        poetry install --no-root --without test --extras uwsgi; \
     fi; \
     poetry_ec=$?; \
     set -e; \
     if [ "$poetry_ec" -ne 0 ]; then \
         echo "note: poetry install exited $poetry_ec（常見：下載逾時／yanked）；仍嘗試覆寫 CPU torch 並驗證"; \
     fi; \
-    /label-studio/.venv/bin/pip install --no-cache-dir --force-reinstall --upgrade \
-        "torch" "torchvision" \
-        --index-url https://download.pytorch.org/whl/cpu; \
-    /label-studio/.venv/bin/python -c "import django, torch, ultralytics; print('deps OK', django.get_version(), torch.__version__, 'cuda=', torch.cuda.is_available())"
+    if [ "${INCLUDE_YOLO_TRAINING:-false}" = "true" ]; then \
+        /label-studio/.venv/bin/pip install --no-cache-dir --force-reinstall --upgrade \
+            "torch" "torchvision" \
+            --index-url https://download.pytorch.org/whl/cpu; \
+        /label-studio/.venv/bin/python -c "import django, torch, ultralytics; print('deps OK', django.get_version(), torch.__version__, 'cuda=', torch.cuda.is_available())"; \
+    else \
+        /label-studio/.venv/bin/python -c "import django; print('deps OK', django.get_version(), '(no yolo-training)')"; \
+    fi
 
 # Install LS（再跑一次 --no-root：補齊因上一層快取／曾失敗導致缺 Django 等依賴的 venv）
 COPY label_studio label_studio
 RUN --mount=type=cache,target=/.poetry-cache,id=poetry-cache-bookworm,sharing=locked \
     set -e; \
-    if [ "${INCLUDE_DEV:-false}" = "true" ]; then \
+    if [ "${INCLUDE_DEV:-false}" = "true" ] && [ "${INCLUDE_YOLO_TRAINING:-false}" = "true" ]; then \
         poetry install --no-root --extras uwsgi --extras yolo-training --with test; \
-    else \
+        poetry install --only-root --extras uwsgi --extras yolo-training; \
+    elif [ "${INCLUDE_DEV:-false}" = "true" ]; then \
+        poetry install --no-root --extras uwsgi --with test; \
+        poetry install --only-root --extras uwsgi; \
+    elif [ "${INCLUDE_YOLO_TRAINING:-false}" = "true" ]; then \
         poetry install --no-root --without test --extras uwsgi --extras yolo-training; \
+        poetry install --only-root --extras uwsgi --extras yolo-training; \
+    else \
+        poetry install --no-root --without test --extras uwsgi; \
+        poetry install --only-root --extras uwsgi; \
     fi; \
-    poetry install --only-root --extras uwsgi --extras yolo-training; \
     /label-studio/.venv/bin/python -c "import django"; \
     /label-studio/.venv/bin/python label_studio/manage.py collectstatic --no-input
 
@@ -215,6 +232,9 @@ COPY --chown=1001:0 --from=frontend-builder           $LS_DIR/web/dist          
 COPY --chown=1001:0 --from=frontend-version-generator $LS_DIR/web/dist/apps/labelstudio/version.json    $LS_DIR/web/dist/apps/labelstudio/version.json
 COPY --chown=1001:0 --from=frontend-version-generator $LS_DIR/web/dist/libs/editor/version.json         $LS_DIR/web/dist/libs/editor/version.json
 COPY --chown=1001:0 --from=frontend-version-generator $LS_DIR/web/dist/libs/datamanager/version.json    $LS_DIR/web/dist/libs/datamanager/version.json
+
+# 非 root 執行時須有 passwd 項目，否則 PyTorch import 時 getpass.getuser() 會 KeyError（deploy-to-triton）
+RUN echo 'labelstudio:x:1001:0:Label Studio:/label-studio:/sbin/nologin' >> /etc/passwd
 
 USER 1001
 
