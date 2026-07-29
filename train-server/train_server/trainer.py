@@ -21,6 +21,7 @@ from .yolo_catalog import (
     resolve_yolo_weights_name,
 )
 from .device_utils import resolve_dataloader_workers, resolve_training_device
+from .dataset_images import canonicalize_yolo_images_dir
 from .metrics_utils import collect_yolo_val_metrics, json_safe, normalize_trainer_metrics
 from .progress import collect_preview_images
 
@@ -287,8 +288,6 @@ def _validate_dataset_images(dataset_root: Path) -> None:
 
 def _patch_dataset_paths(dataset_root: Path, dataset_meta: Dict[str, Any]) -> None:
     """解壓後更新 dataset_config / data.yaml 中的絕對路徑。"""
-    from .dataset_images import canonicalize_yolo_images_dir
-
     images_dir = dataset_root / "images"
     if images_dir.is_dir():
         canonicalize_yolo_images_dir(images_dir)

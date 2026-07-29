@@ -50,6 +50,8 @@ flowchart LR
 | 資料管理 UI 函式庫 | `web/libs/datamanager/` | 資料探索相關 |
 | 共用 UI / 核心 | `web/libs/ui/`, `web/libs/core/` | 設計系統與共用工具 |
 | 獨立 Playground | `web/apps/playground/` | 標註設定預覽（Jotai + editor） |
+| YOLO Train Server | `train-server/` | 獨立訓練服務（`train_server/` Python 模組 + Docker） |
+| Triton 推論主機 | `triton-server/` | 獨立 Triton + Upload Server Docker 部署 |
 | 代理規則補件 | `.cursor/rules/*.mdc` | 與本檔互補的專題規範 |
 
 **本 fork 範例**：模型部署相關後端多在 `label_studio/ml/`（如 `ModelDeployment`），前端頁面在 `web/apps/labelstudio/src/pages/ModelDeployment/`。
@@ -70,7 +72,7 @@ flowchart LR
 
 完整啟動步驟、Docker 部署與疑難排解見 **`測試以及部署.md`**。
 
-本 fork 以多支腳本啟動（**順序**如下）。腳本內容為單一真相來源：`start-redis.ps1`、`start-rqworker.ps1`、`start-dev.ps1`、`start-triton.ps1`、`start-all.ps1`。
+本 fork 以多支腳本啟動（**順序**如下）。腳本內容為單一真相來源：`start-redis.ps1`、`start-rqworker.ps1`、`start-dev.ps1`、`start-triton.ps1`、`start-train-server.ps1`、`start-all.ps1`。Train Server **Docker 部署**請於 `train-server/` 目錄執行 `docker compose up -d --build`（比照 `triton-server/`）。
 
 ### 一般 UI／API 開發
 

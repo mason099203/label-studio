@@ -7,7 +7,7 @@ Set-Location $Root
 
 $TrainVenv = Join-Path $Root ".venv-train"
 $TrainPy = Join-Path $TrainVenv "Scripts\python.exe"
-$ReqFile = Join-Path $Root "train_server\requirements-train.txt"
+$ReqFile = Join-Path $Root "train-server\train_server\requirements-train.txt"
 
 function Get-BootstrapPython {
     # 1) 本專案 Poetry .venv（Windows 開發最常見）

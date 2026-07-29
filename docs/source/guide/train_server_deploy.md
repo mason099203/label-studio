@@ -13,7 +13,7 @@
 | **職責** | 在 Label Studio 進程內排隊訓練 | 專用 YOLO 訓練微服務 | 模型推論（inference） |
 | **部署** | 與 Django 同機，需 Redis + RQ worker | 獨立容器／主機（`:8011`） | 獨立容器（`:8000` HTTP） |
 | **連線方式** | 無外部 URL，走 Redis queue | REST API（`TRAIN_SERVER_URL`） | REST/gRPC（`TRITON_SERVER_URL`） |
-| **依賴** | torch / ultralytics 裝在 Label Studio venv | 獨立 venv 或 `Dockerfile.train-server` | NVIDIA Triton 映像 |
+| **依賴** | torch / ultralytics 裝在 Label Studio venv | 獨立 venv 或 `train-server/Dockerfile` | NVIDIA Triton 映像 |
 | **典型硬體** | 與 Web 搶 CPU/GPU | 可部署到 GPU 訓練節點 | GPU 推論節點 |
 | **產物** | `data/training/models/trained/` | 同路徑（共享 volume 時） | `data/triton_models/`（ONNX） |
 | **UI 設定** | 預設（不需額外 URL） | Training 頁面填 Train Server URL | Model Deployment 填 Triton URL |
@@ -103,21 +103,21 @@ TRAIN_SERVER_API_KEY=your-secret   # 可選，兩端需一致
 
 **GPU（選用）：** 編輯 `docker-compose.yml` 中 `train-server` 的 `deploy.resources.reservations.devices` 區塊，並安裝 [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)。
 
-### 2.2 獨立 Docker 映像（遠端訓練節點）
+### 2.2 獨立 Docker 主機（遠端訓練節點）
 
-在 **不含 Label Studio** 的 GPU 機器上：
+在 **不含 Label Studio** 的 GPU 機器上，使用 `train-server/` 目錄（比照 `triton-server/`）：
 
 ```bash
-git clone <your-repo> && cd label-studio
+git clone <your-repo> && cd label-studio/train-server
 
-docker build -f Dockerfile.train-server -t labelstudio-train-server:latest .
+docker compose up -d --build
+curl http://localhost:8011/health
+```
 
-docker run -d --name train-server \
-  -p 8011:8011 \
-  -v /path/to/shared-data:/data \
-  -e TRAIN_SERVER_API_KEY=your-secret \
-  -e TRAIN_SERVER_MAX_WORKERS=2 \
-  labelstudio-train-server:latest
+預設掛載 `../data`（與 Label Studio 共用專案 `data/`）。遠端純訓練節點若只用本目錄資料：
+
+```bash
+TRAIN_SERVER_DATA_DIR=./data docker compose up -d --build
 ```
 
 Label Studio 端設定：
@@ -131,16 +131,15 @@ TRAIN_SERVER_API_KEY=your-secret
 
 Spark 為 **aarch64 + CUDA 13 + GB10 (sm_121)**。請注意：
 
-1. **在 Spark 本機** `docker build`（產出 `linux/arm64`），不要從 Windows／x86 建映像後搬過去。
-2. `Dockerfile.train-server` 預設安裝 **PyTorch cu130**（勿用 cu124／cu128，易出現 `no kernel image` 或整段 `#ifdef __HIPCC__` NVRTC 錯誤）。
+1. **在 Spark 本機** `docker compose build`（產出 `linux/arm64`），不要從 Windows／x86 建映像後搬過去。
+2. `train-server/Dockerfile` 預設安裝 **PyTorch cu130**（勿用 cu124／cu128，易出現 `no kernel image` 或整段 `#ifdef __HIPCC__` NVRTC 錯誤）。
 3. 運行範例：
 
 ```bash
 uname -m   # 應為 aarch64
-docker build --no-cache -f Dockerfile.train-server -t labelstudio-train-server:latest .
-docker rm -f train-server
-docker run -d --name train-server --gpus all --ipc=host -p 8011:8011 \
-  --restart unless-stopped labelstudio-train-server:latest
+cd train-server
+docker compose build --no-cache
+docker compose up -d
 curl http://localhost:8011/health
 ```
 
@@ -395,13 +394,13 @@ Train Server 產出 `best.pt` 後，可沿用既有 Triton 流程：
 
 ```
 label-studio/
-├── train_server/              # Train Server 原始碼（FastAPI）
-│   ├── main.py                # API 入口
-│   ├── job_manager.py         # 任務佇列與狀態
-│   ├── trainer.py             # Ultralytics 訓練邏輯
-│   └── requirements-train.txt
-├── Dockerfile.train-server      # 獨立映像
-├── start-train-server.ps1       # Windows 本機啟動
+├── train-server/              # Train Server（程式 + Docker 部署，比照 triton-server/）
+│   ├── docker-compose.yml
+│   ├── Dockerfile
+│   └── train_server/          # Python 應用（FastAPI + Ultralytics）
+│       ├── main.py
+│       └── requirements-train.txt
+├── start-train-server.ps1       # Windows 本機 venv 啟動（開發用）
 ├── label_studio/training/
 │   ├── train_client.py        # Label Studio → Train Server HTTP 客戶端
 │   └── api.py                 # 代理 API（remote / local 分流）

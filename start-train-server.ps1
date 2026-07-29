@@ -29,7 +29,7 @@ function Use-IsolatedTrainEnv {
         $env:PATH = "$TrainScripts;" + ($env:PATH -split ';' | Where-Object { $_ -and $_ -notmatch 'anaconda|conda' }) -join ';'
     }
     $env:PYTHONNOUSERSITE = "1"
-    $env:PYTHONPATH = ""
+    $env:PYTHONPATH = Join-Path $Root "train-server"
     Remove-Item Env:PYTHONHOME -ErrorAction SilentlyContinue
     Remove-Item Env:CONDA_PREFIX -ErrorAction SilentlyContinue
     Remove-Item Env:CONDA_DEFAULT_ENV -ErrorAction SilentlyContinue

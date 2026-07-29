@@ -151,8 +151,8 @@ services:
 
   train-server:
     build:
-      context: .
-      dockerfile: Dockerfile.train-server
+      context: train-server
+      dockerfile: Dockerfile
     image: labelstudio-train-server:latest
     hostname: train-server
     restart: unless-stopped
@@ -168,6 +168,8 @@ services:
       - TRAIN_SERVER_API_KEY=${TRAIN_SERVER_API_KEY:-}
     volumes:
       - ./data:/data:rw
+    shm_size: "2gb"
+    ipc: host
     # GPU：取消下行註解並安裝 NVIDIA Container Toolkit
     # deploy:
     #   resources:

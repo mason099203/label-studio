@@ -21,7 +21,7 @@
 | `label_studio/tests/test_training_datasets.py` | 介面偵測合約測試（改寫既有 pose／obb／polygon） |
 | `web/apps/labelstudio/src/pages/TrainingPage/TrainingPage.jsx` | 進頁檢查；禁用按鈕與 `disabledReason` |
 
-不動：Playground、trainer 本體、`train_server/`、Deploy 既有 `dataset_config` 路徑（`resolve_deploy_task_context` 對 `detect_training_interface` 失敗已有 `except Exception: pass`）。
+不動：Playground、trainer 本體、`train-server/train_server/`、Deploy 既有 `dataset_config` 路徑（`resolve_deploy_task_context` 對 `detect_training_interface` 失敗已有 `except Exception: pass`）。
 
 **共用錯誤訊息（全任務一字不差）：**
 

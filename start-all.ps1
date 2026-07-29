@@ -2,7 +2,7 @@
 # 用法：
 #   .\start-all.ps1                              # Django + 前端 HMR（localhost）
 #   .\start-all.ps1 -WithQueue                   # 含 Redis + RQ worker
-#   .\start-all.ps1 -WithQueue -WithTrainServer  # 含 YOLO Train Server
+#   .\start-all.ps1 -WithQueue -WithTrainServer  # 含 YOLO Train Server（本機 venv）
 #   .\start-all.ps1 -WithQueue -WithTrainServer -LanAccess   # 支援本機 IP / 區網
 #   .\start-full.ps1                             # 上述完整組合（推薦）
 #   .\start-all.ps1 -Migrate                     # 啟動前 migrate

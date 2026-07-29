@@ -1,0 +1,41 @@
+# 獨立 Train Server 主機部署（GPU + YOLO 訓練）
+# 資料目錄：${TRAIN_SERVER_DATA_DIR:-../data}（預設與 Label Studio 共用專案根目錄 data/）
+#
+# 啟動（於本目錄）：
+#   docker compose up -d --build
+# 健康檢查：
+#   curl http://localhost:8011/health
+#
+# Label Studio 連線：
+#   TRAIN_SERVER_URL=http://<主機IP>:8011
+#   TRAIN_SERVER_API_KEY=your-secret   # 可選
+
+services:
+  train-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: labelstudio-train-server:latest
+    container_name: train-server
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    ports:
+      - "8011:8011"
+    volumes:
+      - ${TRAIN_SERVER_DATA_DIR:-../data}:/data
+    environment:
+      - TRAIN_SERVER_HOST=0.0.0.0
+      - TRAIN_SERVER_PORT=8011
+      - TRAIN_SERVER_OUTPUT_ROOT=/data/training/models/trained
+      - TRAIN_SERVER_MODELS_DIR=/data/training/models/original
+      - TRAIN_SERVER_MAX_WORKERS=${TRAIN_SERVER_MAX_WORKERS:-1}
+      - TRAIN_SERVER_DATALOADER_WORKERS=${TRAIN_SERVER_DATALOADER_WORKERS:-0}
+      - TRAIN_SERVER_API_KEY=${TRAIN_SERVER_API_KEY:-}
+    restart: unless-stopped
+    shm_size: "2gb"
+    ipc: host
