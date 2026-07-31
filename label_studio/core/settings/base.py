@@ -910,6 +910,10 @@ if ENABLE_CSP := get_bool_env('ENABLE_CSP', True):
     )
     if HOSTNAME:
         CSP_CONNECT_SRC = CSP_CONNECT_SRC + (HOSTNAME,)
+    if FRONTEND_HMR and FRONTEND_HOSTNAME and FRONTEND_HOSTNAME != HOSTNAME:
+        CSP_STYLE_SRC = CSP_STYLE_SRC + (FRONTEND_HOSTNAME,)
+        CSP_SCRIPT_SRC = CSP_SCRIPT_SRC + (FRONTEND_HOSTNAME,)
+        CSP_CONNECT_SRC = CSP_CONNECT_SRC + (FRONTEND_HOSTNAME,)
     # Note that this will be overridden to real CSP for views that use the override_report_only_csp decorator
     CSP_REPORT_ONLY = get_bool_env('LS_CSP_REPORT_ONLY', True)
     CSP_REPORT_URI = get_env('LS_CSP_REPORT_URI', None)

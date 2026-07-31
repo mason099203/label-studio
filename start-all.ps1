@@ -18,7 +18,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 
-. (Join-Path $root 'scripts\Import-DotEnv.ps1') -Root $root | Out-Null
+. (Join-Path $root 'scripts\Import-DotEnv.ps1') -Root $root -EnvFile '.env.local' | Out-Null
 
 if ($Migrate) {
     Write-Host 'Running database migrations...'

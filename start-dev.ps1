@@ -8,7 +8,11 @@ param(
 
 $root = $PSScriptRoot
 
-. (Join-Path $root 'scripts\Import-DotEnv.ps1') -Root $root | Out-Null
+$localEnvFile = Join-Path $root '.env.local'
+if (-not (Test-Path -LiteralPath $localEnvFile)) {
+    Write-Host '未找到 .env.local — 請執行：Copy-Item .env.local.example .env.local' -ForegroundColor Yellow
+}
+. (Join-Path $root 'scripts\Import-DotEnv.ps1') -Root $root -EnvFile '.env.local' | Out-Null
 . (Join-Path $root 'scripts\Get-LanIp.ps1')
 . (Join-Path $root 'scripts\Resolve-LabelStudioPython.ps1')
 
@@ -81,11 +85,11 @@ if (-not (Test-PortListening -Port 8080)) {
 
 if (-not (Test-PortListening -Port 8010)) {
     Start-Sleep -Seconds 2
+    $webpackDevHost = if ($LanAccess) { '0.0.0.0' } else { 'localhost' }
     Start-Process powershell -ArgumentList '-NoExit', '-Command', (
         "cd '$root\web'; " +
-        $(if ($LanAccess) {
-            "`$env:FRONTEND_HOSTNAME='$frontendUrl'; `$env:DJANGO_HOSTNAME='$djangoUrl'; `$env:WEBPACK_DEV_HOST='0.0.0.0'; "
-        } else { '' }) +
+        "`$env:FRONTEND_HMR='$frontendHmr'; `$env:FRONTEND_HOSTNAME='$frontendUrl'; `$env:DJANGO_HOSTNAME='$djangoUrl'; " +
+        "`$env:WEBPACK_DEV_HOST='$webpackDevHost'; " +
         "`$env:NODE_ENV='development'; `$env:BUILD_NO_SERVER='true'; " +
         "try { yarn nx reset } catch { Write-Host 'nx reset skipped' }; " +
         'yarn dev:win'
@@ -96,4 +100,7 @@ if (-not (Test-PortListening -Port 8010)) {
 }
 
 Write-Host ''
-Write-Host "Open Label Studio: $frontendUrl"
+Write-Host "Open Label Studio: $frontendUrl" -ForegroundColor Green
+if ($frontendHmr -eq 'true') {
+    Write-Host 'HMR 開發請用上方 :8010 網址，勿用 :8080（8080 僅供 API／除錯）' -ForegroundColor Yellow
+}

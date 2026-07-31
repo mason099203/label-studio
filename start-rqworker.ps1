@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 
-. (Join-Path $root 'scripts\Import-DotEnv.ps1') -Root $root | Out-Null
+. (Join-Path $root 'scripts\Import-DotEnv.ps1') -Root $root -EnvFile '.env.local' | Out-Null
 
 $tritonModelRepo = if ($env:TRITON_MODEL_REPOSITORY) {
     [System.IO.Path]::GetFullPath($env:TRITON_MODEL_REPOSITORY)

@@ -1,10 +1,10 @@
 # 以 Docker 啟動本機 Triton Inference Server
-# 需求：Docker Desktop；模型目錄由 .env 的 TRITON_MODEL_REPOSITORY 決定
+# 需求：Docker Desktop；模型目錄由 .env.local 的 TRITON_MODEL_REPOSITORY 決定
 
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 
-. (Join-Path $root 'scripts\Import-DotEnv.ps1') -Root $root | Out-Null
+. (Join-Path $root 'scripts\Import-DotEnv.ps1') -Root $root -EnvFile '.env.local' | Out-Null
 
 $tritonModelRepo = if ($env:TRITON_MODEL_REPOSITORY) { $env:TRITON_MODEL_REPOSITORY } else { Join-Path $root 'data\triton_models' }
 $tritonModelRepo = [System.IO.Path]::GetFullPath($tritonModelRepo)

@@ -4,10 +4,12 @@ const { composePlugins, withNx } = require("@nx/webpack");
 const { withReact } = require("@nx/react");
 const { merge } = require("webpack-merge");
 
-require("dotenv").config({
-  // resolve the .env file in the root of the project ../
-  path: path.resolve(__dirname, "../.env"),
-});
+const fs = require("fs");
+const rootEnvCandidates = [".env.local", ".env"].map((f) => path.resolve(__dirname, "..", f));
+const rootEnvPath = rootEnvCandidates.find((p) => fs.existsSync(p));
+if (rootEnvPath) {
+  require("dotenv").config({ path: rootEnvPath });
+}
 
 // Prefer Nx's bundled webpack when available, but fall back to the workspace
 // dependency because newer @nx/webpack releases no longer ship a nested copy.
@@ -30,7 +32,9 @@ const mode = process.env.BUILD_MODULE ? "production" : process.env.NODE_ENV || "
 const isDevelopment = mode !== "production";
 const devtool = process.env.NODE_ENV === "production" ? "source-map" : "cheap-module-source-map";
 const FRONTEND_HMR = process.env.FRONTEND_HMR === "true";
-const FRONTEND_HOSTNAME = FRONTEND_HMR ? process.env.FRONTEND_HOSTNAME || "http://localhost:8010" : "";
+// Honor explicit FRONTEND_HOSTNAME (e.g. start-dev.ps1 -LanAccess) even when FRONTEND_HMR is unset in this process.
+const FRONTEND_HOSTNAME =
+  process.env.FRONTEND_HOSTNAME || (FRONTEND_HMR ? "http://localhost:8010" : "");
 const DJANGO_HOSTNAME = process.env.DJANGO_HOSTNAME || "http://localhost:8080";
 const HMR_PORT = FRONTEND_HMR ? +new URL(FRONTEND_HOSTNAME).port : 8010;
 
