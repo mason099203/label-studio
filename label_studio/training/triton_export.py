@@ -64,16 +64,49 @@ def get_triton_server_url() -> str:
 
 def _is_remote_triton(triton_url: str) -> bool:
     """
-    判斷 Triton URL 是否指向遠端主機（非 localhost / 127.0.0.1）。
+    判斷 Triton URL 是否指向「無法共享磁碟」的遠端主機。
 
-    本機部署時 Django 可直接寫入共享磁碟；遠端時需透過 Upload Server 轉送。
+    本機／同機 compose（含區網 IP 對映到本機 Triton）時 Django 直接寫入
+    ``TRITON_MODEL_REPOSITORY``；真正跨主機時才走 Upload Server。
+
+    視為本機（回傳 False）：
+    - localhost / 127.0.0.1 / ::1
+    - Docker 服務名 ``triton``、``host.docker.internal``
+    - 與 ``LABEL_STUDIO_HOST`` / ``HOST`` 相同 hostname（例如皆為 10.214.57.66）
+    - ``TRITON_LOCAL_HOSTS`` 逗號清單中的 hostname
 
     @param {str} triton_url - Triton HTTP 基底 URL
     @returns {bool} 是否為遠端主機
     """
     try:
-        host = urlparse(triton_url).hostname or ""
-        return host not in ("localhost", "127.0.0.1", "::1", "")
+        host = (urlparse(triton_url).hostname or "").strip().lower()
+        if not host or host in (
+            "localhost",
+            "127.0.0.1",
+            "::1",
+            "triton",
+            "host.docker.internal",
+        ):
+            return False
+
+        local_hosts: set[str] = set()
+        for env_key in ("LABEL_STUDIO_HOST", "HOST"):
+            raw = (os.environ.get(env_key) or "").strip()
+            if not raw:
+                continue
+            parsed = urlparse(raw if "://" in raw else f"http://{raw}")
+            if parsed.hostname:
+                local_hosts.add(parsed.hostname.strip().lower())
+
+        for item in (os.environ.get("TRITON_LOCAL_HOSTS") or "").split(","):
+            item = item.strip().lower()
+            if item:
+                local_hosts.add(item)
+
+        if host in local_hosts:
+            return False
+
+        return True
     except Exception:
         return False
 
@@ -771,22 +804,81 @@ def export_yolo_pt_to_triton(
         return {"error": f"Ultralytics not installed: {exc}"}
 
     # ── YOLO → TorchScript 匯出（不論本機/遠端皆需此步驟）─────────────────
-    # device 參數控制 trace 時使用的運算裝置，確保 GPU operator path 被正確記錄
+    # device 參數控制 trace 時使用的運算裝置，確保 GPU operator path 被正確記錄。
+    # 匯出寫入暫存目錄：train-server 常以 root 寫入 artifacts/，app (uid 1001)
+    # 無法在同目錄建立 *.torchscript，會得到 Permission denied → API 400。
+    export_tmpdir = tempfile.mkdtemp(prefix="ls_triton_export_")
     try:
-        model = YOLO(str(best_pt_path))
+        tmp_pt = Path(export_tmpdir) / best_pt_path.name
+        shutil.copy2(best_pt_path, tmp_pt)
+        model = YOLO(str(tmp_pt))
         model.to(_export_device)
         exported = model.export(format="torchscript", imgsz=imgsz, device=_export_device)
         src_torchscript = (
             Path(exported).resolve()
             if exported
-            else (best_pt_path.parent / (best_pt_path.stem + ".torchscript"))
+            else (tmp_pt.parent / (tmp_pt.stem + ".torchscript"))
         )
         if not src_torchscript.exists():
+            shutil.rmtree(export_tmpdir, ignore_errors=True)
             return {"error": f"TorchScript export did not produce {src_torchscript}"}
     except Exception as exc:
         logger.exception("Failed to export trained model to TorchScript for Triton")
+        shutil.rmtree(export_tmpdir, ignore_errors=True)
         return {"error": str(exc)}
 
+    try:
+        return _finish_yolo_triton_deploy_after_export(
+            src_torchscript=src_torchscript,
+            best_pt_path=best_pt_path,
+            model_name=model_name,
+            project_id=project_id,
+            run_id=run_id,
+            triton_repo_root=triton_repo_root,
+            imgsz=imgsz,
+            deployed_by_user_id=deployed_by_user_id,
+            deployed_by_username=deployed_by_username,
+            public_triton_base_url=public_triton_base_url,
+            upload_server_url=upload_server_url,
+            instance_kind=instance_kind,
+            gpu_ids=gpu_ids,
+            instance_count=instance_count,
+            always_in_memory=always_in_memory,
+            target_version=target_version,
+            custom_pbtxt=custom_pbtxt,
+            task_type=task_type,
+            training_model=training_model,
+            kpt_shape=kpt_shape,
+            infer_base=infer_base,
+        )
+    finally:
+        shutil.rmtree(export_tmpdir, ignore_errors=True)
+
+
+def _finish_yolo_triton_deploy_after_export(
+    *,
+    src_torchscript: Path,
+    best_pt_path: Path,
+    model_name: str,
+    project_id: Optional[int],
+    run_id: Optional[str],
+    triton_repo_root: Optional[str | Path],
+    imgsz: int,
+    deployed_by_user_id: Optional[int],
+    deployed_by_username: Optional[str],
+    public_triton_base_url: Optional[str],
+    upload_server_url: Optional[str],
+    instance_kind: str,
+    gpu_ids: Optional[list[int]],
+    instance_count: int,
+    always_in_memory: bool,
+    target_version: int,
+    custom_pbtxt: Optional[str],
+    task_type: Optional[str],
+    training_model: Optional[str],
+    kpt_shape: Optional[list],
+    infer_base: str,
+) -> dict:
     # 若呼叫端傳入 custom_pbtxt，直接使用；否則自動生成
     if custom_pbtxt and custom_pbtxt.strip():
         config_content = custom_pbtxt.strip()
@@ -917,7 +1009,12 @@ def export_yolo_pt_to_triton(
         metadata["triton_public_base_url"] = _new_server_url
     metadata_path.write_text(json.dumps(metadata, ensure_ascii=True, indent=2), encoding="utf-8")
 
-    load_result = request_triton_model_load(model_name, infer_base)
+    # 本機寫盤後，優先用容器內 TRITON_SERVER_URL（如 http://triton:8000）載入；
+    # 對外網址（區網 IP:18000）留給前端／metadata。
+    load_base = get_triton_server_url().rstrip("/") or infer_base
+    load_result = request_triton_model_load(model_name, load_base)
+    if not load_result.get("ok") and load_base != infer_base:
+        load_result = request_triton_model_load(model_name, infer_base)
     resp = {
         "model_name": model_name,
         "repo_path": str(repo_root),

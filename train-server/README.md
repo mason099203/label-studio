@@ -81,10 +81,19 @@ TRAIN_SERVER_API_KEY=your-secret   # 可選
 
 ## NVIDIA DGX Spark（GB10）
 
+僅 Train Server：
+
 ```bash
 cd train-server
 docker compose build --no-cache
 docker compose up -d
 ```
 
-`Dockerfile` 預設 **PyTorch cu130**（CUDA 13），須在 Spark 本機建置（`aarch64`）。
+同機全堆疊（標註 + Train + Triton + GPU）在專案根目錄：
+
+```bash
+cp .env.spark.example .env
+docker compose -f docker-compose.full.yml -f docker-compose.spark.yml up --build -d
+```
+
+`Dockerfile` 預設 **PyTorch cu130**（CUDA 13），須在 Spark 本機建置（`aarch64`）。詳見根目錄 `測試以及部署.md`。

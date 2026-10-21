@@ -113,15 +113,24 @@ services:
       - "18002:8002"
     volumes:
       - ./data/triton_models:/models
-    command: tritonserver --model-repository=/models
-    # GPU：取消下行註解並安裝 NVIDIA Container Toolkit
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
+    # explicit：由 API 載入模型，避免不完整目錄導致啟動失敗
+    # exit-on-error=false：單一模型壞掉不拖垮整個 server
+    command: >
+      tritonserver
+      --model-repository=/models
+      --model-control-mode=explicit
+      --exit-on-error=false
+    shm_size: "2gb"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
   db:
     image: pgautoupgrade/pgautoupgrade:17-alpine
@@ -159,18 +168,19 @@ services:
       - TRAIN_SERVER_MAX_WORKERS=1
       - TRAIN_SERVER_DATALOADER_WORKERS=0
       - TRAIN_SERVER_API_KEY=${TRAIN_SERVER_API_KEY:-}
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     volumes:
       - ./data:/data:rw
     shm_size: "2gb"
     ipc: host
-    # GPU：取消下行註解並安裝 NVIDIA Container Toolkit
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
 volumes:
   redis-data:

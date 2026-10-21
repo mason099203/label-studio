@@ -72,17 +72,18 @@ flowchart LR
 
 完整啟動步驟、Docker 部署與疑難排解見 **`測試以及部署.md`**。
 
-本 fork 以多支腳本啟動（**順序**如下）。腳本內容為單一真相來源：`start-redis.ps1`、`start-rqworker.ps1`、`start-dev.ps1`、`start-triton.ps1`、`start-train-server.ps1`、`start-all.ps1`。Train Server **Docker 部署**請於 `train-server/` 目錄執行 `docker compose up -d --build`（比照 `triton-server/`）。
+本 fork 以多支腳本啟動（**順序**如下）。腳本內容為單一真相來源：`start-redis.ps1`、`start-rqworker.ps1`、`start-dev.ps1`、`start-infra.ps1`、`start-triton.ps1`、`start-train-server.ps1`、`start-all.ps1`。Train Server **Docker 部署**請於 `train-server/` 目錄執行 `docker compose up -d --build`（比照 `triton-server/`）。**DGX Spark 同機全堆疊**：`docker compose -f docker-compose.full.yml -f docker-compose.spark.yml up --build -d`（須在 Spark 本機 build；見 `測試以及部署.md`）。
 
 ### 一般 UI／API 開發
 
 ```powershell
 .\start-dev.ps1
 # 或一鍵：.\start-all.ps1
+# 僅 Docker 基礎設施（Redis/Triton）：.\start-infra.ps1
 ```
 
 - 會另開視窗：後端 **Django**（`localhost:8080`，SQLite + `FRONTEND_HMR=true`）與 **前端 HMR**（`yarn dev:win`，預設 **8010**）。
-- 瀏覽器開發網址（腳本提示）：**http://localhost:8010**
+- 瀏覽器開發網址（腳本提示）：**http://localhost:8010**（改碼看結果用 HMR；勿依賴 production Docker 映像熱更新）。
 - 前置：`poetry install`；`web/` 內已 `yarn install`。
 
 ### 需要背景佇列（例如 Training／YOLO 本機訓練 enqueue）

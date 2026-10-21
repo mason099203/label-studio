@@ -1,0 +1,33 @@
+# NVIDIA DGX Spark（GB10）覆寫：在 full 堆疊上啟用 GPU
+#
+# 用法（必須在 Spark 本機執行，產出 linux/arm64）：
+#   cp .env.spark.example .env   # 填入 LABEL_STUDIO_HOST 等
+#   docker compose -f docker-compose.full.yml -f docker-compose.spark.yml up --build -d
+#
+# 前置：NVIDIA Container Toolkit；Train Server Dockerfile 使用 PyTorch cu130（CUDA 13）
+# 詳見：測試以及部署.md、docs/source/guide/train_server_deploy.md
+
+services:
+  triton:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+  train-server:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility

@@ -133,7 +133,7 @@ Spark 為 **aarch64 + CUDA 13 + GB10 (sm_121)**。請注意：
 
 1. **在 Spark 本機** `docker compose build`（產出 `linux/arm64`），不要從 Windows／x86 建映像後搬過去。
 2. `train-server/Dockerfile` 預設安裝 **PyTorch cu130**（勿用 cu124／cu128，易出現 `no kernel image` 或整段 `#ifdef __HIPCC__` NVRTC 錯誤）。
-3. 運行範例：
+3. **僅 Train Server** 運行範例：
 
 ```bash
 uname -m   # 應為 aarch64
@@ -143,8 +143,19 @@ docker compose up -d
 curl http://localhost:8011/health
 ```
 
-4. Label Studio（可在別台）設 `TRAIN_SERVER_URL=http://<Spark-IP>:8011`。
-5. `yolo checks` 若警告 sm_121：可忽略（與 sm_120 二進位相容）。
+4. **同機全堆疊（標註 + Train + Triton + GPU）**（專案根目錄）：
+
+```bash
+cp .env.spark.example .env   # 填入 LABEL_STUDIO_HOST=http://<Spark-IP>:8080
+docker compose -f docker-compose.full.yml -f docker-compose.spark.yml up --build -d
+curl http://localhost:8011/health
+curl http://localhost:18000/v2/health/ready
+```
+
+5. Label Studio（可在別台）設 `TRAIN_SERVER_URL=http://<Spark-IP>:8011`。
+6. `yolo checks` 若警告 sm_121：可忽略（與 sm_120 二進位相容）。
+
+Windows 本機用 HMR 開發、再部署到 Spark 的雙模式說明見根目錄 `測試以及部署.md` §五。
 
 ### 2.3 Windows 本機開發
 

@@ -227,7 +227,8 @@ export const Menubar = ({ enabled, defaultOpened, defaultPinned, children, onSid
 
                 <Menu.Spacer />
 
-                <VersionNotifier showNewVersion />
+                {/* 本 fork 不顯示上游 PyPI「新版本可用」提示 */}
+                {/* <VersionNotifier showNewVersion /> */}
 
                 {/* <Menu.Item
                   label="API"
