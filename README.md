@@ -256,4 +256,8 @@ Include a citation for Label Studio in the **References** section of your articl
 
 This software is licensed under the [Apache 2.0 LICENSE](/LICENSE) © [Heartex](https://www.heartex.com/). 2020-2025
 
+This repository is a **modified fork** of [HumanSignal/label-studio](https://github.com/HumanSignal/label-studio). Upstream copyright and attribution notices are retained in [`LICENSE`](/LICENSE) and [`NOTICE`](/NOTICE). Copyright in modifications made in this fork is held by MetaVision (元視數位有限公司) (see [`NOTICE`](/NOTICE)).
+
+**Trademark:** “Label Studio” is a trademark of Heartex, Inc. / HumanSignal. This fork is not affiliated with, endorsed by, or sponsored by Heartex or HumanSignal. The name is used only to describe the upstream origin of the software. For commercial redistribution under your own brand, do not present this product as official Label Studio without trademark permission.
+
 <img src="https://user-images.githubusercontent.com/12534576/192582529-cf628f58-abc5-479b-a0d4-8a3542a4b35e.png" title="Hey everyone!" width="180" />

@@ -222,6 +222,7 @@ COPY --chown=1001:0 pyproject.toml .
 COPY --chown=1001:0 poetry.lock .
 COPY --chown=1001:0 README.md .
 COPY --chown=1001:0 LICENSE LICENSE
+COPY --chown=1001:0 NOTICE NOTICE
 COPY --chown=1001:0 licenses licenses
 COPY --chown=1001:0 deploy deploy
 

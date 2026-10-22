@@ -2,3 +2,19 @@ Label Studio (TM)
 Copyright (c) 2019-2021  Heartex, Inc. All Rights Reserved.
 Source code in this repository is licensed under the Apache License
 Version 2.0, Please see LICENSE for more information.
+
+---------------------------------------------------------------------------
+Modifications to this distribution
+---------------------------------------------------------------------------
+
+This distribution is a modified version of Label Studio, originally
+developed by Heartex, Inc. / HumanSignal
+(https://github.com/HumanSignal/label-studio).
+
+Additional copyright for modifications in this fork:
+Copyright (c) 2024-2026 MetaVision (元視數位有限公司)
+
+"Label Studio" is a trademark of Heartex, Inc. / HumanSignal. This fork is
+not affiliated with, endorsed by, or sponsored by Heartex, Inc. or
+HumanSignal. Use of the name is solely to identify the upstream project
+from which this work is derived.
